@@ -1,0 +1,21 @@
+# Build HA-MCP-Readonly from source (for development or local use)
+# Usage: docker compose -f docker-compose.build.yml up -d
+services:
+  ha-mcp-readonly:
+    build: .
+    image: ha-mcp-readonly:latest
+    container_name: ha-mcp-readonly
+    env_file: .env
+    ports:
+      - "9091:9091"  # health
+      - "9092:9092"  # MCP SSE
+      - "9093:9093"  # REST API
+    volumes:
+      - /path/to/ha/config:/config:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:9091/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s

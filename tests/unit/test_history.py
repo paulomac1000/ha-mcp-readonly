@@ -1,0 +1,283 @@
+"""
+Tests for tools/history.py
+"""
+
+import json
+from datetime import datetime, timedelta, timezone
+from unittest.mock import patch
+
+import pytest
+
+from tools.history import register_history_tools
+
+
+class TestGetEntityStateHistorySummary:
+    """Tests for get_entity_state_history_summary()."""
+
+    @pytest.fixture(autouse=True)
+    def setup(self, mock_mcp, ha_url, ha_token):
+        self.mock_mcp = mock_mcp
+        self.ha_url = ha_url
+        self.ha_token = ha_token
+
+        # Sample history data: 3 changes over 3 hours
+        now = datetime.now(timezone.utc)
+        self.sample_history = [
+            [
+                {
+                    "entity_id": "switch.test",
+                    "state": "off",
+                    "last_changed": (now - timedelta(hours=3)).isoformat(),
+                },
+                {
+                    "entity_id": "switch.test",
+                    "state": "on",
+                    "last_changed": (now - timedelta(hours=2)).isoformat(),
+                },
+                {
+                    "entity_id": "switch.test",
+                    "state": "off",
+                    "last_changed": (now - timedelta(hours=1)).isoformat(),
+                },
+            ]
+        ]
+
+    @pytest.mark.asyncio
+    async def test_history_summary(self):
+        """Test history summary calculation."""
+        with patch("tools.history.make_ha_request") as mock_request:
+            mock_request.return_value = {"success": True, "data": self.sample_history}
+
+            register_history_tools(self.mock_mcp, self.ha_url, self.ha_token)
+
+            result = await self.mock_mcp._tools["get_entity_state_history_summary"](
+                "switch.test", 24
+            )
+
+        data = json.loads(result)
+
+        assert data["success"] is True
+        assert data["entity_id"] == "switch.test"
+        assert data["total_changes"] == 3
+
+        # Check breakdown
+        breakdown = data["states_breakdown"]
+        assert "on" in breakdown
+        assert "off" in breakdown
+        assert breakdown["on"]["count"] == 1
+        assert breakdown["off"]["count"] == 2
+
+        # Check anomalies
+        assert len(data["anomalies"]) == 0
+
+    @pytest.mark.asyncio
+    async def test_rapid_cycling_anomaly(self):
+        """Test detection of rapid cycling."""
+        now = datetime.now(timezone.utc)
+        rapid_history = [
+            [
+                {
+                    "state": "on",
+                    "last_changed": (now - timedelta(minutes=5)).isoformat(),
+                },
+                {
+                    "state": "off",
+                    "last_changed": (now - timedelta(minutes=4, seconds=50)).isoformat(),
+                },
+                {
+                    "state": "on",
+                    "last_changed": (now - timedelta(minutes=4, seconds=40)).isoformat(),
+                },
+                {
+                    "state": "off",
+                    "last_changed": (now - timedelta(minutes=4, seconds=30)).isoformat(),
+                },
+            ]
+        ]
+
+        with patch("tools.history.make_ha_request") as mock_request:
+            mock_request.return_value = {"success": True, "data": rapid_history}
+
+            register_history_tools(self.mock_mcp, self.ha_url, self.ha_token)
+
+            result = await self.mock_mcp._tools["get_entity_state_history_summary"](
+                "switch.test", 24
+            )
+
+        data = json.loads(result)
+        assert len(data["anomalies"]) > 0
+        assert "Rapid cycling" in data["anomalies"][0]
+
+    @pytest.mark.asyncio
+    async def test_history_api_error(self):
+        """API failure → success: False."""
+        with patch("tools.history.make_ha_request") as mock_request:
+            mock_request.return_value = {"success": False, "error": "timeout"}
+            register_history_tools(self.mock_mcp, self.ha_url, self.ha_token)
+            result = await self.mock_mcp._tools["get_entity_state_history_summary"](
+                "switch.test", 24
+            )
+        data = json.loads(result)
+        assert data["success"] is False
+        assert "error" in data
+
+    @pytest.mark.asyncio
+    async def test_history_empty(self):
+        """Empty history data → 'No history found' message."""
+        with patch("tools.history.make_ha_request") as mock_request:
+            mock_request.return_value = {"success": True, "data": [[]]}
+            register_history_tools(self.mock_mcp, self.ha_url, self.ha_token)
+            result = await self.mock_mcp._tools["get_entity_state_history_summary"](
+                "switch.test", 24
+            )
+        data = json.loads(result)
+        assert data["success"] is True
+        assert "No history" in data.get("message", "")
+
+    @pytest.mark.asyncio
+    async def test_unavailable_states_filtered(self):
+        """'unavailable' and 'unknown' states must not appear in states_breakdown."""
+        now = datetime.now(timezone.utc)
+        history_with_noise = [
+            [
+                {
+                    "state": "unavailable",
+                    "last_changed": (now - timedelta(hours=3)).isoformat(),
+                },
+                {"state": "on", "last_changed": (now - timedelta(hours=2)).isoformat()},
+                {
+                    "state": "unknown",
+                    "last_changed": (now - timedelta(hours=1)).isoformat(),
+                },
+            ]
+        ]
+        with patch("tools.history.make_ha_request") as mock_request:
+            mock_request.return_value = {"success": True, "data": history_with_noise}
+            register_history_tools(self.mock_mcp, self.ha_url, self.ha_token)
+            result = await self.mock_mcp._tools["get_entity_state_history_summary"](
+                "switch.test", 24
+            )
+        data = json.loads(result)
+        assert data["success"] is True
+        assert "unavailable" not in data["states_breakdown"]
+        assert "unknown" not in data["states_breakdown"]
+        assert "on" in data["states_breakdown"]
+
+
+class TestGetRecentStateChanges:
+    """Tests for get_recent_state_changes()."""
+
+    @pytest.fixture(autouse=True)
+    def setup(self, mock_mcp, ha_url, ha_token):
+        self.mock_mcp = mock_mcp
+        self.ha_url = ha_url
+        self.ha_token = ha_token
+
+        now = datetime.now(timezone.utc)
+        self.sample_history = [
+            # Entity 1 history
+            [
+                {
+                    "entity_id": "switch.one",
+                    "state": "on",
+                    "last_changed": (now - timedelta(minutes=5)).isoformat(),
+                },
+                {
+                    "entity_id": "switch.one",
+                    "state": "off",
+                    "last_changed": (now - timedelta(minutes=2)).isoformat(),
+                },
+            ],
+            # Entity 2 history
+            [
+                {
+                    "entity_id": "sensor.temp",
+                    "state": "20",
+                    "last_changed": (now - timedelta(minutes=8)).isoformat(),
+                },
+                {
+                    "entity_id": "sensor.temp",
+                    "state": "21",
+                    "last_changed": (now - timedelta(minutes=1)).isoformat(),
+                },
+            ],
+        ]
+
+    @pytest.mark.asyncio
+    async def test_recent_changes(self):
+        """Test getting recent changes."""
+        with patch("tools.history.make_ha_request") as mock_request:
+            mock_request.return_value = {"success": True, "data": self.sample_history}
+
+            register_history_tools(self.mock_mcp, self.ha_url, self.ha_token)
+
+            result = await self.mock_mcp._tools["get_recent_state_changes"](10)
+
+        data = json.loads(result)
+
+        assert data["success"] is True
+        assert data["period_minutes"] == 10
+        # 4 events total
+        assert data["total_changes"] == 4
+
+        # Check sorting (newest first)
+        changes = data["changes"]
+        assert changes[0]["entity_id"] == "sensor.temp"  # 1 min ago
+        assert changes[1]["entity_id"] == "switch.one"  # 2 min ago
+
+    @pytest.mark.asyncio
+    async def test_recent_changes_filter_domain(self):
+        """Test filtering recent changes by domain."""
+        with patch("tools.history.make_ha_request") as mock_request:
+            mock_request.return_value = {"success": True, "data": self.sample_history}
+
+            register_history_tools(self.mock_mcp, self.ha_url, self.ha_token)
+
+            result = await self.mock_mcp._tools["get_recent_state_changes"](10, domains="switch")
+
+        data = json.loads(result)
+
+        assert data["success"] is True
+        # Only switch.one events should remain
+        assert data["total_changes"] == 2
+        for change in data["changes"]:
+            assert change["entity_id"].startswith("switch.")
+
+    @pytest.mark.asyncio
+    async def test_recent_changes_api_error(self):
+        """API failure → success: False."""
+        with patch("tools.history.make_ha_request") as mock_request:
+            mock_request.return_value = {"success": False, "error": "timeout"}
+            register_history_tools(self.mock_mcp, self.ha_url, self.ha_token)
+            result = await self.mock_mcp._tools["get_recent_state_changes"](10)
+        data = json.loads(result)
+        assert data["success"] is False
+        assert "error" in data
+
+    @pytest.mark.asyncio
+    async def test_recent_changes_truncation(self):
+        """More than 50 changes → truncated to 50 and 'note' field present."""
+        now = datetime.now(timezone.utc)
+        # Build 60 change events for one entity
+        many_history = [
+            [
+                {
+                    "entity_id": "switch.flood",
+                    "state": "on" if i % 2 == 0 else "off",
+                    "last_changed": (now - timedelta(seconds=i * 10)).isoformat(),
+                }
+                for i in range(60)
+            ]
+        ]
+        with patch("tools.history.make_ha_request") as mock_request:
+            mock_request.return_value = {"success": True, "data": many_history}
+            register_history_tools(self.mock_mcp, self.ha_url, self.ha_token)
+            result = await self.mock_mcp._tools["get_recent_state_changes"](60)
+        data = json.loads(result)
+        assert data["success"] is True
+        assert len(data["changes"]) == 50
+        assert "note" in data
+
+
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])

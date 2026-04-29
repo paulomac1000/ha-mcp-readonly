@@ -1,0 +1,14 @@
+# Home Assistant MCP Server Dependencies
+fastmcp>=2.0.0,<3.0.0
+requests>=2.28.0
+pyyaml>=6.0
+starlette>=0.27.0
+uvicorn>=0.22.0
+python-dateutil>=2.8.0
+pydantic>=2.0.0,<3.0.0
+
+# Testing
+pytest>=7.0.0
+pytest-asyncio>=0.21.0
+pytest-mock>=3.10.0
+pytest-cov>=4.0.0

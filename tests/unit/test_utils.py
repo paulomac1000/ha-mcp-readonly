@@ -1,0 +1,369 @@
+"""
+Tests for tools/utils.py
+"""
+
+from unittest.mock import MagicMock, Mock, patch
+
+import pytest
+
+
+class TestMakeHaRequest:
+    """Tests for make_ha_request function."""
+
+    @patch("tools.utils.requests")
+    def test_successful_get_request(self, mock_requests):
+        from tools.utils import make_ha_request
+
+        mock_response = Mock()
+        mock_response.json.return_value = {"test": "data"}
+        mock_response.raise_for_status = Mock()
+        mock_requests.get.return_value = mock_response
+
+        result = make_ha_request("http://localhost:8123", "test_token", "/api/states")
+
+        assert result["success"] is True
+        assert result["data"] == {"test": "data"}
+
+    @patch("tools.utils.requests")
+    def test_successful_post_request(self, mock_requests):
+        from tools.utils import make_ha_request
+
+        mock_response = Mock()
+        mock_response.json.return_value = {"state": "on"}
+        mock_response.raise_for_status = Mock()
+        mock_requests.post.return_value = mock_response
+
+        result = make_ha_request(
+            "http://localhost:8123",
+            "test_token",
+            "/api/states/light.test",
+            method="POST",
+            data={"state": "on"},
+        )
+
+        assert result["success"] is True
+        mock_requests.post.assert_called_once()
+        mock_requests.get.assert_not_called()
+
+    @patch("tools.utils.requests")
+    def test_non_json_response_returns_text(self, mock_requests):
+        from tools.utils import make_ha_request
+
+        mock_response = Mock()
+        mock_response.json.side_effect = ValueError("not JSON")
+        mock_response.text = "OK"
+        mock_response.raise_for_status = Mock()
+        mock_requests.get.return_value = mock_response
+
+        result = make_ha_request("http://localhost:8123", "tok", "/api/ping")
+
+        assert result["success"] is True
+        assert result["data"] == "OK"
+
+    @patch("tools.utils.requests")
+    def test_failed_request_with_retry(self, mock_requests):
+        import requests
+
+        from tools.utils import make_ha_request
+
+        mock_requests.exceptions = requests.exceptions
+        mock_requests.get.side_effect = requests.exceptions.ConnectionError("Test error")
+
+        result = make_ha_request(
+            "http://localhost:8123",
+            "test_token",
+            "/api/states",
+            retries=2,
+            backoff=0.01,
+        )
+
+        assert result["success"] is False
+        assert "Test error" in result["error"]
+        assert mock_requests.get.call_count == 2
+
+
+class TestRegistryLoading:
+    """Tests for registry loading functions."""
+
+    def test_load_registry_success(self):
+        from tools.utils import invalidate_registry_cache, load_registry
+
+        invalidate_registry_cache()
+
+        with patch("tools.utils.Path") as mock_path_class:
+            mock_path = MagicMock()
+            mock_path_class.return_value = mock_path
+            mock_path.__truediv__ = MagicMock(return_value=mock_path)
+            mock_path.exists.return_value = True
+
+            with patch("builtins.open", create=True) as mock_open:
+                mock_file = MagicMock()
+                mock_file.__enter__ = MagicMock(return_value=mock_file)
+                mock_file.__exit__ = MagicMock(return_value=False)
+                mock_open.return_value = mock_file
+
+                with patch("json.load", return_value={"data": {"entities": []}}):
+                    result = load_registry("core.entity_registry", "/config", use_cache=False)
+
+        assert result == {"data": {"entities": []}}
+
+    def test_load_registry_file_not_found(self):
+        from tools.utils import invalidate_registry_cache, load_registry
+
+        invalidate_registry_cache()
+
+        with patch("tools.utils.Path") as mock_path_class:
+            mock_path = MagicMock()
+            mock_path_class.return_value = mock_path
+            mock_path.__truediv__ = MagicMock(return_value=mock_path)
+            mock_path.exists.return_value = False
+
+            result = load_registry("nonexistent", "/config", use_cache=False)
+
+        assert result == {}
+
+    def test_load_registry_blocked_returns_empty(self):
+        """Blocked registries (auth, onboarding) must silently return {}."""
+        from tools.utils import BLOCKED_REGISTRIES, load_registry
+
+        for blocked in BLOCKED_REGISTRIES:
+            result = load_registry(blocked, "/config")
+            assert result == {}, f"Expected {{}} for blocked registry '{blocked}'"
+
+    def test_load_registry_cache_hit(self):
+        """Second call with same key should return cached data without re-reading."""
+        from tools.utils import invalidate_registry_cache, load_registry
+
+        invalidate_registry_cache()
+
+        payload = {"data": {"entities": [{"entity_id": "sensor.x"}]}}
+
+        with patch("tools.utils.Path") as mock_path_class:
+            mock_path = MagicMock()
+            mock_path_class.return_value = mock_path
+            mock_path.__truediv__ = MagicMock(return_value=mock_path)
+            mock_path.exists.return_value = True
+            with patch("builtins.open", create=True) as mock_open_fn:
+                mock_file = MagicMock()
+                mock_file.__enter__ = MagicMock(return_value=mock_file)
+                mock_file.__exit__ = MagicMock(return_value=False)
+                mock_open_fn.return_value = mock_file
+                with patch("json.load", return_value=payload):
+                    load_registry("core.entity_registry", "/config", use_cache=True)
+                    result2 = load_registry("core.entity_registry", "/config", use_cache=True)
+                    assert mock_open_fn.call_count == 1  # file opened only once
+        assert result2 == payload
+
+    def test_invalidate_registry_cache_selective(self):
+        """invalidate_registry_cache(registry_name=...) removes only matching keys."""
+        from tools.utils import (
+            _REGISTRY_CACHE,
+            invalidate_registry_cache,
+            load_registry,
+        )
+
+        invalidate_registry_cache()
+
+        payload = {"data": {}}
+        with patch("tools.utils.Path") as mock_path_class:
+            mock_path = MagicMock()
+            mock_path_class.return_value = mock_path
+            mock_path.__truediv__ = MagicMock(return_value=mock_path)
+            mock_path.exists.return_value = True
+            with patch("builtins.open", create=True) as mock_open_fn:
+                mock_file = MagicMock()
+                mock_file.__enter__ = MagicMock(return_value=mock_file)
+                mock_file.__exit__ = MagicMock(return_value=False)
+                mock_open_fn.return_value = mock_file
+                with patch("json.load", return_value=payload):
+                    load_registry("core.entity_registry", "/config")
+                    load_registry("core.device_registry", "/config")
+
+        invalidate_registry_cache(registry_name="core.entity_registry")
+        remaining = list(_REGISTRY_CACHE.keys())
+        assert not any("core.entity_registry" in k for k in remaining)
+        assert any("core.device_registry" in k for k in remaining)
+
+
+class TestHelperFunctions:
+    """Tests for helper functions."""
+
+    def test_get_best_name_entity(self):
+        from tools.utils import get_best_name
+
+        entity = {
+            "name": "Custom Name",
+            "original_name": "Original",
+            "entity_id": "sensor.test",
+        }
+        assert get_best_name(entity, "entity") == "Custom Name"
+
+        entity = {"original_name": "Original", "entity_id": "sensor.test"}
+        assert get_best_name(entity, "entity") == "Original"
+
+        entity = {"entity_id": "sensor.test"}
+        assert get_best_name(entity, "entity") == "sensor.test"
+
+    def test_get_best_name_device(self):
+        from tools.utils import get_best_name
+
+        device = {"name_by_user": "User Name", "name": "Default"}
+        assert get_best_name(device, "device") == "User Name"
+
+        device = {"name": "Default"}
+        assert get_best_name(device, "device") == "Default"
+
+    def test_resolve_area_id_from_entity(self):
+        from tools.utils import resolve_area_id
+
+        entity = {"area_id": "living_room", "device_id": "dev1"}
+        device_map = {"dev1": {"area_id": "bedroom"}}
+
+        assert resolve_area_id(entity, device_map) == "living_room"
+
+    def test_resolve_area_id_from_device(self):
+        from tools.utils import resolve_area_id
+
+        entity = {"device_id": "dev1"}
+        device_map = {"dev1": {"area_id": "bedroom"}}
+
+        assert resolve_area_id(entity, device_map) == "bedroom"
+
+    def test_sanitize_for_json(self):
+        from tools.utils import sanitize_for_json
+
+        data = {
+            "username": "admin",
+            "password": "secret123",
+            "api_key": "key123",
+            "settings": {"token": "tok123", "enabled": True},
+        }
+
+        result = sanitize_for_json(data)
+
+        assert result["username"] == "admin"
+        assert result["password"] == "***REDACTED***"
+        assert result["api_key"] == "***REDACTED***"
+        assert result["settings"]["token"] == "***REDACTED***"
+        assert result["settings"]["enabled"] is True
+
+    def test_sanitize_for_json_list(self):
+        from tools.utils import sanitize_for_json
+
+        items = [{"password": "x"}, {"name": "safe"}]
+        result = sanitize_for_json(items)
+        assert result[0]["password"] == "***REDACTED***"
+        assert result[1]["name"] == "safe"
+
+    def test_resolve_area_id_none_when_missing(self):
+        from tools.utils import resolve_area_id
+
+        entity = {"device_id": "dev_unknown"}
+        assert resolve_area_id(entity, {}) is None
+
+        entity_no_device = {}
+        assert resolve_area_id(entity_no_device, {}) is None
+
+
+class TestSanitizeLogLine:
+    """Tests for sanitize_log_line security function."""
+
+    def test_redacts_bearer_token(self):
+        from tools.utils import sanitize_log_line
+
+        line = "Authorization: Bearer eyABCDEFGHIJ.token.value"
+        result = sanitize_log_line(line)
+        assert "Bearer [REDACTED]" in result
+        assert "eyABCDEFGHIJ" not in result
+
+    def test_redacts_password(self):
+        from tools.utils import sanitize_log_line
+
+        assert "[REDACTED]" in sanitize_log_line("password=supersecret")
+        assert "[REDACTED]" in sanitize_log_line("passwd: topsecret")
+
+    def test_redacts_token(self):
+        from tools.utils import sanitize_log_line
+
+        assert "[REDACTED]" in sanitize_log_line("token=abc123xyz")
+        assert "[REDACTED]" in sanitize_log_line("access_token=xyz")
+
+    def test_redacts_api_key(self):
+        from tools.utils import sanitize_log_line
+
+        assert "[REDACTED]" in sanitize_log_line("api_key=mykey123")
+
+    def test_redacts_ip_address(self):
+        from tools.utils import sanitize_log_line
+
+        result = sanitize_log_line("Connected from 192.168.1.100")
+        assert "192.168.1.100" not in result
+        assert "[IP_REDACTED]" in result
+
+    def test_safe_line_unchanged(self):
+        from tools.utils import sanitize_log_line
+
+        line = "INFO Home Assistant started successfully"
+        assert sanitize_log_line(line) == line
+
+
+class TestGetRegistryCacheStats:
+    """Tests for get_registry_cache_stats observability function."""
+
+    def test_stats_structure(self):
+        from tools.utils import get_registry_cache_stats, invalidate_registry_cache
+
+        invalidate_registry_cache()
+        stats = get_registry_cache_stats()
+        for key in (
+            "hits",
+            "misses",
+            "blocked",
+            "total",
+            "hit_rate_percent",
+            "cached_keys",
+        ):
+            assert key in stats
+
+    def test_hit_rate_zero_when_no_requests(self):
+        from tools.utils import _REGISTRY_CACHE_STATS, get_registry_cache_stats
+
+        _REGISTRY_CACHE_STATS["hits"] = 0
+        _REGISTRY_CACHE_STATS["misses"] = 0
+        stats = get_registry_cache_stats()
+        assert stats["hit_rate_percent"] == 0.0
+
+
+class TestTailLogFile:
+    """Tests for tail_log_file utility."""
+
+    def test_returns_lines(self, tmp_path):
+        from tools.utils import tail_log_file
+
+        log = tmp_path / "test.log"
+        log.write_text("line1\nline2\nline3\n")
+        mock_result = Mock(stdout="line2\nline3")
+        with patch("tools.utils.subprocess.run", return_value=mock_result):
+            lines = tail_log_file(str(log), lines=2)
+        assert lines == ["line2", "line3"]
+
+    def test_returns_empty_when_file_missing(self, tmp_path):
+        from tools.utils import tail_log_file
+
+        lines = tail_log_file(str(tmp_path / "nonexistent.log"), lines=10)
+        assert lines == []
+
+    def test_returns_empty_on_subprocess_error(self, tmp_path):
+        import subprocess
+
+        from tools.utils import tail_log_file
+
+        log = tmp_path / "test.log"
+        log.write_text("data")
+        with patch("tools.utils.subprocess.run", side_effect=subprocess.SubprocessError("fail")):
+            lines = tail_log_file(str(log), lines=5)
+        assert lines == []
+
+
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])
