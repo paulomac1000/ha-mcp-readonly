@@ -25,7 +25,7 @@ classifiers = [
     "Topic :: Home Automation",
 ]
 dependencies = [
-    "fastmcp>=2.0.0,<3.0.0",
+    "fastmcp>=2.0.0,<4.0.0",
     "requests>=2.28.0",
     "pyyaml>=6.0",
     "starlette>=0.27.0",
