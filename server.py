@@ -170,10 +170,7 @@ def get_all_tools() -> Dict[str, Any]:
     """Return a dictionary of all registered tools keyed by tool name."""
     try:
         raw = mcp._local_provider._components
-        return {
-            k.removeprefix("tool:").removesuffix("@"): v
-            for k, v in raw.items()
-        }
+        return {k.removeprefix("tool:").removesuffix("@"): v for k, v in raw.items()}
     except AttributeError:
         pass
     try:
