@@ -168,10 +168,14 @@ register_batch_operations_tools(mcp, HA_CONFIG_PATH, HA_URL, HA_TOKEN)
 
 def get_all_tools() -> Dict[str, Any]:
     """Return a dictionary of all registered tools."""
-    if hasattr(mcp, "_tool_manager") and hasattr(mcp._tool_manager, "_tools"):
+    try:
+        return mcp._local_provider._components
+    except AttributeError:
+        pass
+    try:
         return mcp._tool_manager._tools
-    elif hasattr(mcp, "_tools"):
-        return mcp._tools
+    except AttributeError:
+        pass
     return {}
 
 
