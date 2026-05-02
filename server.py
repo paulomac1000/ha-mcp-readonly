@@ -167,9 +167,13 @@ register_batch_operations_tools(mcp, HA_CONFIG_PATH, HA_URL, HA_TOKEN)
 
 
 def get_all_tools() -> Dict[str, Any]:
-    """Return a dictionary of all registered tools."""
+    """Return a dictionary of all registered tools keyed by tool name."""
     try:
-        return mcp._local_provider._components
+        raw = mcp._local_provider._components
+        return {
+            k.removeprefix("tool:").removesuffix("@"): v
+            for k, v in raw.items()
+        }
     except AttributeError:
         pass
     try:
