@@ -177,7 +177,7 @@ class TestGetIntegrationEntities:
                 return_value={"success": True, "data": MOCK_STATES},
             ),
         ):
-            result = await tools["get_integration_entities_mcp_local_lan_mcp"]("mqtt")
+            result = await tools["get_integration_entities"]("mqtt")
             data = json.loads(result)
 
             assert data["success"] is True
@@ -191,7 +191,7 @@ class TestGetIntegrationEntities:
     async def test_entities_not_found(self, tools):
         """Test getting entities for non-existent integration."""
         with patch(f"{_P}.get_registry_entities", return_value=MOCK_ENTITIES):
-            result = await tools["get_integration_entities_mcp_local_lan_mcp"]("nonexistent")
+            result = await tools["get_integration_entities"]("nonexistent")
             data = json.loads(result)
 
             assert data["success"] is False
@@ -209,7 +209,7 @@ class TestGetIntegrationEntities:
                 return_value={"success": True, "data": MOCK_STATES},
             ),
         ):
-            result = await tools["get_integration_entities_mcp_local_lan_mcp"](
+            result = await tools["get_integration_entities"](
                 "mqtt", include_disabled=True
             )
             data = json.loads(result)
@@ -229,7 +229,7 @@ class TestGetIntegrationEntities:
                 return_value={"success": True, "data": MOCK_STATES},
             ),
         ):
-            result = await tools["get_integration_entities_mcp_local_lan_mcp"]("mqtt")
+            result = await tools["get_integration_entities"]("mqtt")
             data = json.loads(result)
 
             # mqtt_humidity is "unavailable" and not disabled
@@ -254,7 +254,7 @@ class TestGetIntegrationEntities:
                 return_value={"success": True, "data": states_with_unknown},
             ),
         ):
-            result = await tools["get_integration_entities_mcp_local_lan_mcp"]("mqtt")
+            result = await tools["get_integration_entities"]("mqtt")
             data = json.loads(result)
 
         assert data["unavailable_count"] == 1
@@ -276,7 +276,7 @@ class TestGetIntegrationEntities:
             patch(f"{_P}.get_registry_devices", return_value=MOCK_DEVICES),
             patch(f"{_P}.make_ha_request", return_value={"success": True, "data": []}),
         ):
-            result = await tools["get_integration_entities_mcp_local_lan_mcp"]("mqtt")
+            result = await tools["get_integration_entities"]("mqtt")
             data = json.loads(result)
 
         assert data["success"] is True
@@ -296,7 +296,7 @@ class TestGetIntegrationEntities:
                 return_value={"success": True, "data": MOCK_STATES},
             ),
         ):
-            result = await tools["get_integration_entities_mcp_local_lan_mcp"]("mqtt")
+            result = await tools["get_integration_entities"]("mqtt")
             data = json.loads(result)
 
             assert "by_device" in data
@@ -314,7 +314,7 @@ class TestGetIntegrationEntities:
                 return_value={"success": True, "data": MOCK_STATES},
             ),
         ):
-            result = await tools["get_integration_entities_mcp_local_lan_mcp"]("mqtt")
+            result = await tools["get_integration_entities"]("mqtt")
             data = json.loads(result)
 
             entities = data["by_device"]["dev1"]["entities"]
@@ -335,7 +335,7 @@ class TestGetIntegrationEntities:
                 return_value={"success": True, "data": MOCK_STATES},
             ),
         ):
-            result = await tools["get_integration_entities_mcp_local_lan_mcp"]("mqtt")
+            result = await tools["get_integration_entities"]("mqtt")
             data = json.loads(result)
 
             assert "no_device" not in data["by_device"]
@@ -348,7 +348,7 @@ class TestGetIntegrationEntities:
             patch(f"{_P}.get_registry_devices", return_value=MOCK_DEVICES),
             patch(f"{_P}.make_ha_request", return_value={"success": False}),
         ):
-            result = await tools["get_integration_entities_mcp_local_lan_mcp"]("mqtt")
+            result = await tools["get_integration_entities"]("mqtt")
             data = json.loads(result)
 
             assert data["success"] is True
@@ -380,7 +380,7 @@ class TestGetIntegrationSummary:
                 return_value={"success": True, "data": healthy_states},
             ),
         ):
-            result = await tools["get_integration_summary_mcp_local_lan_mcp"]("mqtt")
+            result = await tools["get_integration_summary"]("mqtt")
             data = json.loads(result)
 
             assert data["success"] is True
@@ -399,7 +399,7 @@ class TestGetIntegrationSummary:
                 return_value={"success": True, "data": MOCK_STATES},
             ),
         ):
-            result = await tools["get_integration_summary_mcp_local_lan_mcp"]("mqtt")
+            result = await tools["get_integration_summary"]("mqtt")
             data = json.loads(result)
 
             assert data["success"] is True
@@ -415,7 +415,7 @@ class TestGetIntegrationSummary:
             patch(f"{_P}.get_registry_config_entries", return_value=MOCK_CONFIG_ENTRIES),
             patch(f"{_P}.make_ha_request", return_value={"success": True, "data": []}),
         ):
-            result = await tools["get_integration_summary_mcp_local_lan_mcp"]("mqtt")
+            result = await tools["get_integration_summary"]("mqtt")
             data = json.loads(result)
 
             assert data["success"] is True
@@ -442,7 +442,7 @@ class TestGetIntegrationSummary:
             patch(f"{_P}.get_registry_config_entries", return_value=entries_with_disabled),
             patch(f"{_P}.make_ha_request", return_value={"success": True, "data": []}),
         ):
-            result = await tools["get_integration_summary_mcp_local_lan_mcp"]("mqtt")
+            result = await tools["get_integration_summary"]("mqtt")
             data = json.loads(result)
 
         assert data["success"] is True
@@ -458,7 +458,7 @@ class TestGetIntegrationSummary:
             patch(f"{_P}.get_registry_config_entries", return_value=MOCK_CONFIG_ENTRIES),
             patch(f"{_P}.make_ha_request", return_value={"success": True, "data": []}),
         ):
-            result = await tools["get_integration_summary_mcp_local_lan_mcp"]("nonexistent")
+            result = await tools["get_integration_summary"]("nonexistent")
             data = json.loads(result)
 
             assert data["success"] is False
@@ -473,7 +473,7 @@ class TestGetIntegrationSummary:
             patch(f"{_P}.get_registry_config_entries", return_value=MOCK_CONFIG_ENTRIES),
             patch(f"{_P}.make_ha_request", return_value={"success": True, "data": []}),
         ):
-            result = await tools["get_integration_summary_mcp_local_lan_mcp"]("mqtt")
+            result = await tools["get_integration_summary"]("mqtt")
             data = json.loads(result)
 
             # dev1 has config_entries=["mqtt_entry_1"]
@@ -488,7 +488,7 @@ class TestGetIntegrationSummary:
             patch(f"{_P}.get_registry_config_entries", return_value=MOCK_CONFIG_ENTRIES),
             patch(f"{_P}.make_ha_request", return_value={"success": True, "data": []}),
         ):
-            result = await tools["get_integration_summary_mcp_local_lan_mcp"]("mqtt")
+            result = await tools["get_integration_summary"]("mqtt")
             data = json.loads(result)
 
             assert "sensor" in data["entity_platforms"]
@@ -506,7 +506,7 @@ class TestGetIntegrationSummary:
                 return_value={"success": False, "error": "down"},
             ),
         ):
-            result = await tools["get_integration_summary_mcp_local_lan_mcp"]("mqtt")
+            result = await tools["get_integration_summary"]("mqtt")
             data = json.loads(result)
 
             enabled = data["entities_summary"]["enabled"]
@@ -527,7 +527,7 @@ class TestErrorHandling:
     async def test_empty_registry(self, tools):
         """Test handling empty registry data."""
         with patch(f"{_P}.get_registry_entities", return_value=[]):
-            result = await tools["get_integration_entities_mcp_local_lan_mcp"]("test")
+            result = await tools["get_integration_entities"]("test")
             data = json.loads(result)
 
             assert data["success"] is False
@@ -537,7 +537,7 @@ class TestErrorHandling:
     async def test_empty_domain_name(self, tools):
         """Test handling empty integration name."""
         with patch(f"{_P}.get_registry_entities", return_value=[]):
-            result = await tools["get_integration_entities_mcp_local_lan_mcp"]("")
+            result = await tools["get_integration_entities"]("")
             data = json.loads(result)
             assert data["success"] is False
 
@@ -552,7 +552,7 @@ class TestErrorHandling:
                 return_value={"success": False, "error": "Connection refused"},
             ),
         ):
-            result = await tools["get_integration_entities_mcp_local_lan_mcp"]("mqtt")
+            result = await tools["get_integration_entities"]("mqtt")
             data = json.loads(result)
 
             # Should succeed with partial data
@@ -568,7 +568,7 @@ class TestErrorHandling:
             patch(f"{_P}.get_registry_config_entries", return_value=[]),
             patch(f"{_P}.make_ha_request", return_value={"success": True, "data": []}),
         ):
-            result = await tools["get_integration_summary_mcp_local_lan_mcp"]("mqtt")
+            result = await tools["get_integration_summary"]("mqtt")
             data = json.loads(result)
 
             # Entities exist even if no config entries - should still return data
@@ -595,5 +595,5 @@ class TestPerformance:
                 return_value={"success": True, "data": MOCK_STATES},
             ) as mock_req,
         ):
-            await tools["get_integration_entities_mcp_local_lan_mcp"]("mqtt")
+            await tools["get_integration_entities"]("mqtt")
             assert mock_req.call_count == 1

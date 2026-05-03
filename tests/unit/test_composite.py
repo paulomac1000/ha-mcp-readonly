@@ -187,7 +187,7 @@ class TestInvestigateEntity:
             mock_request.return_value = {"success": True, "data": sample_states}
             mock_auto.return_value = (sample_automations, None)
 
-            result = await self.mcp._tools["investigate_entity_mcp_local_lan_mcp"]("temperature")
+            result = await self.mcp._tools["investigate_entity"]("temperature")
             data = json.loads(result)
 
             assert data["success"] is True
@@ -207,7 +207,7 @@ class TestInvestigateEntity:
             mock_request.return_value = {"success": True, "data": sample_states}
             mock_auto.return_value = (sample_automations, None)
 
-            result = await self.mcp._tools["investigate_entity_mcp_local_lan_mcp"](
+            result = await self.mcp._tools["investigate_entity"](
                 "temperature,motion"
             )
             data = json.loads(result)
@@ -227,7 +227,7 @@ class TestInvestigateEntity:
             mock_request.return_value = {"success": True, "data": sample_states}
             mock_auto.return_value = (sample_automations, None)
 
-            result = await self.mcp._tools["investigate_entity_mcp_local_lan_mcp"]("living")
+            result = await self.mcp._tools["investigate_entity"]("living")
             data = json.loads(result)
 
             assert data["success"] is True
@@ -246,7 +246,7 @@ class TestInvestigateEntity:
             mock_request.return_value = {"success": True, "data": sample_states}
             mock_auto.return_value = (sample_automations, None)
 
-            result = await self.mcp._tools["investigate_entity_mcp_local_lan_mcp"](
+            result = await self.mcp._tools["investigate_entity"](
                 "nonexistent_xyz"
             )
             data = json.loads(result)
@@ -266,7 +266,7 @@ class TestInvestigateEntity:
             mock_request.return_value = {"success": True, "data": []}
             mock_auto.return_value = ([], None)
 
-            result = await self.mcp._tools["investigate_entity_mcp_local_lan_mcp"]("   ")
+            result = await self.mcp._tools["investigate_entity"]("   ")
             data = json.loads(result)
 
             assert data["success"] is False
@@ -292,7 +292,7 @@ class TestInvestigateEntity:
             mock_request.return_value = {"success": True, "data": unavailable_states}
             mock_auto.return_value = (sample_automations, None)
 
-            result = await self.mcp._tools["investigate_entity_mcp_local_lan_mcp"]("temperature")
+            result = await self.mcp._tools["investigate_entity"]("temperature")
             data = json.loads(result)
 
             assert data["success"] is True
@@ -322,7 +322,7 @@ class TestInvestigateEntity:
             mock_load.side_effect = lambda name, path: self.mock_registry_data.get(name, {})
             mock_auto.return_value = (sample_automations, None)
 
-            result = await self.mcp._tools["investigate_entity_mcp_local_lan_mcp"](
+            result = await self.mcp._tools["investigate_entity"](
                 "temperature", include_history=True, hours_back=24
             )
             data = json.loads(result)
@@ -360,7 +360,7 @@ class TestGetEntityWithAutomations:
             mock_request.return_value = {"success": True, "data": sample_states}
             mock_auto.return_value = (sample_automations, None)
 
-            result = await self.mcp._tools["get_entity_with_automations_mcp_local_lan_mcp"](
+            result = await self.mcp._tools["get_entity_with_automations"](
                 "sensor.temperature_living_room", include_automation_code=False
             )
             data = json.loads(result)
@@ -383,7 +383,7 @@ class TestGetEntityWithAutomations:
             mock_request.return_value = {"success": True, "data": sample_states}
             mock_auto.return_value = (sample_automations, None)
 
-            result = await self.mcp._tools["get_entity_with_automations_mcp_local_lan_mcp"](
+            result = await self.mcp._tools["get_entity_with_automations"](
                 "sensor.nonexistent", include_automation_code=False
             )
             data = json.loads(result)
@@ -403,7 +403,7 @@ class TestGetEntityWithAutomations:
             mock_request.return_value = {"success": True, "data": sample_states}
             mock_auto.return_value = (sample_automations, None)
 
-            result = await self.mcp._tools["get_entity_with_automations_mcp_local_lan_mcp"](
+            result = await self.mcp._tools["get_entity_with_automations"](
                 "sensor.temperature_living_room", include_automation_code=True
             )
             data = json.loads(result)
@@ -439,7 +439,7 @@ class TestGetAreaDiagnostic:
             mock_load.side_effect = lambda name, path: self.mock_registry_data.get(name, {})
             mock_request.return_value = {"success": True, "data": sample_states}
 
-            result = await self.mcp._tools["get_area_diagnostic_mcp_local_lan_mcp"]("living_room")
+            result = await self.mcp._tools["get_area_diagnostic"]("living_room")
             data = json.loads(result)
 
             assert data["success"] is True
@@ -457,7 +457,7 @@ class TestGetAreaDiagnostic:
             mock_load.side_effect = lambda name, path: self.mock_registry_data.get(name, {})
             mock_request.return_value = {"success": True, "data": sample_states}
 
-            result = await self.mcp._tools["get_area_diagnostic_mcp_local_lan_mcp"](
+            result = await self.mcp._tools["get_area_diagnostic"](
                 "nonexistent_area"
             )
             data = json.loads(result)
@@ -485,7 +485,7 @@ class TestGetAreaDiagnostic:
             mock_request.return_value = {"success": True, "data": unavailable_states}
             mock_auto.return_value = ([], None)
 
-            result = await self.mcp._tools["get_area_diagnostic_mcp_local_lan_mcp"]("living_room")
+            result = await self.mcp._tools["get_area_diagnostic"]("living_room")
             data = json.loads(result)
 
         assert data["success"] is True
@@ -503,7 +503,7 @@ class TestGetAreaDiagnostic:
             mock_load.side_effect = lambda name, path: self.mock_registry_data.get(name, {})
             mock_request.return_value = {"success": True, "data": sample_states}
 
-            result = await self.mcp._tools["get_area_diagnostic_mcp_local_lan_mcp"](
+            result = await self.mcp._tools["get_area_diagnostic"](
                 "living_room", include_automations=False, include_sensors=False
             )
             data = json.loads(result)
@@ -637,7 +637,7 @@ class TestErrorHandling:
                 "error": "Connection refused",
             }
 
-            result = await self.mcp._tools["investigate_entity_mcp_local_lan_mcp"]("test")
+            result = await self.mcp._tools["investigate_entity"]("test")
             data = json.loads(result)
 
             # investigate_entity gracefully degrades - returns success with warnings
@@ -654,7 +654,7 @@ class TestErrorHandling:
             with patch("tools.composite.make_ha_request") as mock_request:
                 mock_request.return_value = {"success": True, "data": []}
 
-                result = await self.mcp._tools["investigate_entity_mcp_local_lan_mcp"]("test")
+                result = await self.mcp._tools["investigate_entity"]("test")
                 data = json.loads(result)
 
                 # Should handle gracefully, not crash
@@ -667,7 +667,7 @@ class TestErrorHandling:
             # Return malformed data
             mock_request.return_value = {"success": True, "data": "not a list"}
 
-            result = await self.mcp._tools["investigate_entity_mcp_local_lan_mcp"]("test")
+            result = await self.mcp._tools["investigate_entity"]("test")
             data = json.loads(result)
 
             # Should handle error gracefully
@@ -696,7 +696,7 @@ class TestTokenOptimization:
                 mock_request.return_value = {"success": True, "data": sample_states}
                 mock_auto.return_value = sample_automations
 
-                result = await self.mcp._tools["get_entity_with_automations_mcp_local_lan_mcp"](
+                result = await self.mcp._tools["get_entity_with_automations"](
                     "sensor.temperature_living_room", include_automation_code=False
                 )
 

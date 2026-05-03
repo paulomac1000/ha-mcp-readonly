@@ -327,7 +327,7 @@ def register_composite_tools(
             )
 
     # Legacy alias preserved for backward compatibility (tests expect this name)
-    @mcp.tool(name="investigate_entity_mcp_local_lan_mcp")
+    @mcp.tool(name="investigate_entity")
     async def investigate_entity_legacy(
         search_term: str,
         include_automation_code: bool = False,
@@ -341,7 +341,7 @@ def register_composite_tools(
             hours_back=hours_back,
         )
 
-    @mcp.tool(name="get_entity_with_automations_mcp_local_lan_mcp")
+    @mcp.tool(name="get_entity_with_automations")
     async def get_entity_with_automations_legacy(
         entity_id: str,
         include_automation_code: bool = False,
@@ -640,7 +640,7 @@ def register_composite_tools(
     #  TOOL 3 — get_area_diagnostic
     # ================================================================
 
-    @mcp.tool(name="get_area_diagnostic_mcp_local_lan_mcp")
+    @mcp.tool(name="get_area_diagnostic")
     async def get_area_diagnostic(
         area_name: str,
         include_automations: bool = True,

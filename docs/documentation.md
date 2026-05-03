@@ -66,7 +66,7 @@ HA-MCP-Readonly is a read-only Model Context Protocol server that connects to yo
 ### Prerequisites
 
 - Docker and Docker Compose
-- Home Assistant instance with a [long-lived access token](https://developers.home-assistant.io/docs/auth_api/#long-lived-access-token)
+- Home Assistant instance with a [long-lived access token](https://www.home-assistant.io/docs/configuration/secrets/#long-lived-access-token)
 - Home Assistant config directory available on the host
 
 ### 1. Clone and Configure
@@ -133,7 +133,7 @@ volumes:
 
 ## MCP Tools
 
-The server exposes 110+ read-only MCP tools organized by domain.  
+The server exposes 114 read-only MCP tools organized by domain.  
 Call `GET /api/tools` on the REST API for the full, up-to-date list.
 
 ### Entity State Tools
@@ -277,7 +277,7 @@ Call `GET /api/tools` on the REST API for the full, up-to-date list.
 ### Example: Call a Tool
 
 ```bash
-curl -X POST http://localhost:9093/api/tools/search_states \
+curl -X POST http://localhost:9093/api/tools/search_entities \
   -H "Content-Type: application/json" \
   -d '{"search_term": "light.living_room"}'
 ```

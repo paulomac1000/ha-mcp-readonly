@@ -10,7 +10,8 @@ Read-only MCP (Model Context Protocol) server for Home Assistant. Gives AI assis
 ## Requirements
 
 - Python 3.11+ (for local use) or Docker
-- A Home Assistant instance with a [long-lived access token](https://developers.home-assistant.io/docs/auth_api/#long-lived-access-token)
+- A Home Assistant instance with a [long-lived access token](https://www.home-assistant.io/docs/configuration/secrets/#long-lived-access-token)
+  - Create one in your HA profile: **Settings → Security → Long-Lived Access Tokens**
 - Access to your Home Assistant config directory (for filesystem tools)
 
 ## Quick Start
@@ -28,7 +29,11 @@ HA_URL=http://your-ha-ip:8123
 HA_TOKEN=your_long_lived_access_token_here
 # HA_CONFIG_PATH=/config                # optional, default shown
 # MCP_DEV_TOOLS_ENABLED=1               # optional, default shown
-# HEALTH_REPORT_ENABLED=0               # optional, default shown
+# HEALTH_CHECK_PORT=9091                # optional, default shown
+# MCP_SSE_PORT=9092                     # optional, default shown
+# REST_API_PORT=9093                    # optional, default shown
+# RUN_TESTS_ON_STARTUP=0                # optional, default shown
+# OUTPUT_PATH=/app/output/ha-ai-context.md  # optional, default shown
 ```
 
 **IMPORTANT:** The `.env` file contains your access token. It is gitignored and must never be committed.
@@ -58,8 +63,14 @@ services:
       - "9092:9092"  # MCP SSE
       - "9093:9093"  # REST API
     volumes:
-      - /path/to/ha/config:/config:ro
+      - /path/to/ha/config:/config:ro  # Replace with your HA config path (e.g., /config, ~/.homeassistant)
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:9091/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
 ```
 
 **Option B — with plain `docker run`:**
@@ -113,9 +124,9 @@ curl -X POST http://localhost:9093/api/context/generate \
   -d '{"mode": "hybrid"}'
 ```
 
-## Available Tools (110+)
+## Available Tools (114 total)
 
-Tools are organized by category. All are **read-only** — no state changes, no service calls, no modifications.
+Tools are organized by category (51 shown in table below). All are **read-only** — no state changes, no service calls, no modifications.
 
 | Category | Key tools |
 |----------|-----------|
@@ -126,11 +137,11 @@ Tools are organized by category. All are **read-only** — no state changes, no 
 | **Devices & Areas** | `get_device_details`, `search_devices`, `get_devices_by_area`, `get_area_devices_summary` |
 | **Config entries** | `get_config_entry_details`, `search_config_entries`, `diagnose_config_entry`, `list_config_entry_domains` |
 | **Integrations** | `get_integration_entities`, `get_integration_summary` |
-| **Diagnostics** | `diagnose_system_health`, `get_unavailable_entities_grouped`, `integration_health` |
+| **Diagnostics** | `diagnose_system_health`, `get_unavailable_entities_grouped`, `get_integration_health` |
 | **Logs** | `get_log_insights`, `analyze_log_errors`, `get_startup_errors`, `get_log_timeline`, `search_logs` |
-| **History** | `get_history_summary`, `get_recent_state_changes` |
+| **History** | `get_entity_state_history_summary`, `get_recent_state_changes` |
 | **Context** | `entity_get_context_tree`, `get_entity_dependencies`, `get_entity_consumers` |
-| **Config** | `get_main_configuration`, `search_in_config`, `validate_yaml`, `read_config_file` |
+| **Config** | `get_main_configuration`, `search_in_config`, `validate_yaml_syntax`, `read_config_file` |
 | **Storage** | `search_registries_batch`, `get_entity_registry`, `get_device_registry`, `get_area_registry` |
 | **Batch** | `bulk_search_entities`, `compare_entities_state`, `validate_yaml_batch` |
 | **Composite** | `investigate_entity`, `get_area_diagnostic`, `get_entity_with_automations` |
@@ -138,7 +149,11 @@ Tools are organized by category. All are **read-only** — no state changes, no 
 
 ## Claude Desktop Configuration
 
-Add the following to your `claude_desktop_config.json`:
+Add the following to your Claude Desktop config:
+
+**macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
+**Linux**: `~/.config/Claude/claude_desktop_config.json`
+**Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
 
 ```json
 {
@@ -150,7 +165,7 @@ Add the following to your `claude_desktop_config.json`:
 }
 ```
 
-After restarting Claude Desktop, the 110+ Home Assistant tools will be available.
+After restarting Claude Desktop, the 114 Home Assistant tools will be available.
 
 ### LibreChat
 
@@ -246,13 +261,13 @@ context_generator/
 └── utils.py               # Registry cache, HA API client, YAML helpers
 
 tools/
-├── states.py              # Entity state queries (17 tools)
-├── automations.py         # Automation analysis (10 tools)
-├── scripts.py, scenes.py  # Script and scene inspection
-├── blueprints.py          # Blueprint management (7 tools)
-├── devices.py, areas.py   # Device and area tools
-├── config_entries.py      # Config entry diagnostics
-├── integrations.py        # Integration entity analysis
+├── states.py              # Entity state queries (12 tools)
+├── automations.py         # Automation analysis (9 tools)
+├── scripts.py, scenes.py  # Script and scene inspection (2+2 tools)
+├── blueprints.py          # Blueprint management (4 tools)
+├── devices.py, areas.py   # Device and area tools (5+1 tools)
+├── config_entries.py      # Config entry diagnostics (4 tools)
+├── integrations.py        # Integration entity analysis (2 tools)
 ├── diagnostics.py         # System health, energy dashboard
 ├── logs.py                # Log analysis and insights
 ├── history.py             # State history and recent changes
@@ -284,7 +299,7 @@ tests/
 
 - The server exposes three ports: 9091 (health), 9092 (MCP SSE), 9093 (REST API). Ports are configurable via env.
 - `MCP_DEV_TOOLS_ENABLED=0` disables template execution and debugging tools for production use.
-- `HEALTH_REPORT_ENABLED=1` enables periodic health reports pushed to a Home Assistant sensor (`sensor.system_health_report`).
+- **Security note**: Ports 9091-9093 should not be exposed publicly. Use firewall rules or reverse proxy with authentication if needed.
 - Registry files (areas, devices, entities, config entries) are cached for 5 minutes to reduce filesystem I/O.
 - All tool responses return JSON with a `success` field — always check this before reading `data`.
 

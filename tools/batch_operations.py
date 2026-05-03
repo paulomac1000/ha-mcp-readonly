@@ -51,7 +51,7 @@ TOKEN_PER_FILE = 100
 # =============================================================================
 
 
-async def validate_yaml_batch_mcp_local_lan_mcp(
+async def validate_yaml_batch(
     config_path: str,
     file_paths: str,
 ) -> str:
@@ -189,7 +189,7 @@ async def validate_yaml_batch_mcp_local_lan_mcp(
 # =============================================================================
 
 
-async def compare_entities_state_mcp_local_lan_mcp(
+async def compare_entities_state(
     ha_url: str,
     ha_token: str,
     entity_ids: str,
@@ -353,7 +353,7 @@ def _compare_attributes(before: Dict, after: Dict) -> List[Dict]:
 # =============================================================================
 
 
-async def get_template_dependencies_mcp_local_lan_mcp(
+async def get_template_dependencies(
     config_path: str,
     entity_id: str,
 ) -> str:
@@ -502,7 +502,7 @@ async def get_template_dependencies_mcp_local_lan_mcp(
 # =============================================================================
 
 
-async def bulk_search_entities_mcp_local_lan_mcp(
+async def bulk_search_entities(
     config_path: str,
     search_terms: str,
     max_results_per_term: int = 10,
@@ -593,31 +593,31 @@ def register_batch_operations_tools(mcp, config_path: str, ha_url: str, ha_token
     """Register batch operation tools with MCP server."""
 
     @mcp.tool()
-    async def validate_yaml_batch_mcp_local_lan_mcp(file_paths: str) -> str:
+    async def validate_yaml_batch(file_paths: str) -> str:
         """BATCH - Validate multiple YAML files in one call. Saves ~80% tokens vs individual calls."""
-        return await globals()["validate_yaml_batch_mcp_local_lan_mcp"](config_path, file_paths)
+        return await globals()["validate_yaml_batch"](config_path, file_paths)
 
     @mcp.tool()
-    async def compare_entities_state_mcp_local_lan_mcp(
+    async def compare_entities_state(
         entity_ids: str, snapshot_before: str = None
     ) -> str:
         """COMPARE - Compare entity states before/after changes. Saves ~70% tokens vs manual checking."""
-        return await globals()["compare_entities_state_mcp_local_lan_mcp"](
+        return await globals()["compare_entities_state"](
             ha_url, ha_token, entity_ids, snapshot_before
         )
 
     @mcp.tool()
-    async def get_template_dependencies_mcp_local_lan_mcp(entity_id: str) -> str:
+    async def get_template_dependencies(entity_id: str) -> str:
         """ANALYZE - Get all entities referenced in template. Saves ~90% tokens vs manual analysis."""
-        return await globals()["get_template_dependencies_mcp_local_lan_mcp"](
+        return await globals()["get_template_dependencies"](
             config_path, entity_id
         )
 
     @mcp.tool()
-    async def bulk_search_entities_mcp_local_lan_mcp(
+    async def bulk_search_entities(
         search_terms: str, max_results_per_term: int = 10
     ) -> str:
         """BATCH - Search multiple terms at once. Saves ~85% tokens vs individual searches."""
-        return await globals()["bulk_search_entities_mcp_local_lan_mcp"](
+        return await globals()["bulk_search_entities"](
             config_path, search_terms, max_results_per_term
         )

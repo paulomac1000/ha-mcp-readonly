@@ -40,7 +40,7 @@ def register_integration_tools(mcp, config_path: str, ha_url: str, ha_token: str
     # TOOLS
     # =========================================================================
 
-    @mcp.tool(name="get_integration_entities_mcp_local_lan_mcp")
+    @mcp.tool(name="get_integration_entities")
     async def get_integration_entities(domain: str, include_disabled: bool = False) -> str:
         """
         Get all entities for a given integration domain.
@@ -136,7 +136,7 @@ def register_integration_tools(mcp, config_path: str, ha_url: str, ha_token: str
             ensure_ascii=False,
         )
 
-    @mcp.tool(name="get_integration_summary_mcp_local_lan_mcp")
+    @mcp.tool(name="get_integration_summary")
     async def get_integration_summary(domain: str) -> str:
         """
         Summarize an integration (devices, entities, health).

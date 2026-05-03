@@ -120,7 +120,7 @@ test_script:
     - service: light.turn_on
         """)
 
-        result = await self.mcp._tools["validate_yaml_batch_mcp_local_lan_mcp"](
+        result = await self.mcp._tools["validate_yaml_batch"](
             file_paths="automations.yaml,scripts.yaml"
         )
         data = json.loads(result)
@@ -140,7 +140,7 @@ invalid: [unclosed
 bad syntax
         """)
 
-        result = await self.mcp._tools["validate_yaml_batch_mcp_local_lan_mcp"](
+        result = await self.mcp._tools["validate_yaml_batch"](
             file_paths="bad.yaml"
         )
         data = json.loads(result)
@@ -151,7 +151,7 @@ bad syntax
     @pytest.mark.asyncio
     async def test_validate_nonexistent_file(self):
         """Test validation with non-existent file."""
-        result = await self.mcp._tools["validate_yaml_batch_mcp_local_lan_mcp"](
+        result = await self.mcp._tools["validate_yaml_batch"](
             file_paths="nonexistent.yaml"
         )
         data = json.loads(result)
@@ -164,7 +164,7 @@ bad syntax
     @pytest.mark.asyncio
     async def test_validate_path_traversal_prevention(self):
         """Test that path traversal attempts are blocked."""
-        result = await self.mcp._tools["validate_yaml_batch_mcp_local_lan_mcp"](
+        result = await self.mcp._tools["validate_yaml_batch"](
             file_paths="../../../etc/passwd"
         )
         data = json.loads(result)
@@ -178,7 +178,7 @@ bad syntax
     @pytest.mark.asyncio
     async def test_validate_empty_file_paths(self):
         """Test with empty file paths."""
-        result = await self.mcp._tools["validate_yaml_batch_mcp_local_lan_mcp"](file_paths="")
+        result = await self.mcp._tools["validate_yaml_batch"](file_paths="")
         data = json.loads(result)
 
         assert data["success"] is False
@@ -190,7 +190,7 @@ bad syntax
         config_dir = Path(self.config_path)
         (config_dir / "test.yaml").write_text("key: value")
 
-        result = await self.mcp._tools["validate_yaml_batch_mcp_local_lan_mcp"](
+        result = await self.mcp._tools["validate_yaml_batch"](
             file_paths="test.yaml"
         )
         data = json.loads(result)
@@ -204,7 +204,7 @@ bad syntax
         config_dir = Path(self.config_path)
         (config_dir / "empty.yaml").write_text("")
 
-        result = await self.mcp._tools["validate_yaml_batch_mcp_local_lan_mcp"](
+        result = await self.mcp._tools["validate_yaml_batch"](
             file_paths="empty.yaml"
         )
         data = json.loads(result)
@@ -235,7 +235,7 @@ class TestCompareEntitiesState:
         with patch("tools.batch_operations.make_ha_request") as mock_request:
             mock_request.return_value = {"success": True, "data": sample_states}
 
-            result = await self.mcp._tools["compare_entities_state_mcp_local_lan_mcp"](
+            result = await self.mcp._tools["compare_entities_state"](
                 entity_ids="sensor.temp", snapshot_before=None
             )
             data = json.loads(result)
@@ -262,7 +262,7 @@ class TestCompareEntitiesState:
         with patch("tools.batch_operations.make_ha_request") as mock_request:
             mock_request.return_value = {"success": True, "data": after_states}
 
-            result = await self.mcp._tools["compare_entities_state_mcp_local_lan_mcp"](
+            result = await self.mcp._tools["compare_entities_state"](
                 entity_ids="sensor.temp",
                 snapshot_before=json.dumps({"snapshot": before_snapshot}),
             )
@@ -290,7 +290,7 @@ class TestCompareEntitiesState:
         with patch("tools.batch_operations.make_ha_request") as mock_request:
             mock_request.return_value = {"success": True, "data": current_states}
 
-            result = await self.mcp._tools["compare_entities_state_mcp_local_lan_mcp"](
+            result = await self.mcp._tools["compare_entities_state"](
                 entity_ids="sensor.temp",
                 snapshot_before=json.dumps({"snapshot": snapshot}),
             )
@@ -313,7 +313,7 @@ class TestCompareEntitiesState:
         with patch("tools.batch_operations.make_ha_request") as mock_request:
             mock_request.return_value = {"success": True, "data": current_states}
 
-            result = await self.mcp._tools["compare_entities_state_mcp_local_lan_mcp"](
+            result = await self.mcp._tools["compare_entities_state"](
                 entity_ids="sensor.temp,sensor.new",
                 snapshot_before=json.dumps({"snapshot": snapshot}),
             )
@@ -335,7 +335,7 @@ class TestCompareEntitiesState:
         with patch("tools.batch_operations.make_ha_request") as mock_request:
             mock_request.return_value = {"success": True, "data": current_states}
 
-            result = await self.mcp._tools["compare_entities_state_mcp_local_lan_mcp"](
+            result = await self.mcp._tools["compare_entities_state"](
                 entity_ids="sensor.temp,sensor.removed",
                 snapshot_before=json.dumps({"snapshot": snapshot}),
             )
@@ -347,7 +347,7 @@ class TestCompareEntitiesState:
     @pytest.mark.asyncio
     async def test_compare_empty_entity_ids(self):
         """Empty entity_ids should return an error."""
-        result = await self.mcp._tools["compare_entities_state_mcp_local_lan_mcp"](
+        result = await self.mcp._tools["compare_entities_state"](
             entity_ids="", snapshot_before=None
         )
         data = json.loads(result)
@@ -371,7 +371,7 @@ class TestCompareEntitiesState:
         with patch("tools.batch_operations.make_ha_request") as mock_request:
             mock_request.return_value = {"success": True, "data": current_states}
 
-            result = await self.mcp._tools["compare_entities_state_mcp_local_lan_mcp"](
+            result = await self.mcp._tools["compare_entities_state"](
                 entity_ids="light.room",
                 snapshot_before=json.dumps({"snapshot": snapshot}),
             )
@@ -420,7 +420,7 @@ class TestGetTemplateDependencies:
                 {"entity_id": "sensor.temperature", "platform": "mqtt"},
             ]
 
-            result = await self.mcp._tools["get_template_dependencies_mcp_local_lan_mcp"](
+            result = await self.mcp._tools["get_template_dependencies"](
                 entity_id="template.test_sensor"
             )
             data = json.loads(result)
@@ -434,7 +434,7 @@ class TestGetTemplateDependencies:
         with patch("tools.utils.get_registry_entities") as mock_registry:
             mock_registry.return_value = [{"entity_id": "sensor.temperature", "platform": "mqtt"}]
 
-            result = await self.mcp._tools["get_template_dependencies_mcp_local_lan_mcp"](
+            result = await self.mcp._tools["get_template_dependencies"](
                 entity_id="sensor.temperature"
             )
             data = json.loads(result)
@@ -448,7 +448,7 @@ class TestGetTemplateDependencies:
         with patch("tools.utils.get_registry_entities") as mock_registry:
             mock_registry.return_value = []
 
-            result = await self.mcp._tools["get_template_dependencies_mcp_local_lan_mcp"](
+            result = await self.mcp._tools["get_template_dependencies"](
                 entity_id="template.nonexistent"
             )
             data = json.loads(result)
@@ -478,7 +478,7 @@ class TestGetTemplateDependencies:
                 }
             ]
 
-            result = await self.mcp._tools["get_template_dependencies_mcp_local_lan_mcp"](
+            result = await self.mcp._tools["get_template_dependencies"](
                 entity_id="template.ghost_sensor"
             )
             data = json.loads(result)
@@ -536,7 +536,7 @@ class TestBulkSearchEntities:
                 },
             ]
 
-            result = await self.mcp._tools["bulk_search_entities_mcp_local_lan_mcp"](
+            result = await self.mcp._tools["bulk_search_entities"](
                 search_terms="temperature,humidity", max_results_per_term=10
             )
             data = json.loads(result)
@@ -552,7 +552,7 @@ class TestBulkSearchEntities:
         with patch("tools.utils.get_registry_entities") as mock_registry:
             mock_registry.return_value = []
 
-            result = await self.mcp._tools["bulk_search_entities_mcp_local_lan_mcp"](
+            result = await self.mcp._tools["bulk_search_entities"](
                 search_terms="nonexistent", max_results_per_term=10
             )
             data = json.loads(result)
@@ -571,7 +571,7 @@ class TestBulkSearchEntities:
         with patch("tools.batch_operations.get_registry_entities") as mock_registry:
             mock_registry.return_value = entities
 
-            result = await self.mcp._tools["bulk_search_entities_mcp_local_lan_mcp"](
+            result = await self.mcp._tools["bulk_search_entities"](
                 search_terms="temp", max_results_per_term=5
             )
             data = json.loads(result)
@@ -594,7 +594,7 @@ class TestBulkSearchEntities:
                 }
             ]
 
-            result = await self.mcp._tools["bulk_search_entities_mcp_local_lan_mcp"](
+            result = await self.mcp._tools["bulk_search_entities"](
                 search_terms="TEMPERATURE,temperature,TeMpErAtUrE",
                 max_results_per_term=10,
             )
@@ -608,7 +608,7 @@ class TestBulkSearchEntities:
     @pytest.mark.asyncio
     async def test_bulk_search_empty_terms(self):
         """Test with empty search terms."""
-        result = await self.mcp._tools["bulk_search_entities_mcp_local_lan_mcp"](
+        result = await self.mcp._tools["bulk_search_entities"](
             search_terms="", max_results_per_term=10
         )
         data = json.loads(result)
@@ -622,7 +622,7 @@ class TestBulkSearchEntities:
         with patch("tools.utils.get_registry_entities") as mock_registry:
             mock_registry.return_value = []
 
-            result = await self.mcp._tools["bulk_search_entities_mcp_local_lan_mcp"](
+            result = await self.mcp._tools["bulk_search_entities"](
                 search_terms="test", max_results_per_term=10
             )
             data = json.loads(result)
@@ -648,7 +648,7 @@ class TestErrorHandling:
         with patch("tools.batch_operations.make_ha_request") as mock_request:
             mock_request.return_value = {"success": False, "error": "Connection failed"}
 
-            result = await self.mcp._tools["compare_entities_state_mcp_local_lan_mcp"](
+            result = await self.mcp._tools["compare_entities_state"](
                 entity_ids="sensor.test", snapshot_before=None
             )
             data = json.loads(result)
@@ -662,7 +662,7 @@ class TestErrorHandling:
         with patch("tools.batch_operations.make_ha_request") as mock_request:
             mock_request.return_value = {"success": True, "data": []}
 
-            result = await self.mcp._tools["compare_entities_state_mcp_local_lan_mcp"](
+            result = await self.mcp._tools["compare_entities_state"](
                 entity_ids="sensor.test", snapshot_before="invalid json"
             )
             data = json.loads(result)
