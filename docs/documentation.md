@@ -115,9 +115,11 @@ All configuration is via environment variables. See `.env.example` for a complet
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `HA_CONFIG_PATH` | `/config` | Path to HA configuration directory inside container |
+| `HEALTH_CHECK_PORT` | `9091` | Health check HTTP server port |
 | `MCP_SSE_PORT` | `9092` | MCP SSE transport port |
 | `REST_API_PORT` | `9093` | REST API port |
 | `MCP_DEV_TOOLS_ENABLED` | `1` | Enable developer tools (template testing, etc.) |
+| `RUN_TESTS_ON_STARTUP` | `0` | Run unit tests on server startup |
 | `OUTPUT_PATH` | `/app/output/ha-ai-context.md` | Path for generated context file |
 
 ### Docker Compose Volume
@@ -133,7 +135,7 @@ volumes:
 
 ## MCP Tools
 
-The server exposes 114 read-only MCP tools organized by domain.  
+The server exposes 107 read-only MCP tools organized by domain.  
 Call `GET /api/tools` on the REST API for the full, up-to-date list.
 
 ### Entity State Tools

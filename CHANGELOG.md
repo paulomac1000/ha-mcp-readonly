@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - Initial release of HA-MCP-Readonly
-- 110+ read-only MCP tools for Home Assistant observation
+- 107 read-only MCP tools for Home Assistant observation
 - REST API on port 9093 with OpenAPI schema
 - MCP SSE transport on port 9092 for AI clients
 - Health check endpoint on port 9091

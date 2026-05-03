@@ -29,10 +29,10 @@ HA_URL=http://your-ha-ip:8123
 HA_TOKEN=your_long_lived_access_token_here
 # HA_CONFIG_PATH=/config                # optional, default shown
 # MCP_DEV_TOOLS_ENABLED=1               # optional, default shown
-# HEALTH_CHECK_PORT=9091                # optional, default shown
-# MCP_SSE_PORT=9092                     # optional, default shown
-# REST_API_PORT=9093                    # optional, default shown
-# RUN_TESTS_ON_STARTUP=0                # optional, default shown
+# HEALTH_CHECK_PORT=9091             # optional, default shown
+# MCP_SSE_PORT=9092                   # optional, default shown
+# REST_API_PORT=9093                 # optional, default shown
+# RUN_TESTS_ON_STARTUP=0             # optional, default shown
 # OUTPUT_PATH=/app/output/ha-ai-context.md  # optional, default shown
 ```
 
@@ -124,7 +124,7 @@ curl -X POST http://localhost:9093/api/context/generate \
   -d '{"mode": "hybrid"}'
 ```
 
-## Available Tools (114 total)
+## Available Tools (107 total)
 
 Tools are organized by category (51 shown in table below). All are **read-only** — no state changes, no service calls, no modifications.
 
@@ -165,7 +165,7 @@ Add the following to your Claude Desktop config:
 }
 ```
 
-After restarting Claude Desktop, the 114 Home Assistant tools will be available.
+After restarting Claude Desktop, the 107 Home Assistant tools will be available.
 
 ### LibreChat
 
@@ -302,6 +302,10 @@ tests/
 - **Security note**: Ports 9091-9093 should not be exposed publicly. Use firewall rules or reverse proxy with authentication if needed.
 - Registry files (areas, devices, entities, config entries) are cached for 5 minutes to reduce filesystem I/O.
 - All tool responses return JSON with a `success` field — always check this before reading `data`.
+
+## Troubleshooting
+
+For common issues and solutions, see [docs/documentation.md#troubleshooting](docs/documentation.md#troubleshooting).
 
 ## License
 
