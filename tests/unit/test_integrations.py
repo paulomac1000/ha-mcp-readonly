@@ -209,9 +209,7 @@ class TestGetIntegrationEntities:
                 return_value={"success": True, "data": MOCK_STATES},
             ),
         ):
-            result = await tools["get_integration_entities"](
-                "mqtt", include_disabled=True
-            )
+            result = await tools["get_integration_entities"]("mqtt", include_disabled=True)
             data = json.loads(result)
 
             assert data["success"] is True

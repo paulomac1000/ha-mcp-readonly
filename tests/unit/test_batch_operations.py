@@ -140,9 +140,7 @@ invalid: [unclosed
 bad syntax
         """)
 
-        result = await self.mcp._tools["validate_yaml_batch"](
-            file_paths="bad.yaml"
-        )
+        result = await self.mcp._tools["validate_yaml_batch"](file_paths="bad.yaml")
         data = json.loads(result)
 
         assert data["success"] is False
@@ -151,9 +149,7 @@ bad syntax
     @pytest.mark.asyncio
     async def test_validate_nonexistent_file(self):
         """Test validation with non-existent file."""
-        result = await self.mcp._tools["validate_yaml_batch"](
-            file_paths="nonexistent.yaml"
-        )
+        result = await self.mcp._tools["validate_yaml_batch"](file_paths="nonexistent.yaml")
         data = json.loads(result)
 
         assert data["success"] is False
@@ -164,9 +160,7 @@ bad syntax
     @pytest.mark.asyncio
     async def test_validate_path_traversal_prevention(self):
         """Test that path traversal attempts are blocked."""
-        result = await self.mcp._tools["validate_yaml_batch"](
-            file_paths="../../../etc/passwd"
-        )
+        result = await self.mcp._tools["validate_yaml_batch"](file_paths="../../../etc/passwd")
         data = json.loads(result)
 
         assert data["success"] is False
@@ -190,9 +184,7 @@ bad syntax
         config_dir = Path(self.config_path)
         (config_dir / "test.yaml").write_text("key: value")
 
-        result = await self.mcp._tools["validate_yaml_batch"](
-            file_paths="test.yaml"
-        )
+        result = await self.mcp._tools["validate_yaml_batch"](file_paths="test.yaml")
         data = json.loads(result)
 
         assert "metadata" in data
@@ -204,9 +196,7 @@ bad syntax
         config_dir = Path(self.config_path)
         (config_dir / "empty.yaml").write_text("")
 
-        result = await self.mcp._tools["validate_yaml_batch"](
-            file_paths="empty.yaml"
-        )
+        result = await self.mcp._tools["validate_yaml_batch"](file_paths="empty.yaml")
         data = json.loads(result)
 
         assert data["summary"]["valid"] == 1

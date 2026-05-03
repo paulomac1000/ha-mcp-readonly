@@ -207,9 +207,7 @@ class TestInvestigateEntity:
             mock_request.return_value = {"success": True, "data": sample_states}
             mock_auto.return_value = (sample_automations, None)
 
-            result = await self.mcp._tools["investigate_entity"](
-                "temperature,motion"
-            )
+            result = await self.mcp._tools["investigate_entity"]("temperature,motion")
             data = json.loads(result)
 
             assert data["success"] is True
@@ -246,9 +244,7 @@ class TestInvestigateEntity:
             mock_request.return_value = {"success": True, "data": sample_states}
             mock_auto.return_value = (sample_automations, None)
 
-            result = await self.mcp._tools["investigate_entity"](
-                "nonexistent_xyz"
-            )
+            result = await self.mcp._tools["investigate_entity"]("nonexistent_xyz")
             data = json.loads(result)
 
             assert data["success"] is True
@@ -457,9 +453,7 @@ class TestGetAreaDiagnostic:
             mock_load.side_effect = lambda name, path: self.mock_registry_data.get(name, {})
             mock_request.return_value = {"success": True, "data": sample_states}
 
-            result = await self.mcp._tools["get_area_diagnostic"](
-                "nonexistent_area"
-            )
+            result = await self.mcp._tools["get_area_diagnostic"]("nonexistent_area")
             data = json.loads(result)
 
             assert data["success"] is False

@@ -598,9 +598,7 @@ def register_batch_operations_tools(mcp, config_path: str, ha_url: str, ha_token
         return await globals()["validate_yaml_batch"](config_path, file_paths)
 
     @mcp.tool()
-    async def compare_entities_state(
-        entity_ids: str, snapshot_before: str = None
-    ) -> str:
+    async def compare_entities_state(entity_ids: str, snapshot_before: str = None) -> str:
         """COMPARE - Compare entity states before/after changes. Saves ~70% tokens vs manual checking."""
         return await globals()["compare_entities_state"](
             ha_url, ha_token, entity_ids, snapshot_before
@@ -609,14 +607,10 @@ def register_batch_operations_tools(mcp, config_path: str, ha_url: str, ha_token
     @mcp.tool()
     async def get_template_dependencies(entity_id: str) -> str:
         """ANALYZE - Get all entities referenced in template. Saves ~90% tokens vs manual analysis."""
-        return await globals()["get_template_dependencies"](
-            config_path, entity_id
-        )
+        return await globals()["get_template_dependencies"](config_path, entity_id)
 
     @mcp.tool()
-    async def bulk_search_entities(
-        search_terms: str, max_results_per_term: int = 10
-    ) -> str:
+    async def bulk_search_entities(search_terms: str, max_results_per_term: int = 10) -> str:
         """BATCH - Search multiple terms at once. Saves ~85% tokens vs individual searches."""
         return await globals()["bulk_search_entities"](
             config_path, search_terms, max_results_per_term
