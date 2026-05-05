@@ -569,15 +569,32 @@ def register_log_tools(mcp, config_path: str):
             log_lines = _read_log_file("home-assistant.log", lines * 2)
 
             if not log_lines:
-                return "home-assistant.log not found"
+                return json.dumps(
+                    {"success": False, "error": "home-assistant.log not found"},
+                    indent=2,
+                )
 
             if level.lower() != "all":
                 level_upper = level.upper()
                 log_lines = [line for line in log_lines if level_upper in line]
 
-            return "".join(log_lines[-lines:])
+            result_lines = log_lines[-lines:]
+            return json.dumps(
+                {
+                    "success": True,
+                    "lines_requested": lines,
+                    "lines_returned": len(result_lines),
+                    "level_filter": level,
+                    "logs": "".join(result_lines),
+                },
+                indent=2,
+                ensure_ascii=False,
+            )
         except Exception as e:
-            return f"Error reading logs: {str(e)}"
+            return json.dumps(
+                {"success": False, "error": f"Error reading logs: {str(e)}"},
+                indent=2,
+            )
 
     @mcp.tool()
     def get_previous_logs(lines: int = 100, level: str = "all") -> str:
@@ -593,15 +610,32 @@ def register_log_tools(mcp, config_path: str):
             log_lines = _read_log_file("home-assistant.log.1", lines * 2)
 
             if not log_lines:
-                return "home-assistant.log.1 not found"
+                return json.dumps(
+                    {"success": False, "error": "home-assistant.log.1 not found"},
+                    indent=2,
+                )
 
             if level.lower() != "all":
                 level_upper = level.upper()
                 log_lines = [line for line in log_lines if level_upper in line]
 
-            return "".join(log_lines[-lines:])
+            result_lines = log_lines[-lines:]
+            return json.dumps(
+                {
+                    "success": True,
+                    "lines_requested": lines,
+                    "lines_returned": len(result_lines),
+                    "level_filter": level,
+                    "logs": "".join(result_lines),
+                },
+                indent=2,
+                ensure_ascii=False,
+            )
         except Exception as e:
-            return f"Error reading logs: {str(e)}"
+            return json.dumps(
+                {"success": False, "error": f"Error reading logs: {str(e)}"},
+                indent=2,
+            )
 
     # ========================================
     # 🔍 LOG SEARCH

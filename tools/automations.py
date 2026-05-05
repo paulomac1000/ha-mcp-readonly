@@ -1236,6 +1236,115 @@ def register_automation_tools(mcp, config_path, ha_url=None, ha_token=None):
             return json.dumps({"success": False, "error": str(e)}, indent=2)
 
     @mcp.tool()
+    def get_automation_traces(automation_id: str, run_id: str = None, limit: int = 10) -> str:
+        """
+        Retrieve execution traces for automations and scripts to debug issues.
+
+        Traces show what happened during automation/script runs:
+        - What triggered the automation
+        - Which conditions passed or failed
+        - What actions were executed
+        - Any errors that occurred
+        - Variable values during execution
+
+        Args:
+            automation_id: Automation or script entity_id (e.g. 'automation.motion_light')
+            run_id: Specific trace run_id for detailed trace. Omit to list recent traces.
+            limit: Maximum number of traces to return when listing (default: 10, max: 50)
+
+        Returns:
+            JSON with trace data.
+        """
+        try:
+            if not ha_url or not ha_token:
+                return json.dumps(
+                    {"success": False, "error": "HA API not configured"},
+                    indent=2,
+                )
+
+            limit = min(max(int(limit), 1), 50)
+
+            # Validate automation_id format
+            if not automation_id.startswith(("automation.", "script.")):
+                return json.dumps(
+                    {
+                        "success": False,
+                        "error": "automation_id must start with 'automation.' or 'script.'",
+                    },
+                    indent=2,
+                )
+
+            entity_id = automation_id
+
+            if run_id:
+                # Get specific trace
+                result = make_ha_request(
+                    ha_url,
+                    ha_token,
+                    f"/api/trace/context/{entity_id}/{run_id}",
+                )
+            else:
+                # List recent traces
+                result = make_ha_request(
+                    ha_url,
+                    ha_token,
+                    f"/api/trace/context/{entity_id}?limit={limit}",
+                )
+
+            if not result["success"]:
+                return json.dumps(
+                    {
+                        "success": False,
+                        "error": result.get("error", "Failed to fetch traces"),
+                    },
+                    indent=2,
+                )
+
+            trace_data = result.get("data", [])
+
+            if run_id:
+                # Single trace detail
+                return json.dumps(
+                    {
+                        "success": True,
+                        "automation_id": entity_id,
+                        "run_id": run_id,
+                        "trace": trace_data,
+                    },
+                    indent=2,
+                    ensure_ascii=False,
+                )
+            else:
+                # List of traces
+                traces = []
+                if isinstance(trace_data, list):
+                    for trace in trace_data:
+                        traces.append(
+                            {
+                                "run_id": trace.get("run_id"),
+                                "state": trace.get("state"),
+                                "timestamp": trace.get("timestamp"),
+                                "trigger": trace.get("trigger"),
+                                "domain": trace.get("domain"),
+                                "item_id": trace.get("item_id"),
+                            }
+                        )
+
+                return json.dumps(
+                    {
+                        "success": True,
+                        "automation_id": entity_id,
+                        "total": len(traces),
+                        "traces": traces,
+                    },
+                    indent=2,
+                    ensure_ascii=False,
+                )
+
+        except Exception as e:
+            return json.dumps({"success": False, "error": str(e)}, indent=2)
+
+    @mcp.tool()
     async def automation_validate_triggers(
         automation_id: str = None, automation_alias: str = None
     ) -> str:

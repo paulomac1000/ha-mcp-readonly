@@ -401,3 +401,106 @@ class TestAutomationUsageStats:
 
         assert data["success"] is False
         assert "HA API" in data["error"] or "ha_url" in data["error"]
+
+
+class TestGetAutomationTraces:
+    def test_list_traces(self, mock_mcp, config_path, ha_url, ha_token):
+        sample_traces = [
+            {
+                "run_id": "1705312800.123456",
+                "state": "stopped",
+                "timestamp": "2025-01-15T12:00:00+00:00",
+                "trigger": {"platform": "time", "now": "12:00:00"},
+                "domain": "automation",
+                "item_id": "123",
+            },
+            {
+                "run_id": "1705316400.789012",
+                "state": "stopped",
+                "timestamp": "2025-01-15T13:00:00+00:00",
+                "trigger": {"platform": "state", "entity_id": "binary_sensor.door"},
+                "domain": "automation",
+                "item_id": "123",
+            },
+        ]
+
+        with patch(
+            "tools.automations.make_ha_request",
+            return_value={"success": True, "data": sample_traces},
+        ):
+            register_automation_tools(mock_mcp, config_path, ha_url, ha_token)
+
+            tool = mock_mcp._tools["get_automation_traces"]
+            data = json.loads(tool("automation.123", limit=10))
+
+        assert data["success"] is True
+        assert data["automation_id"] == "automation.123"
+        assert data["total"] == 2
+        assert data["traces"][0]["run_id"] == "1705312800.123456"
+        assert data["traces"][0]["state"] == "stopped"
+
+    def test_get_single_trace(self, mock_mcp, config_path, ha_url, ha_token):
+        single_trace = {
+            "run_id": "1705312800.123456",
+            "state": "stopped",
+            "timestamp": "2025-01-15T12:00:00+00:00",
+            "trigger": {"platform": "time"},
+            "action_trace": {"0": [{"result": {"params": {}}}]},
+        }
+
+        with patch(
+            "tools.automations.make_ha_request",
+            return_value={"success": True, "data": single_trace},
+        ):
+            register_automation_tools(mock_mcp, config_path, ha_url, ha_token)
+
+            tool = mock_mcp._tools["get_automation_traces"]
+            data = json.loads(tool("automation.123", run_id="1705312800.123456"))
+
+        assert data["success"] is True
+        assert data["run_id"] == "1705312800.123456"
+        assert "trace" in data
+        assert data["trace"]["state"] == "stopped"
+
+    def test_get_automation_traces_not_configured(self, mock_mcp, config_path):
+        register_automation_tools(mock_mcp, config_path)
+
+        tool = mock_mcp._tools["get_automation_traces"]
+        data = json.loads(tool("automation.123"))
+
+        assert data["success"] is False
+        assert "HA API" in data["error"] or "not configured" in data["error"].lower()
+
+    def test_get_automation_traces_invalid_id(self, mock_mcp, config_path, ha_url, ha_token):
+        with patch(
+            "tools.automations.make_ha_request",
+            return_value={"success": False, "error": "Not found"},
+        ):
+            register_automation_tools(mock_mcp, config_path, ha_url, ha_token)
+
+            tool = mock_mcp._tools["get_automation_traces"]
+            data = json.loads(tool("automation.123"))
+
+        assert data["success"] is False
+        assert "not found" in data["error"].lower() or "Failed" in data["error"]
+
+    def test_get_automation_traces_bad_entity_id(self, mock_mcp, config_path, ha_url, ha_token):
+        register_automation_tools(mock_mcp, config_path, ha_url, ha_token)
+
+        tool = mock_mcp._tools["get_automation_traces"]
+        data = json.loads(tool("light.living_room"))
+
+        assert data["success"] is False
+        assert "must start with" in data["error"].lower()
+
+    def test_get_automation_traces_limit_capped(self, mock_mcp, config_path, ha_url, ha_token):
+        with patch(
+            "tools.automations.make_ha_request",
+            return_value={"success": True, "data": []},
+        ):
+            register_automation_tools(mock_mcp, config_path, ha_url, ha_token)
+
+            tool = mock_mcp._tools["get_automation_traces"]
+            # limit > 50 should be capped
+            data = json.loads(tool("automation.123", limit=100))
+            assert data["success"] is True

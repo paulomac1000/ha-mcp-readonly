@@ -166,7 +166,10 @@ class TestBasicLogReading:
             tool = mock_mcp._tools["get_recent_logs"]
             result = tool(lines=5, level="error")
 
-        assert "ERROR" in result or "ValueError" in result
+        data = json.loads(result)
+        assert data["success"] is True
+        assert "ERROR" in data["logs"] or "ValueError" in data["logs"]
+        assert data["level_filter"] == "error"
 
     def test_search_logs_with_context(self, mock_mcp, config_path, sample_log_lines):
         log_path = Path(config_path) / "home-assistant.log"
@@ -235,13 +238,17 @@ class TestGetPreviousLogs:
         register_log_tools(mock_mcp, config_path)
         result = mock_mcp._tools["get_previous_logs"](lines=5, level="all")
 
-        assert "ERROR" in result or "WARNING" in result
+        data = json.loads(result)
+        assert data["success"] is True
+        assert "ERROR" in data["logs"] or "WARNING" in data["logs"]
 
     def test_get_previous_logs_not_found(self, mock_mcp, config_path):
         register_log_tools(mock_mcp, config_path)
         result = mock_mcp._tools["get_previous_logs"](lines=10)
 
-        assert "not found" in result.lower()
+        data = json.loads(result)
+        assert data["success"] is False
+        assert "not found" in data["error"].lower()
 
     def test_get_previous_logs_level_filter(self, mock_mcp, config_path, sample_log_lines):
         log_path = Path(config_path) / "home-assistant.log.1"
@@ -250,7 +257,9 @@ class TestGetPreviousLogs:
         register_log_tools(mock_mcp, config_path)
         result = mock_mcp._tools["get_previous_logs"](lines=50, level="error")
 
-        for line in result.splitlines():
+        data = json.loads(result)
+        assert data["success"] is True
+        for line in data["logs"].splitlines():
             if line.strip():
                 assert "ERROR" in line
 
