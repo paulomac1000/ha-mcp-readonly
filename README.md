@@ -232,7 +232,7 @@ pip install -r requirements.txt
 pytest tests/unit/ -v --tb=short --cov=. --cov-report=term
 ```
 
-All unit tests use mocked dependencies — no real Home Assistant instance required. 411 tests, no network calls.
+All unit tests use mocked dependencies — no real Home Assistant instance required. 417 tests, no network calls.
 
 ### Integration tests (requires real HA)
 
@@ -284,7 +284,7 @@ tools/
 └── yaml_utils.py          # HomeAssistantLoader for HA-specific YAML tags
 
 tests/
-├── unit/                  # 26 test files, 411 tests, fully mocked
+├── unit/                  # 26 test files, 417 tests, fully mocked
 └── integration/           # Real HA tests (requires HA_URL + HA_TOKEN)
 ```
 

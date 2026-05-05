@@ -56,22 +56,34 @@ jobs:
   docker-build:
     runs-on: ubuntu-latest
     needs: test
+    permissions:
+      packages: write
     steps:
       - uses: actions/checkout@v4
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      - name: Log in to GHCR
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Build Docker image
         uses: docker/build-push-action@v7
         with:
           context: .
-          load: true
-          tags: ha-mcp-readonly:test
+          load: ${{ !(github.event_name == 'push' && github.ref == 'refs/heads/main') }}
+          push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+          tags: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && format('ghcr.io/{0}:sha-{1}', github.repository, github.sha) || 'ha-mcp-readonly:test' }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Verify image
+      - name: Verify image (local)
+        if: ${{ !(github.event_name == 'push' && github.ref == 'refs/heads/main') }}
         run: |
           docker run --rm ha-mcp-readonly:test python -c "
           from server import get_tool_count
