@@ -124,14 +124,14 @@ curl -X POST http://localhost:9093/api/context/generate \
   -d '{"mode": "hybrid"}'
 ```
 
-## Available Tools (108 total)
+## Available Tools (107 total)
 
 Tools are organized by category (51 shown in table below). All are **read-only** — no state changes, no service calls, no modifications.
 
 | Category | Key tools |
 |----------|-----------|
 | **States** | `get_entity_state`, `get_states_grouped`, `search_entities`, `get_domains_summary`, `get_system_overview` |
-| **Automations** | `list_automations`, `get_automation_code`, `diagnose_automation`, `search_automations_by_entity`, `get_automation_conflicts`, `get_automation_traces` |
+| **Automations** | `list_automations`, `get_automation_code`, `diagnose_automation`, `search_automations_by_entity`, `get_automation_conflicts` |
 | **Scripts & Scenes** | `list_scripts`, `get_script_code`, `list_scenes`, `get_scene_code` |
 | **Blueprints** | `list_blueprints`, `get_blueprint_code`, `get_blueprint_instances`, `get_blueprint_usage_summary` |
 | **Devices & Areas** | `get_device_details`, `search_devices`, `get_devices_by_area`, `get_area_devices_summary` |

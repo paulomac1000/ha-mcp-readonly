@@ -168,7 +168,6 @@ Call `GET /api/tools` on the REST API for the full, up-to-date list.
 | `diagnose_automation` | Comprehensive automation diagnostics |
 | `get_automation_usage_stats` | Usage stats (runs, last trigger, missing entities) |
 | `automation_validate_triggers` | Validate trigger IDs and handlers |
-| `get_automation_traces` | Fetch execution traces for automations/scripts |
 | `list_scripts` | List all scripts |
 | `get_script_code` | Full script YAML code |
 
