@@ -85,13 +85,13 @@ jobs:
       - name: Smoke test — tool count
         if: ${{ !(github.event_name == 'push' && github.ref == 'refs/heads/main') }}
         run: |
-          docker run --rm ha-mcp-readonly:test python -c "
-          from server import get_tool_count
-          tc = get_tool_count()
-          print(f'Tools registered: {tc}')
-           assert tc == 118, f'Expected 118 tools, got {tc}'
-          print('Tool count verification OK')
-          "
+          docker run --rm ha-mcp-readonly:test python3 -c "
+from server import get_tool_count
+tc = get_tool_count()
+print(f'Tools registered: {tc}')
+assert tc == 118, f'Expected 118 tools, got {tc}'
+print('Tool count verification OK')
+"
 
       - name: Smoke test — REST API (health + tools)
         if: ${{ !(github.event_name == 'push' && github.ref == 'refs/heads/main') }}
