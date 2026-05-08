@@ -110,7 +110,7 @@ def register_blueprint_tools(mcp, config_path):
 
         Args:
             blueprint_path: Relative path of blueprint (returned by list_blueprints),
-                            np. "automation/homeassistatet/motion_light.yaml".
+                            e.g. "automation/homeassistant/motion_light.yaml".
 
         Returns:
             JSON with blueprint code or error.
@@ -183,10 +183,10 @@ def register_blueprint_tools(mcp, config_path):
     @mcp.tool()
     def get_blueprint_instances(blueprint_path: str) -> str:
         """
-        🚀 USAGE CHECK - Find automations/scripts using this blueprint.
+        Find all automations and scripts that use a specific blueprint.
 
         Args:
-            blueprint_path: path blueprintu (np. "automation/motion_light.yaml").
+            blueprint_path: blueprint path (e.g. "automation/motion_light.yaml").
 
         Returns:
             JSON with list of instances and their configuration (inputs).

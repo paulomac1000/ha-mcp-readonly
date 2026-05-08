@@ -701,3 +701,432 @@ class TestTokenOptimization:
                 if automations:
                     # Should not have full trigger/action code when include_automation_code=False
                     assert "trigger" not in automations[0] or "action" not in automations[0]
+
+
+class TestConflictDetection:
+    """Test conflict detection (race conditions / feedback loops) in get_entity_with_automations."""
+
+    @pytest.fixture(autouse=True)
+    def setup(self, mock_mcp, config_path, ha_url, ha_token):
+        """Setup test environment."""
+        from tools.composite import register_composite_tools
+
+        self.mock_registry_data = json.loads(json.dumps(MOCK_REGISTRY_DATA))
+        self.mock_registry_data["core.entity_registry"]["data"]["entities"].append(
+            {
+                "entity_id": "light.test_light",
+                "name": "Test Light",
+                "platform": "mqtt",
+                "device_id": "device_999",
+                "area_id": "test_area",
+            }
+        )
+        self.mock_registry_data["core.area_registry"]["data"]["areas"].append(
+            {"id": "test_area", "name": "Test Area"}
+        )
+
+        with patch("tools.composite.load_registry") as mock_load:
+            mock_load.side_effect = lambda name, path: self.mock_registry_data.get(name, {})
+            register_composite_tools(mock_mcp, config_path, ha_url, ha_token)
+
+        self.mcp = mock_mcp
+        self.config_path = config_path
+
+    @pytest.mark.asyncio
+    async def test_race_condition_detected(self):
+        """Two automations controlling the same entity should be detected as race condition."""
+        race_automations = [
+            {
+                "id": "auto_race_1",
+                "alias": "Race Light On",
+                "trigger": [{"platform": "state", "entity_id": "sensor.test_trigger"}],
+                "action": [
+                    {"service": "light.turn_on", "target": {"entity_id": "light.test_light"}}
+                ],
+            },
+            {
+                "id": "auto_race_2",
+                "alias": "Race Light Off",
+                "trigger": [{"platform": "state", "entity_id": "binary_sensor.test_trigger"}],
+                "action": [
+                    {"service": "light.turn_off", "target": {"entity_id": "light.test_light"}}
+                ],
+            },
+        ]
+
+        with (
+            patch("tools.composite.load_registry") as mock_load,
+            patch("tools.composite.make_ha_request") as mock_request,
+            patch("tools.composite._load_automations") as mock_auto,
+        ):
+            mock_load.side_effect = lambda name, path: self.mock_registry_data.get(name, {})
+            mock_request.return_value = {
+                "success": True,
+                "data": [
+                    {
+                        "entity_id": "light.test_light",
+                        "state": "on",
+                        "attributes": {},
+                        "last_changed": "2026-02-24T10:00:00+00:00",
+                    }
+                ],
+            }
+            mock_auto.return_value = (race_automations, None)
+
+            result = await self.mcp._tools["get_entity_with_automations"]("light.test_light")
+            data = json.loads(result)
+
+        assert data["success"] is True
+        assert data["conflict_analysis"]["race_condition_risk"] is True
+        assert len(data["conflict_analysis"]["controlling_automations"]) >= 2
+        assert any("RACE CONDITION" in issue for issue in data["issues"])
+        assert any(
+            "mode: restart" in rec or "mode: single" in rec for rec in data["recommendations"]
+        )
+
+    @pytest.mark.asyncio
+    async def test_feedback_loop_detected(self):
+        """Automation that triggers on AND controls the same entity → feedback loop."""
+        feedback_automations = [
+            {
+                "id": "auto_feedback",
+                "alias": "Feedback Loop",
+                "trigger": [{"platform": "state", "entity_id": "light.test_light", "to": "on"}],
+                "action": [
+                    {"service": "light.turn_off", "target": {"entity_id": "light.test_light"}}
+                ],
+            },
+        ]
+
+        with (
+            patch("tools.composite.load_registry") as mock_load,
+            patch("tools.composite.make_ha_request") as mock_request,
+            patch("tools.composite._load_automations") as mock_auto,
+        ):
+            mock_load.side_effect = lambda name, path: self.mock_registry_data.get(name, {})
+            mock_request.return_value = {
+                "success": True,
+                "data": [
+                    {
+                        "entity_id": "light.test_light",
+                        "state": "on",
+                        "attributes": {},
+                        "last_changed": "2026-02-24T10:00:00+00:00",
+                    }
+                ],
+            }
+            mock_auto.return_value = (feedback_automations, None)
+
+            result = await self.mcp._tools["get_entity_with_automations"]("light.test_light")
+            data = json.loads(result)
+
+        assert data["success"] is True
+        assert data["conflict_analysis"]["feedback_loop_risk"] is True
+        assert len(data["conflict_analysis"]["controlling_automations"]) >= 1
+        assert len(data["conflict_analysis"]["triggering_automations"]) >= 1
+        assert any("FEEDBACK LOOP" in issue for issue in data["issues"])
+        assert any("conditions to prevent infinite loops" in rec for rec in data["recommendations"])
+
+    @pytest.mark.asyncio
+    async def test_no_conflicts(self):
+        """Automations that don't conflict should produce no issues."""
+        no_conflict_automations = [
+            {
+                "id": "auto_clean",
+                "alias": "Clean Automation",
+                "trigger": [{"platform": "state", "entity_id": "sensor.other"}],
+                "action": [{"service": "light.turn_on", "target": {"entity_id": "light.other"}}],
+            },
+        ]
+
+        with (
+            patch("tools.composite.load_registry") as mock_load,
+            patch("tools.composite.make_ha_request") as mock_request,
+            patch("tools.composite._load_automations") as mock_auto,
+        ):
+            mock_load.side_effect = lambda name, path: self.mock_registry_data.get(name, {})
+            mock_request.return_value = {
+                "success": True,
+                "data": [
+                    {
+                        "entity_id": "light.test_light",
+                        "state": "on",
+                        "attributes": {},
+                        "last_changed": "2026-02-24T10:00:00+00:00",
+                    }
+                ],
+            }
+            mock_auto.return_value = (no_conflict_automations, None)
+
+            result = await self.mcp._tools["get_entity_with_automations"]("light.test_light")
+            data = json.loads(result)
+
+        assert data["success"] is True
+        assert data["conflict_analysis"]["race_condition_risk"] is False
+        assert data["conflict_analysis"]["feedback_loop_risk"] is False
+        assert not any("RACE CONDITION" in issue for issue in data["issues"])
+        assert not any("FEEDBACK LOOP" in issue for issue in data["issues"])
+
+
+class TestAreaAutomationMatching:
+    """Test area automation matching in get_area_diagnostic."""
+
+    @pytest.fixture(autouse=True)
+    def setup(self, mock_mcp, config_path, ha_url, ha_token):
+        """Setup test environment."""
+        from tools.composite import register_composite_tools
+
+        self.mock_registry_data = json.loads(json.dumps(MOCK_REGISTRY_DATA))
+        self.mock_registry_data["core.area_registry"]["data"]["areas"].append(
+            {"id": "test_area", "name": "Test Area"}
+        )
+        self.mock_registry_data["core.entity_registry"]["data"]["entities"].extend(
+            [
+                {
+                    "entity_id": "light.test_light",
+                    "name": "Test Light",
+                    "platform": "mqtt",
+                    "device_id": "device_999",
+                    "area_id": "test_area",
+                },
+                {
+                    "entity_id": "sensor.test_sensor",
+                    "name": "Test Sensor",
+                    "platform": "mqtt",
+                    "device_id": "device_999",
+                    "area_id": "test_area",
+                },
+            ]
+        )
+        self.mock_registry_data["core.device_registry"]["data"]["devices"].append(
+            {"id": "device_999", "name": "Test Device", "area_id": "test_area"}
+        )
+
+        with patch("tools.composite.load_registry") as mock_load:
+            mock_load.side_effect = lambda name, path: self.mock_registry_data.get(name, {})
+            register_composite_tools(mock_mcp, config_path, ha_url, ha_token)
+
+        self.mcp = mock_mcp
+
+    @pytest.mark.asyncio
+    async def test_area_automations_found(self):
+        """Automations referencing area entities should be matched to the area."""
+        area_automations = [
+            {
+                "id": "auto_area_1",
+                "alias": "Area Light Control",
+                "trigger": [{"platform": "time", "at": "08:00:00"}],
+                "action": [
+                    {"service": "light.turn_on", "target": {"entity_id": "light.test_light"}}
+                ],
+            },
+            {
+                "id": "auto_area_2",
+                "alias": "Area Sensor Check",
+                "trigger": [{"platform": "state", "entity_id": "sensor.test_sensor"}],
+                "action": [{"service": "notify.notify", "data": {"message": "Sensor triggered"}}],
+            },
+        ]
+
+        with (
+            patch("tools.composite.load_registry") as mock_load,
+            patch("tools.composite.make_ha_request") as mock_request,
+            patch("tools.composite._load_automations") as mock_auto,
+        ):
+            mock_load.side_effect = lambda name, path: self.mock_registry_data.get(name, {})
+            mock_request.return_value = {
+                "success": True,
+                "data": [
+                    {
+                        "entity_id": "light.test_light",
+                        "state": "on",
+                        "attributes": {},
+                        "last_changed": "2026-02-24T10:00:00+00:00",
+                    },
+                    {
+                        "entity_id": "sensor.test_sensor",
+                        "state": "25.0",
+                        "attributes": {"unit_of_measurement": "°C"},
+                        "last_changed": "2026-02-24T10:00:00+00:00",
+                    },
+                ],
+            }
+            mock_auto.return_value = (area_automations, None)
+
+            result = await self.mcp._tools["get_area_diagnostic"]("test_area")
+            data = json.loads(result)
+
+        assert data["success"] is True
+        assert len(data["automations"]) >= 1
+        aliases = [a["alias"] for a in data["automations"]]
+        assert any("Area Light Control" in alias for alias in aliases)
+        assert any("Area Sensor Check" in alias for alias in aliases)
+
+    @pytest.mark.asyncio
+    async def test_area_no_automations(self):
+        """Area with no matching automations should produce empty results."""
+        unrelated_automations = [
+            {
+                "id": "auto_other",
+                "alias": "Other Room Lights",
+                "trigger": [{"platform": "time", "at": "12:00:00"}],
+                "action": [{"service": "light.turn_on", "target": {"entity_id": "light.kitchen"}}],
+            },
+        ]
+
+        with (
+            patch("tools.composite.load_registry") as mock_load,
+            patch("tools.composite.make_ha_request") as mock_request,
+            patch("tools.composite._load_automations") as mock_auto,
+        ):
+            mock_load.side_effect = lambda name, path: self.mock_registry_data.get(name, {})
+            mock_request.return_value = {
+                "success": True,
+                "data": [
+                    {
+                        "entity_id": "light.test_light",
+                        "state": "on",
+                        "attributes": {},
+                        "last_changed": "2026-02-24T10:00:00+00:00",
+                    },
+                    {
+                        "entity_id": "sensor.test_sensor",
+                        "state": "25.0",
+                        "attributes": {"unit_of_measurement": "°C"},
+                        "last_changed": "2026-02-24T10:00:00+00:00",
+                    },
+                ],
+            }
+            mock_auto.return_value = (unrelated_automations, None)
+
+            result = await self.mcp._tools["get_area_diagnostic"]("test_area")
+            data = json.loads(result)
+
+        assert data["success"] is True
+        assert data["automations"] == []
+
+
+class TestInvestigateEntityExtended:
+    """Tests for investigate_entity with include_automation_code and conflict analysis."""
+
+    @pytest.fixture(autouse=True)
+    def setup(self, mock_mcp, config_path, ha_url, ha_token):
+        from tools.composite import register_composite_tools
+
+        self.mock_registry_data = json.loads(json.dumps(MOCK_REGISTRY_DATA))
+        self.mock_registry_data["core.entity_registry"]["data"]["entities"].append(
+            {
+                "entity_id": "light.test_primary",
+                "name": "Test Primary Light",
+                "platform": "mqtt",
+                "device_id": "device_998",
+                "area_id": "living_room",
+            }
+        )
+        self.mock_registry_data["core.device_registry"]["data"]["devices"].append(
+            {"id": "device_998", "name": "Test Primary Device", "area_id": "living_room"}
+        )
+
+        with patch("tools.composite.load_registry") as mock_load:
+            mock_load.side_effect = lambda name, path: self.mock_registry_data.get(name, {})
+            register_composite_tools(mock_mcp, config_path, ha_url, ha_token)
+
+        self.mcp = mock_mcp
+
+    @pytest.mark.asyncio
+    async def test_investigate_entity_with_code(self):
+        """include_automation_code=True should include full YAML code in automations."""
+        code_automations = [
+            {
+                "id": "auto_code_1",
+                "alias": "Primary Light On",
+                "trigger": [{"platform": "time", "at": "08:00:00"}],
+                "action": [
+                    {"service": "light.turn_on", "target": {"entity_id": "light.test_primary"}}
+                ],
+                "mode": "single",
+            },
+        ]
+
+        with (
+            patch("tools.composite.load_registry") as mock_load,
+            patch("tools.composite.make_ha_request") as mock_request,
+            patch("tools.composite._load_automations") as mock_auto,
+        ):
+            mock_load.side_effect = lambda name, path: self.mock_registry_data.get(name, {})
+            mock_request.return_value = {
+                "success": True,
+                "data": [
+                    {
+                        "entity_id": "light.test_primary",
+                        "state": "on",
+                        "attributes": {},
+                        "last_changed": "2026-02-24T10:00:00+00:00",
+                    },
+                ],
+            }
+            mock_auto.return_value = (code_automations, None)
+
+            result = await self.mcp._tools["investigate_entity"](
+                "Primary", include_automation_code=True
+            )
+            data = json.loads(result)
+
+        assert data["success"] is True
+        assert len(data["automations"]) >= 1
+        assert any("code" in auto for auto in data["automations"])
+        auto_with_code = next(a for a in data["automations"] if "code" in a)
+        assert "light.turn_on" in auto_with_code["code"]
+
+    @pytest.mark.asyncio
+    async def test_investigate_entity_with_conflicts(self):
+        """Conflicting automations should be detected and reported."""
+        conflict_automations = [
+            {
+                "id": "auto_a",
+                "alias": "Auto A",
+                "trigger": [{"platform": "state", "entity_id": "light.test_primary"}],
+                "action": [
+                    {"service": "light.turn_on", "target": {"entity_id": "light.test_primary"}}
+                ],
+                "mode": "single",
+            },
+            {
+                "id": "auto_b",
+                "alias": "Auto B",
+                "trigger": [{"platform": "state", "entity_id": "sensor.other"}],
+                "action": [
+                    {"service": "light.turn_off", "target": {"entity_id": "light.test_primary"}}
+                ],
+                "mode": "single",
+            },
+        ]
+
+        with (
+            patch("tools.composite.load_registry") as mock_load,
+            patch("tools.composite.make_ha_request") as mock_request,
+            patch("tools.composite._load_automations") as mock_auto,
+        ):
+            mock_load.side_effect = lambda name, path: self.mock_registry_data.get(name, {})
+            mock_request.return_value = {
+                "success": True,
+                "data": [
+                    {
+                        "entity_id": "light.test_primary",
+                        "state": "on",
+                        "attributes": {},
+                        "last_changed": "2026-02-24T10:00:00+00:00",
+                    },
+                ],
+            }
+            mock_auto.return_value = (conflict_automations, None)
+
+            result = await self.mcp._tools["investigate_entity"]("primary")
+            data = json.loads(result)
+
+        assert data["success"] is True
+        assert "conflicts" in data
+        assert data["conflicts"]["race_condition_risk"] is True
+        assert any("RACE CONDITION" in issue for issue in data["issues"])
+        assert data["conflicts"]["feedback_loop_risk"] is True
+        assert any("FEEDBACK LOOP" in issue for issue in data["issues"])

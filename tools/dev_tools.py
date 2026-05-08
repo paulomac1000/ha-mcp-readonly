@@ -162,7 +162,7 @@ def register_dev_tools(mcp, ha_url: str, ha_token: str, config_path: Optional[st
                         "template": template,
                         "error": test_result["error"],
                         "render_time": f"{render_time:.3f}s",
-                        "status": "❌ FAILED",
+                        "status": "FAILED",
                     }
                 )
 
@@ -187,7 +187,7 @@ def register_dev_tools(mcp, ha_url: str, ha_token: str, config_path: Optional[st
         BENCHMARK - Measures template performance through multiple executions.
 
         Args:
-            template: code templateu do przetestowania.
+            template: template code to benchmark.
             iterations: Number of iterations (default: 5, max: 20).
 
         Returns:
@@ -273,7 +273,7 @@ def register_dev_tools(mcp, ha_url: str, ha_token: str, config_path: Optional[st
         Validates automation trigger configuration.
 
         Args:
-            trigger_config: YAML triggera jako string
+            trigger_config: YAML trigger configuration as a string
 
         Example:
             validate_automation_trigger('''
@@ -625,13 +625,13 @@ def register_dev_tools(mcp, ha_url: str, ha_token: str, config_path: Optional[st
                     entity_result["status"] = "UNKNOWN"
                     result["issues"].append(f"{entity_id} state is unknown")
                 else:
-                    entity_result["status"] = "✅ OK"
+                    entity_result["status"] = "OK"
 
                 result["results"].append(entity_result)
             else:
                 result["missing_count"] += 1
                 result["results"].append(
-                    {"entity_id": entity_id, "exists": False, "status": "❌ NOT FOUND"}
+                    {"entity_id": entity_id, "exists": False, "status": "NOT FOUND"}
                 )
                 result["issues"].append(f"{entity_id} not found")
 
@@ -787,15 +787,15 @@ def register_dev_tools(mcp, ha_url: str, ha_token: str, config_path: Optional[st
         CONTEXTUALIZED DIAGNOSTICS - Comprehensive entity diagnostics.
 
         ~80% token savings when analyzing entities.
-        Zamiast: get_entity_state() + get_entity_details() + get_device_registry() + search logs
+        Instead of: get_entity_state() + get_entity_details() + get_device_registry() + search logs
 
         Args:
-            entity_id: Entity id do zdiagnozowania
+            entity_id: Entity id to diagnose
 
         Returns:
             JSON with:
-            - entity_info: basic information o encji
-            - current_state: current state i attributey
+            - entity_info: basic entity information
+            - current_state: current state and attributes
             - history_summary: history summary (last_changed, last_updated)
             - related_entities: related entities (same device/area)
             - issues: found issues
@@ -815,7 +815,7 @@ def register_dev_tools(mcp, ha_url: str, ha_token: str, config_path: Optional[st
             "recommendations": [],
         }
 
-        # 1. Pobierz current state
+        # 1. Fetch current state
         state_result = make_ha_request(ha_url, ha_token, f"/api/states/{entity_id}")
         if not state_result["success"]:
             result["success"] = False
@@ -920,7 +920,7 @@ def register_dev_tools(mcp, ha_url: str, ha_token: str, config_path: Optional[st
                 except Exception:
                     pass
 
-            # 5. Pobierz info o areaze
+            # 5. Get area info
             if area_id:
                 try:
                     area_registry_path = Path(config_path) / ".storage/core.area_registry"
@@ -1016,7 +1016,7 @@ def register_dev_tools(mcp, ha_url: str, ha_token: str, config_path: Optional[st
         CONTEXTUALIZED DIAGNOSTICS - Comprehensive template sensor/helper diagnostics.
 
         Args:
-            entity_id: id template entity (np. "sensor.my_template")
+            entity_id: id template entity (e.g. "sensor.my_template")
 
         Returns:
             JSON with:
@@ -1024,7 +1024,7 @@ def register_dev_tools(mcp, ha_url: str, ha_token: str, config_path: Optional[st
             - syntax_validation: ok/error
             - referenced_entities: list of used entities
             - entity_status: status of each used entity
-            - test_render: rendering result
+            - test_render: Render test
             - performance: rendering time
             - issues: found issues
             - recommendations: fix suggestions
@@ -1047,25 +1047,75 @@ def register_dev_tools(mcp, ha_url: str, ha_token: str, config_path: Optional[st
 
         if config_path:
             try:
+                # Strategy A: Look up entity in registry → get config_entry_id → find config entry
+                entity_reg_path = Path(config_path) / ".storage/core.entity_registry"
                 entries_path = Path(config_path) / ".storage/core.config_entries"
-                if entries_path.exists():
+
+                config_entry_id = None
+                if entity_reg_path.exists():
+                    with open(entity_reg_path, "r") as f:
+                        ent_reg = json.load(f)
+                        for ent in ent_reg.get("data", {}).get("entities", []):
+                            if ent.get("entity_id") == entity_id:
+                                config_entry_id = ent.get("config_entry_id")
+                                break
+
+                if config_entry_id and entries_path.exists():
                     with open(entries_path, "r") as f:
                         entries = json.load(f)
+                        for entry in entries.get("data", {}).get("entries", []):
+                            if entry.get("entry_id") == config_entry_id:
+                                options = entry.get("options", {})
+                                name = entry.get("title", entity_id)
+                                result["template_info"] = {
+                                    "name": name,
+                                    "entry_id": entry.get("entry_id"),
+                                    "template_type": options.get("template_type", "sensor"),
+                                    "device_class": options.get("device_class"),
+                                    "unit_of_measurement": options.get("unit_of_measurement"),
+                                }
+                                template_code = (
+                                    options.get("state")
+                                    or options.get("template")
+                                    or entry.get("data", {}).get("state")
+                                )
+                                break
 
+                # Strategy B: Fallback — fuzzy match by name across all template entries
+                if not template_code and entries_path.exists():
+                    with open(entries_path, "r") as f:
+                        entries = json.load(f)
+                        entity_name = entity_id.split(".")[-1]
+                        # Normalize both sides for matching: lowercase, strip diacritics via basic ascii folding
+                        import unicodedata
+
+                        def _normalize(s):
+                            return (
+                                unicodedata.normalize("NFKD", s.lower())
+                                .encode("ascii", "ignore")
+                                .decode("ascii")
+                                .replace(" ", "_")
+                                .replace("-", "_")
+                            )
+
+                        norm_target = _normalize(entity_name)
                         for entry in entries.get("data", {}).get("entries", []):
                             if entry.get("domain") == "template":
                                 options = entry.get("options", {})
                                 name = entry.get("title", "")
-
-                                # Match by name
-                                if name.lower().replace(" ", "_") == entity_id.split(".")[-1]:
+                                if _normalize(name) == norm_target:
                                     result["template_info"] = {
                                         "name": name,
+                                        "entry_id": entry.get("entry_id"),
                                         "template_type": options.get("template_type", "sensor"),
                                         "device_class": options.get("device_class"),
                                         "unit_of_measurement": options.get("unit_of_measurement"),
                                     }
-                                    template_code = options.get("state")
+                                    template_code = (
+                                        options.get("state")
+                                        or options.get("template")
+                                        or entry.get("data", {}).get("state")
+                                    )
                                     break
             except Exception as e:
                 result["issues"].append(
@@ -1179,7 +1229,7 @@ def register_dev_tools(mcp, ha_url: str, ha_token: str, config_path: Optional[st
             )
             result["recommendations"].append("Fix template syntax before using")
 
-        # 5. Dodatkowe rekomendacje
+        # 5. Additional recommendations
         if len(result["referenced_entities"]) > 10:
             result["recommendations"].append(
                 f"Template references {len(result['referenced_entities'])} entities - consider simplifying"
@@ -1273,7 +1323,7 @@ def register_dev_tools(mcp, ha_url: str, ha_token: str, config_path: Optional[st
 
                 # Search for G12w / peak hours / tariff
                 if any(
-                    keyword in entity_id.lower() for keyword in ["g12", "peak", "taryfa", "szczyt"]
+                    keyword in entity_id.lower() for keyword in ["g12", "peak", "tariff", "pricing"]
                 ):
                     result["tariff"] = "G12w detected"
                     result["peak_hours_config"][entity_id] = {
@@ -1299,13 +1349,11 @@ def register_dev_tools(mcp, ha_url: str, ha_token: str, config_path: Optional[st
                                 keyword in alias or keyword in description
                                 for keyword in [
                                     "energy",
-                                    "energia",
                                     "power",
-                                    "moc",
                                     "g12",
-                                    "taryfa",
+                                    "tariff",
                                     "peak",
-                                    "szczyt",
+                                    "pricing",
                                     "price",
                                     "cena",
                                 ]

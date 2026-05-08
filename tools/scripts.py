@@ -46,11 +46,13 @@ def register_script_tools(mcp, config_path):
 
     @mcp.tool()
     def get_script_code(script_id: str) -> str:
-        """
-        Fetches full code of a specific script.
+        """Fetches full code of a specific script.
 
         Args:
             script_id: Script id (e.g. "notify_energy_price")
+
+        Returns:
+            YAML string with script configuration including sequence, mode, and fields.
         """
         try:
             script_file = os.path.join(config_path, "scripts.yaml")

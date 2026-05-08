@@ -123,7 +123,14 @@ def register_config_entry_tools(mcp: Any, config_path: str, ha_url: str, ha_toke
 
     @mcp.tool()
     async def get_config_entry_details(entry_id: str) -> str:
-        """Get details for a single config entry with full context."""
+        """Get details for a single config entry with full context.
+
+        Args:
+            entry_id: Config entry ID to retrieve details for.
+
+        Returns:
+            JSON with entry metadata, entity list, device list, and state analysis.
+        """
         entry = _get_entry_by_id(entry_id)
 
         if not entry:
@@ -217,7 +224,18 @@ def register_config_entry_tools(mcp: Any, config_path: str, ha_url: str, ha_toke
         disabled_only: bool = False,
         with_entities: bool = False,
     ) -> str:
-        """Search config entries with optional filters."""
+        """Search config entries with optional filters.
+
+        Args:
+            domain: Filter by integration domain (e.g. "template", "mqtt").
+            title: Filter by entry title (case-insensitive substring).
+            state: Filter by entry state ("loaded", "not_loaded", "failed", "partial").
+            disabled_only: Only return disabled entries.
+            with_entities: Include entity count per entry.
+
+        Returns:
+            JSON with matched entries, filter summary, and result counts.
+        """
         entries = _get_config_entries()
         results = []
 
@@ -288,7 +306,14 @@ def register_config_entry_tools(mcp: Any, config_path: str, ha_url: str, ha_toke
 
     @mcp.tool()
     async def diagnose_config_entry(entry_id: str) -> str:
-        """Provide diagnostics for a config entry using registry, API, and logs."""
+        """Provide diagnostics for a config entry using registry, API, and logs.
+
+        Args:
+            entry_id: Config entry ID to diagnose.
+
+        Returns:
+            JSON with entry info, entity/device status, log errors, issues, and recommendations.
+        """
         entry = _get_entry_by_id(entry_id)
 
         if not entry:
@@ -466,7 +491,7 @@ def register_config_entry_tools(mcp: Any, config_path: str, ha_url: str, ha_toke
                 {
                     "severity": "info",
                     "type": "healthy",
-                    "message": "No issues detected ✅",
+                    "message": "No issues detected",
                 }
             )
 

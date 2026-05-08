@@ -11,6 +11,7 @@ Architecture:
 
 import inspect
 import json
+import logging
 import os
 import subprocess
 import sys
@@ -230,7 +231,7 @@ def _run_context_generation(config_path: str, output_path: str, mode: str):
         _generation_state["status"] = "error"
         _generation_state["error"] = str(exc)
         _generation_state["completed_at"] = time.time()
-        print(f"[generator] Context generation failed: {exc}", file=sys.stderr)
+        logging.getLogger("server").error(f"Context generation failed: {exc}")
 
 
 # =============================================================================

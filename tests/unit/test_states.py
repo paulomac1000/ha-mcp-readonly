@@ -106,11 +106,11 @@ def sample_states():
             "attributes": {"friendly_name": "Broken Sensor"},
         },
         {
-            "entity_id": "binary_sensor.motion_salon",
+            "entity_id": "binary_sensor.motion_living_room",
             "state": "off",
             "last_changed": recent,
             "last_updated": recent,
-            "attributes": {"friendly_name": "Salon Motion", "device_class": "motion"},
+            "attributes": {"friendly_name": "Living Room Motion", "device_class": "motion"},
         },
         {
             "entity_id": "automation.test_automation",

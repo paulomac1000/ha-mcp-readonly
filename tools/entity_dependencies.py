@@ -158,8 +158,8 @@ def register_entity_dependency_tools(mcp, config_path: str, ha_url: str, ha_toke
                 if entity_id in options_str:
                     found.append({"name": entry.get("title"), "type": "helper"})
 
-        # Check YAML configuration (simplified check in configuration.yaml)
-        # TODO: This could be expanded to check !include files
+        # Check YAML configuration
+        # Also scan files referenced via !include directives
         config_file = os.path.join(config_path, "configuration.yaml")
         if os.path.exists(config_file):
             try:
@@ -173,6 +173,46 @@ def register_entity_dependency_tools(mcp, config_path: str, ha_url: str, ha_toke
                                 "note": "Found in YAML configuration",
                             }
                         )
+            except Exception:
+                pass
+
+            # Scan !include referenced files
+            def _extract_includes(data):
+                paths = []
+                if isinstance(data, dict):
+                    for v in data.values():
+                        if isinstance(v, str) and v.startswith("!include "):
+                            paths.append(v[9:])
+                        elif isinstance(v, (dict, list)):
+                            paths.extend(_extract_includes(v))
+                elif isinstance(data, list):
+                    for item in data:
+                        if isinstance(item, str) and item.startswith("!include "):
+                            paths.append(item[9:])
+                        elif isinstance(item, (dict, list)):
+                            paths.extend(_extract_includes(item))
+                return paths
+
+            try:
+                config_data = load_yaml_file(config_file)
+                if config_data:
+                    include_paths = _extract_includes(config_data)
+                    for inc_path in include_paths:
+                        full_path = os.path.join(config_path, inc_path)
+                        if os.path.exists(full_path):
+                            try:
+                                with open(full_path, "r", encoding="utf-8") as f:
+                                    inc_content = f.read()
+                                    if entity_id in inc_content:
+                                        found.append(
+                                            {
+                                                "name": inc_path,
+                                                "type": "include",
+                                                "note": f"Found in !include file: {inc_path}",
+                                            }
+                                        )
+                            except Exception:
+                                pass
             except Exception:
                 pass
 

@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Home Assistant Context Generator for AI (V7 - Full MCP Integration)
 

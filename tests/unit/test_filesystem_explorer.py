@@ -199,7 +199,7 @@ class TestFilesystemTools:
         register_filesystem_tools(mock_mcp)
         tool = mock_mcp.get_tool("read_file")
 
-        result_str = tool(path=str(temp_dir / "allowed" / "file1.txt"), max_lines=10)
+        result_str = tool(file_path=str(temp_dir / "allowed" / "file1.txt"), max_lines=10)
         result = json.loads(result_str)
 
         assert result["success"] is True
@@ -217,7 +217,7 @@ class TestFilesystemTools:
         tool = mock_mcp.get_tool("read_file")
 
         # ✅ Teraz file istnieje i jest poprawnie detectsny jako binarny
-        result_str = tool(path=str(temp_dir / "allowed" / "db.sqlite"), max_lines=10)
+        result_str = tool(file_path=str(temp_dir / "allowed" / "db.sqlite"), max_lines=10)
         result = json.loads(result_str)
 
         assert "error" in result
@@ -228,7 +228,7 @@ class TestFilesystemTools:
         """path do directoryu → Not a file."""
         register_filesystem_tools(mock_mcp)
         result = json.loads(
-            mock_mcp.get_tool("read_file")(path=str(temp_dir / "allowed" / "subdir"))
+            mock_mcp.get_tool("read_file")(file_path=str(temp_dir / "allowed" / "subdir"))
         )
         assert "error" in result
         assert result["error"] == "Not a file"
@@ -237,7 +237,7 @@ class TestFilesystemTools:
         """Path outside allowlist → Access denied."""
         register_filesystem_tools(mock_mcp)
         result = json.loads(
-            mock_mcp.get_tool("read_file")(path=str(temp_dir / "blocked" / "secret.txt"))
+            mock_mcp.get_tool("read_file")(file_path=str(temp_dir / "blocked" / "secret.txt"))
         )
         assert "error" in result
         assert result["error"] == "Access denied"
@@ -249,7 +249,7 @@ class TestFilesystemTools:
         register_filesystem_tools(mock_mcp)
         result = json.loads(
             mock_mcp.get_tool("read_file")(
-                path=str(temp_dir / "allowed" / "file1.txt"), max_lines=1
+                file_path=str(temp_dir / "allowed" / "file1.txt"), max_lines=1
             )
         )
         assert result["success"] is True

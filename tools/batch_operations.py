@@ -20,11 +20,11 @@ from typing import Dict, List, Optional
 
 import yaml
 
-from tools.utils import get_registry_entities, make_ha_request
+from tools.utils import get_registry_entities, load_registry, make_ha_request
 from tools.yaml_utils import load_yaml_file
 
 # =============================================================================
-# CONstateTS AND PATTERNS
+# CONSTANTS AND PATTERNS
 # =============================================================================
 
 ENTITY_PATTERN = re.compile(
@@ -436,6 +436,26 @@ async def get_template_dependencies(
                 break
         except Exception:
             continue
+
+    # Fallback: UI-created template helpers are in .storage/core.config_entries,
+    # not in YAML files. Check config entries for the template source code.
+    if not template_content and entity_data.get("platform") == "template":
+        ce_id = entity_data.get("config_entry_id")
+        if ce_id:
+            ce_data = load_registry("core.config_entries", config_path)
+            for entry in ce_data.get("data", {}).get("entries", []):
+                if entry.get("entry_id") == ce_id:
+                    opts = entry.get("options", {})
+                    state_template = opts.get("state") or opts.get("template", "")
+                    if state_template:
+                        template_content = {"state": state_template}
+                        template_source = f".storage/core.config_entries (entry: {ce_id})"
+                        # Also check attribute templates
+                        for attr_val in opts.get("attributes", {}).values():
+                            if isinstance(attr_val, str) and "{{" in attr_val:
+                                if isinstance(template_content, dict):
+                                    template_content["_attr_" + str(attr_val)[:20]] = attr_val
+                    break
 
     # Extract entities from template
     dependencies = set()

@@ -11,6 +11,8 @@ Tests:
 - Edge cases and malicious input
 """
 
+from unittest.mock import MagicMock
+
 import yaml
 
 from tools.yaml_utils import (
@@ -311,11 +313,7 @@ class TestLoadYAMLFile:
         """Test loading YAML with Unicode characters."""
         yaml_file = tmp_path / "unicode.yaml"
         yaml_file.write_text(
-            """
-        name: Test Sensor 🌡️
-        location: Lodz
-        emoji: ✅
-        """,
+            "\nname: Test Sensor with \U0001f321\nlocation: Lodz\nemoji: OK\n",
             encoding="utf-8",
         )
 
@@ -323,7 +321,7 @@ class TestLoadYAMLFile:
 
         assert result is not None
         assert "name" in result
-        assert "🌡️" in result["name"]
+        assert "\U0001f321" in result["name"]
 
 
 class TestParseYAMLString:
@@ -547,7 +545,7 @@ class TestIntegrationWithHAConfigs:
     """Test with real Home Assistant configuration patterns."""
 
     def test_configuration_yaml_pattern(self):
-        """Test typeeical configuration.yaml structure."""
+        """Test typical configuration.yaml structure."""
         yaml_string = """
         homeassistant:
           name: !secret home_name
@@ -576,7 +574,7 @@ class TestIntegrationWithHAConfigs:
         assert "!include" in str(result)
 
     def test_automation_pattern(self):
-        """Test typeeical automation structure."""
+        """Test typical automation structure."""
         yaml_string = """
         - alias: Turn on lights at sunset
           trigger:
@@ -617,3 +615,20 @@ class TestIntegrationWithHAConfigs:
         assert isinstance(result, list)
         # Jinja templates should be preserved as strings
         assert "{{" in str(result)
+
+
+class TestHaTagConstructor:
+    """Tests for _ha_tag_constructor edge cases."""
+
+    def test_unknown_node_type_fallback(self):
+        """Fallback return when node type is not Scalar, Sequence, or Mapping."""
+        from tools.yaml_utils import _ha_tag_constructor
+
+        # Use a plain object that isinstance won't match for any yaml node type
+        class UnknownNode:
+            pass
+
+        mock_node = UnknownNode()
+        result = _ha_tag_constructor(MagicMock(), "custom_test", mock_node)
+
+        assert result == "!custom_test"

@@ -226,19 +226,20 @@ def register_filesystem_tools(mcp) -> None:
             )
 
     @mcp.tool()
-    def read_file(path: str, max_lines: int = 200) -> str:
+    def read_file(file_path: str, max_lines: int = 200, offset: int = 1) -> str:
         """
         Read a text file with allowlist validation and size limits.
 
         Args:
-            path: Path to the file (must be within the allowlist).
+            file_path: Path to the file (must be within the allowlist).
             max_lines: Maximum number of lines to return (default 200).
+            offset: Line number to start reading from, 1-indexed (default 1).
 
         Returns:
             JSON string with file content or error details.
         """
         try:
-            target = SECURITY_CONTEXT.validate_path(path)
+            target = SECURITY_CONTEXT.validate_path(file_path)
 
             if not target.is_file():
                 return json.dumps({"error": "Not a file", "path": str(target)}, indent=2)
@@ -270,12 +271,16 @@ def register_filesystem_tools(mcp) -> None:
             except FileNotFoundError:
                 return json.dumps({"error": "File not found", "path": str(target)}, indent=2)
 
-            # Safe read with line limits
+            # Safe read with line limits and offset support
+            if offset < 1:
+                offset = 1
             lines = []
             try:
                 with open(target, "r", encoding="utf-8", errors="replace") as f:
                     for i, line in enumerate(f):
-                        if i >= max_lines:
+                        if i < offset - 1:
+                            continue
+                        if i >= offset - 1 + max_lines:
                             break
                         lines.append(line.rstrip("\n"))
             except UnicodeDecodeError:
@@ -283,7 +288,9 @@ def register_filesystem_tools(mcp) -> None:
                 try:
                     with open(target, "r", encoding="latin-1", errors="replace") as f:
                         for i, line in enumerate(f):
-                            if i >= max_lines:
+                            if i < offset - 1:
+                                continue
+                            if i >= offset - 1 + max_lines:
                                 break
                             lines.append(line.rstrip("\n"))
                 except Exception as e:
@@ -305,6 +312,7 @@ def register_filesystem_tools(mcp) -> None:
                 {
                     "success": True,
                     "path": str(target),
+                    "offset": offset,
                     "lines_count": len(lines),
                     "total_lines_estimate": "unknown",  # Do not count all lines to avoid overhead
                     "content": "\n".join(lines),
@@ -328,7 +336,7 @@ def register_filesystem_tools(mcp) -> None:
             )
         except Exception as e:
             return json.dumps(
-                {"error": "Operation failed", "message": str(e), "path": str(path)},
+                {"error": "Operation failed", "message": str(e), "path": str(file_path)},
                 indent=2,
             )
 

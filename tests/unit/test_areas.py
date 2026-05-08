@@ -51,18 +51,17 @@ class TestGetAreaDevicesSummary:
                 # Re-register to capture mocks if needed, though setup did it
                 register_area_tools(self.mock_mcp, self.config_path, self.ha_url, self.ha_token)
 
-                result = await self.mock_mcp._tools["get_area_devices_summary"]("salon")
+                result = await self.mock_mcp._tools["get_area_devices_summary"]("living_room")
 
         data = json.loads(result)
 
         # Debugging output if fails
         if not data["success"]:
-            print(f"Error: {data.get('error')}")
-            print(f"Available areas: {data.get('available_areas')}")
+            pass
 
         assert data["success"] is True
-        assert data["area_id"] == "salon"
-        assert data["area_name"] == "Salon"
+        assert data["area_id"] == "living_room"
+        assert data["area_name"] == "Living Room"
         assert len(data["devices"]) > 0
         assert "integrations_used" in data
         assert "total_entities" in data
@@ -80,12 +79,12 @@ class TestGetAreaDevicesSummary:
 
                 register_area_tools(self.mock_mcp, self.config_path, self.ha_url, self.ha_token)
 
-                result = await self.mock_mcp._tools["get_area_devices_summary"]("Biuro")
+                result = await self.mock_mcp._tools["get_area_devices_summary"]("Office")
 
         data = json.loads(result)
 
         assert data["success"] is True
-        assert data["area_id"] == "biuro"
+        assert data["area_id"] == "office"
 
     @pytest.mark.asyncio
     async def test_get_nonexistent_area(self):
@@ -111,7 +110,7 @@ class TestGetAreaDevicesSummary:
         # Create an orphan entity in the mock data
         orphan_entity = {
             "entity_id": "sensor.orphan",
-            "area_id": "salon",
+            "area_id": "living_room",
             "device_id": None,
             "platform": "template",
         }
@@ -130,12 +129,9 @@ class TestGetAreaDevicesSummary:
 
                 register_area_tools(self.mock_mcp, self.config_path, self.ha_url, self.ha_token)
 
-                result = await self.mock_mcp._tools["get_area_devices_summary"]("salon")
+                result = await self.mock_mcp._tools["get_area_devices_summary"]("living_room")
 
         data = json.loads(result)
-
-        if not data["success"]:
-            print(f"Error: {data.get('error')}")
 
         assert data["success"] is True
 
@@ -160,7 +156,7 @@ class TestGetAreaDevicesSummary:
                 }
 
                 register_area_tools(self.mock_mcp, self.config_path, self.ha_url, self.ha_token)
-                result = await self.mock_mcp._tools["get_area_devices_summary"]("sypialnia")
+                result = await self.mock_mcp._tools["get_area_devices_summary"]("bedroom")
 
         data = json.loads(result)
 
@@ -182,7 +178,7 @@ class TestGetAreaDevicesSummary:
                 mock_request.return_value = {"success": False, "error": "down"}
 
                 register_area_tools(self.mock_mcp, self.config_path, self.ha_url, self.ha_token)
-                result = await self.mock_mcp._tools["get_area_devices_summary"]("salon")
+                result = await self.mock_mcp._tools["get_area_devices_summary"]("living_room")
 
         data = json.loads(result)
 

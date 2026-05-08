@@ -4,7 +4,7 @@ Composite Tools — High-Level AI-Optimised Functions
 Combines multiple data sources into single responses to minimise tool calls
 and token usage for AI agents.
 
-Problem:  AI agents need 19 tool calls (~15 000 tokens) for a typeeical
+Problem:  AI agents need 19 tool calls (~15 000 tokens) for a typical
           light-automation investigation.
 Solution: Composite functions that aggregate data internally
           → 3-5 calls (~2 500 tokens).
@@ -297,21 +297,21 @@ def register_composite_tools(
             if conflicts["race_condition_risk"]:
                 n = len(conflicts["controlling_automations"])
                 result["issues"].append(
-                    f"⚠️ RACE CONDITION: {n} automations control this entity simultaneously"
+                    f"RACE CONDITION: {n} automations control this entity simultaneously"
                 )
                 result["recommendations"].append(
                     "Use 'mode: restart' or 'mode: single' to prevent conflicts"
                 )
             if conflicts["feedback_loop_risk"]:
                 result["issues"].append(
-                    "⚠️ FEEDBACK LOOP: automation triggers on entity it also controls"
+                    "FEEDBACK LOOP: automation triggers on entity it also controls"
                 )
                 result["recommendations"].append("Add conditions to prevent infinite loops")
 
             if entity.get("disabled_by"):
                 result["issues"].append(f"Entity DISABLED by: {entity['disabled_by']}")
             if not result["issues"]:
-                result["recommendations"].append("Entity appears healthy ✅")
+                result["recommendations"].append("Entity appears healthy")
 
             result["warnings"] = warnings
             return json.dumps(result, indent=2, ensure_ascii=False)
@@ -325,29 +325,6 @@ def register_composite_tools(
                 },
                 indent=2,
             )
-
-    # Legacy alias preserved for backward compatibility (tests expect this name)
-    @mcp.tool(name="investigate_entity")
-    async def investigate_entity_legacy(
-        search_term: str,
-        include_automation_code: bool = False,
-        include_history: bool = False,
-        hours_back: int = 24,
-    ) -> str:
-        return await investigate_entity(
-            search_term,
-            include_automation_code=include_automation_code,
-            include_history=include_history,
-            hours_back=hours_back,
-        )
-
-    @mcp.tool(name="get_entity_with_automations")
-    async def get_entity_with_automations_legacy(
-        entity_id: str,
-        include_automation_code: bool = False,
-    ) -> str:
-        """Deprecated alias maintained for backward compatibility."""
-        return await get_entity_with_automations(entity_id, include_automation_code)
 
     # ================================================================
     #  TOOL 2 — investigate_entity  (the "super function")
@@ -457,9 +434,9 @@ def register_composite_tools(
                     info["state"] = s.get("state")
                     info["last_changed"] = s.get("last_changed")
                     if s.get("state") == "unavailable":
-                        result["issues"].append(f"❌ {eid} is UNAVAILABLE")
+                        result["issues"].append(f"{eid} is UNAVAILABLE")
                     elif s.get("state") == "unknown":
-                        result["issues"].append(f"⚠️ {eid} has UNKNOWN state")
+                        result["issues"].append(f"{eid} has UNKNOWN state")
                 entities_out.append(info)
 
                 # Pick primary entity (prefer actionable domains)
@@ -538,10 +515,10 @@ def register_composite_tools(
                     if conflicts["race_condition_risk"]:
                         n = len(conflicts["controlling_automations"])
                         result["issues"].append(
-                            f"⚠️ RACE CONDITION on {primary_entity}: {n} automations control it"
+                            f"RACE CONDITION on {primary_entity}: {n} automations control it"
                         )
                     if conflicts["feedback_loop_risk"]:
-                        result["issues"].append(f"⚠️ FEEDBACK LOOP on {primary_entity}")
+                        result["issues"].append(f"FEEDBACK LOOP on {primary_entity}")
 
             # ── 8. Related sensors ──
             _sensor_kw = {
@@ -601,7 +578,7 @@ def register_composite_tools(
 
             # ── 10. Recommendations ──
             if not result["issues"]:
-                result["recommendations"].append("All matched entities appear healthy ✅")
+                result["recommendations"].append("All matched entities appear healthy")
             else:
                 if any("UNAVAILABLE" in i for i in result["issues"]):
                     result["recommendations"].append(
@@ -647,7 +624,7 @@ def register_composite_tools(
         include_sensors: bool = True,
     ) -> str:
         """
-        🚀 COMPOSITE — Full area/room diagnostics in a SINGLE query.
+        Full area/room diagnostics in a single query: devices, entities, automations, and sensor readings.
 
         Replaces: get_area_overview() + search_automations(area)
                    + get_entity_state_batch()
@@ -768,9 +745,9 @@ def register_composite_tools(
             if unavailable:
                 preview = ", ".join(unavailable[:5])
                 suffix = f" (+{len(unavailable) - 5} more)" if len(unavailable) > 5 else ""
-                issues.append(f"❌ {len(unavailable)} entities unavailable: {preview}{suffix}")
+                issues.append(f"{len(unavailable)} entities unavailable: {preview}{suffix}")
             if not area_entities:
-                issues.append("⚠️ No entities assigned to this area")
+                issues.append("No entities assigned to this area")
 
             area_devices = [d for d in dev_data if d.get("area_id") == area_id]
 
@@ -794,7 +771,7 @@ def register_composite_tools(
                     "recommendations": (
                         ["Check device connectivity for unavailable entities"]
                         if unavailable
-                        else ["Area looks healthy ✅"]
+                        else ["Area looks healthy"]
                     ),
                     "warnings": warnings,
                 },

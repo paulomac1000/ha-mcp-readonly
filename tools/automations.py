@@ -108,7 +108,7 @@ def register_automation_tools(mcp, config_path, ha_url=None, ha_token=None):
         uses_blueprint: Optional[bool] = None,
     ) -> str:
         """
-        🚀 OPTIMIZED - searches automations instead of returning all 111.
+        Search automations by alias, description, mode, or blueprint usage. ~95% token savings vs listing all.
 
         ~95% token savings when searching for a specific automation.
         Instead of: list_automations() (111 items) → search (1-5 items)
@@ -175,6 +175,13 @@ def register_automation_tools(mcp, config_path, ha_url=None, ha_token=None):
 
             results.append(res)
 
+        # Sort: enabled automations first, then by alias for stability
+        def _sort_key(r):
+            is_disabled = 1 if r.get("disabled_by") else 0
+            return (is_disabled, r.get("alias", "").lower())
+
+        results.sort(key=_sort_key)
+
         return json.dumps(
             {
                 "success": True,
@@ -191,11 +198,12 @@ def register_automation_tools(mcp, config_path, ha_url=None, ha_token=None):
         """
         Fetches list of names and ids of all automations.
 
-        ⚠️ Warning: returns all 111 automations - use search_automations() if looking for a specific one.
+        Warning: returns all 111 automations - use search_automations() if looking for a specific one.
         """
         data = _load_automations()
         summary = [
             {
+                "id": item.get("id"),
                 "alias": item.get("alias", "No Name"),
                 "description": item.get("description", ""),
                 "mode": item.get("mode", "single"),
@@ -231,6 +239,15 @@ def register_automation_tools(mcp, config_path, ha_url=None, ha_token=None):
         Args:
             automation_id: Automation alias or id (prefer alias)
         """
+        if not automation_id or not isinstance(automation_id, str) or not automation_id.strip():
+            return json.dumps(
+                {
+                    "success": False,
+                    "error": "automation_id is required and must be a non-empty string",
+                },
+                indent=2,
+            )
+
         data = _load_automations()
         item = _get_automation_by_id_or_alias(data, automation_id)
 
@@ -267,7 +284,7 @@ def register_automation_tools(mcp, config_path, ha_url=None, ha_token=None):
     @mcp.tool()
     def get_automation_dependencies(automation_id: str) -> str:
         """
-        🚀 DEPENDENCY GRAPH - checks what the automation depends on.
+        Analyze automation dependencies: lists used entities, scripts, services, and blueprints.
         Lists used entities, scripts, services, and blueprints.
 
         Args:
@@ -313,7 +330,7 @@ def register_automation_tools(mcp, config_path, ha_url=None, ha_token=None):
     @mcp.tool()
     def search_automations_by_entity(entity_id: str) -> str:
         """
-        🚀 REVERSE LOOKUP - Find automations using a given entity.
+        Find all automations that reference a given entity in triggers, conditions, or actions.
         Checks if entity is in triggers, conditions, or actions.
 
         Args:
@@ -364,12 +381,12 @@ def register_automation_tools(mcp, config_path, ha_url=None, ha_token=None):
     @mcp.tool()
     def get_automation_conflicts(entity_id: str) -> str:
         """
-        ⚠️ CONFLICT DETECTOR - checks for potential conflicts.
+        Detect potential conflicts where multiple automations modify the same entity, which may cause flickering or unexpected states.
         Detects if a given entity is modified by multiple automations at once
         (which may cause light flickering or unexpected states).
 
         Args:
-            entity_id: Entity to check (e.g. "light.salon").
+            entity_id: Entity to check (e.g. "light.living_room").
 
         Returns:
             JSON with list of automations that control this entity (Action).
@@ -418,7 +435,7 @@ def register_automation_tools(mcp, config_path, ha_url=None, ha_token=None):
                     "Use mode: single for notifications to prevent spam",
                 ]
                 if race_condition or potential_loop
-                else ["No conflicts detected ✅"],
+                else ["No conflicts detected"],
             },
             indent=2,
             ensure_ascii=False,
@@ -427,7 +444,7 @@ def register_automation_tools(mcp, config_path, ha_url=None, ha_token=None):
     @mcp.tool()
     def diagnose_automation(automation_id: str, detail_level: str = "summary") -> str:
         """
-        🚀 CONTEXTUALIZED DIAGNOSTICS - Comprehensive automation diagnostics.
+        Comprehensive automation diagnostics with entity resolution, template validation, and usage analysis. ~75% token savings.
 
         ~75% token savings when analyzing automations.
         Instead of: get_automation_code() + check_entity_exists() × N + test_template() × M
@@ -1036,7 +1053,7 @@ def register_automation_tools(mcp, config_path, ha_url=None, ha_token=None):
 
             # Check for notification best practices
             has_notifications = any(
-                action.get("service", "").startswith("notify.") for action in actions
+                (action.get("service") or "").startswith("notify.") for action in actions
             )
             if has_notifications and automation.get("mode") != "single":
                 result["recommendations"].append(
@@ -1049,7 +1066,7 @@ def register_automation_tools(mcp, config_path, ha_url=None, ha_token=None):
 
             if not result["recommendations"]:
                 result["recommendations"].append(
-                    {"priority": "info", "message": "Automation looks healthy! ✅"}
+                    {"priority": "info", "message": "Automation looks healthy!"}
                 )
 
             # Sort recommendations by priority
@@ -1070,7 +1087,7 @@ def register_automation_tools(mcp, config_path, ha_url=None, ha_token=None):
     @mcp.tool()
     def get_automation_usage_stats(automation_id: str, hours_back: int = 24) -> str:
         """
-        🚀 get_automation_usage_stats()
+        Get automation usage statistics: run count, last triggered time, recent activity from history.
 
         Target: Automation usage statistics.
 
@@ -1098,28 +1115,51 @@ def register_automation_tools(mcp, config_path, ha_url=None, ha_token=None):
 
             data = _load_automations()
             automation = _get_automation_by_id_or_alias(data, automation_id)
+            from_api = False
 
             if not automation:
-                return json.dumps(
-                    {
-                        "success": False,
-                        "error": f"Automation '{automation_id}' not found in automations.yaml",
-                    },
-                    indent=2,
-                )
+                # Fallback: UI-created automations are not in automations.yaml,
+                # but exist in HA state engine. Search states for matching alias/id.
+                states_result = make_ha_request(ha_url, ha_token, "/api/states")
+                if states_result.get("success"):
+                    for state in states_result.get("data", []):
+                        eid = state.get("entity_id", "")
+                        if eid.startswith("automation."):
+                            attrs = state.get("attributes", {})
+                            state_alias = attrs.get("friendly_name", "")
+                            if (
+                                state_alias.lower() == automation_id.lower()
+                                or eid == f"automation.{automation_id}"
+                                or automation_id.lower() in state_alias.lower()
+                            ):
+                                entity_id = eid
+                                ha_state = state
+                                from_api = True
+                                break
 
-            # Derive automation entity_id
-            auto_id = automation.get("id") or automation.get("alias") or "no_id"
-            slug = re.sub(r"[^a-z0-9_]+", "_", str(auto_id).lower()).strip("_")
-            entity_id = f"automation.{slug}"
+                if not from_api:
+                    return json.dumps(
+                        {
+                            "success": False,
+                            "error": f"Automation '{automation_id}' not found in automations.yaml or HA states",
+                        },
+                        indent=2,
+                    )
 
-            # 2) Check current automation state (whether it exists and is enabled)
-            state_result = make_ha_request(ha_url, ha_token, f"/api/states/{entity_id}")
-            ha_state = state_result["data"] if state_result["success"] else None
+            if not from_api:
+                # Derive automation entity_id from YAML
+                auto_id = automation.get("id") or automation.get("alias") or "no_id"
+                slug = re.sub(r"[^a-z0-9_]+", "_", str(auto_id).lower()).strip("_")
+                entity_id = f"automation.{slug}"
 
-            # 3) Extract all entities from definition
+                # Check current automation state
+                state_result = make_ha_request(ha_url, ha_token, f"/api/states/{entity_id}")
+                ha_state = state_result["data"] if state_result["success"] else None
+
+            # Extract all entities from definition (YAML only)
             entities = set()
-            _extract_entities_recursive(automation, entities)
+            if not from_api and automation:
+                _extract_entities_recursive(automation, entities)
 
             # 4) Check which entities no longer exist in HA (BATCH)
             missing_entities = []

@@ -3,6 +3,7 @@ Tests for tools/config.py
 """
 
 import json
+from unittest.mock import patch
 
 import pytest
 
@@ -208,3 +209,573 @@ class TestSearchConfigByParams:
         register_config_tools(mock_mcp, config_path)
         data = json.loads(mock_mcp._tools["search_config_by_params"]())
         assert data["success"] is False
+
+
+# ============================================================
+# Additional tests for uncovered areas
+# ============================================================
+
+SERVICE_FILTER_YAML = """
+- alias: "Service Test"
+  trigger: []
+  action:
+    - service: "notify.mobile"
+      data:
+        message: "Hello"
+"""
+
+
+PLATFORM_FILTER_YAML = """
+- alias: "Platform Test"
+  trigger:
+    - platform: "numeric_state"
+      entity_id: "sensor.temp"
+      above: 25
+"""
+
+
+@pytest.fixture
+def config_path_service(tmp_path) -> str:
+    (tmp_path / "automations.yaml").write_text(SERVICE_FILTER_YAML, encoding="utf-8")
+    return str(tmp_path)
+
+
+@pytest.fixture
+def config_path_platform(tmp_path) -> str:
+    (tmp_path / "automations.yaml").write_text(PLATFORM_FILTER_YAML, encoding="utf-8")
+    return str(tmp_path)
+
+
+class TestSearchConfigByParamsExtended:
+    def test_search_by_service(self, mock_mcp, config_path_service):
+        """Search by service field value."""
+        register_config_tools(mock_mcp, config_path_service)
+        data = json.loads(mock_mcp._tools["search_config_by_params"](service="notify.mobile"))
+        assert data["success"] is True
+        assert data["summary"]["files_with_matches"] >= 1
+
+    def test_search_by_platform(self, mock_mcp, config_path_platform):
+        """Search by platform field value."""
+        register_config_tools(mock_mcp, config_path_platform)
+        data = json.loads(mock_mcp._tools["search_config_by_params"](platform="numeric_state"))
+        assert data["success"] is True
+        assert data["summary"]["files_with_matches"] >= 1
+
+    def test_search_by_device_class(self, mock_mcp, tmp_path):
+        """Search by device_class field."""
+        (tmp_path / "test.yaml").write_text(
+            '- platform: "mqtt"\n  device_class: "temperature"\n  name: "Test"\n',
+            encoding="utf-8",
+        )
+        register_config_tools(mock_mcp, str(tmp_path))
+        data = json.loads(mock_mcp._tools["search_config_by_params"](device_class="temperature"))
+        assert data["success"] is True
+        assert data["summary"]["files_with_matches"] >= 1
+
+
+class TestReadConfigFileExtended:
+    def test_read_with_offset(self, mock_mcp, tmp_path):
+        """Read file starting from a non-default offset."""
+        content = "line1\nline2\nline3\nline4\nline5\n"
+        (tmp_path / "test.yaml").write_text(content, encoding="utf-8")
+        register_config_tools(mock_mcp, str(tmp_path))
+        result = mock_mcp._tools["read_config_file"]("test.yaml", offset=3)
+        assert "line3" in result
+        assert "line1" not in result
+
+    def test_read_with_offset_and_limit(self, mock_mcp, tmp_path):
+        """Read file with offset and max_lines limit."""
+        content = "\n".join(f"line{i}" for i in range(1, 11)) + "\n"
+        (tmp_path / "test.yaml").write_text(content, encoding="utf-8")
+        register_config_tools(mock_mcp, str(tmp_path))
+        result = mock_mcp._tools["read_config_file"]("test.yaml", offset=5, max_lines=2)
+        assert "line5" in result
+        assert "line6" in result
+        assert "line7" not in result
+
+
+class TestSearchInConfigExtended:
+    def test_search_json_file_type(self, mock_mcp, tmp_path):
+        """Search only in JSON files."""
+        (tmp_path / "data.json").write_text('{"my_setting": "find_me"}', encoding="utf-8")
+        register_config_tools(mock_mcp, str(tmp_path))
+        data = json.loads(mock_mcp._tools["search_in_config"]("find_me", file_types="json"))
+        assert data["success"] is True
+        assert data["summary"]["files_matching_criteria"] >= 1
+
+    def test_search_all_file_types(self, mock_mcp, tmp_path):
+        """Search across both YAML and JSON files."""
+        (tmp_path / "sensor.yaml").write_text("needle: found_in_yaml", encoding="utf-8")
+        (tmp_path / "data.json").write_text('{"needle": "found_in_json"}', encoding="utf-8")
+        register_config_tools(mock_mcp, str(tmp_path))
+        data = json.loads(mock_mcp._tools["search_in_config"]("needle", file_types="all"))
+        assert data["success"] is True
+        matching = data["summary"]["files_matching_criteria"]
+        assert matching >= 1
+
+    def test_search_in_config_delegates_to_batch(self, mock_mcp, tmp_path):
+        """search_in_config delegates to search_in_config_batch."""
+        (tmp_path / "example.yaml").write_text("hello: world", encoding="utf-8")
+        register_config_tools(mock_mcp, str(tmp_path))
+        data = json.loads(mock_mcp._tools["search_in_config"]("world"))
+        assert data["success"] is True
+        assert data["match_mode"] == "any"
+
+
+class TestSearchInConfigBatchExtended:
+    """Additional tests for search_in_config_batch()."""
+
+    def test_batch_with_all_match_mode(self, mock_mcp, tmp_path):
+        """match_mode='all' should only return files containing ALL terms."""
+        (tmp_path / "file_a.yaml").write_text("alpha: one\nbeta: two\n", encoding="utf-8")
+        (tmp_path / "file_b.yaml").write_text("alpha: one\n", encoding="utf-8")
+        register_config_tools(mock_mcp, str(tmp_path))
+        data = json.loads(
+            mock_mcp._tools["search_in_config_batch"](search_terms="alpha, beta", match_mode="all")
+        )
+        assert data["success"] is True
+        # Only file_a.yaml should match (has both alpha and beta)
+        matching = data["matching_files"]
+        filenames = [m.get("file", "") for m in matching]
+        assert any("file_a" in f for f in filenames)
+        assert not any("file_b" in f for f in filenames)
+
+    def test_batch_no_terms_returns_error(self, mock_mcp, tmp_path):
+        """Empty search terms should return error."""
+        register_config_tools(mock_mcp, str(tmp_path))
+        data = json.loads(mock_mcp._tools["search_in_config_batch"](search_terms=""))
+        assert data["success"] is False
+
+    def test_batch_json_file_type(self, mock_mcp, tmp_path):
+        """Search only in JSON files."""
+        (tmp_path / "data.json").write_text('{"key": "findme"}', encoding="utf-8")
+        (tmp_path / "data.yaml").write_text("key: findme", encoding="utf-8")
+        register_config_tools(mock_mcp, str(tmp_path))
+        data = json.loads(
+            mock_mcp._tools["search_in_config_batch"](search_terms="findme", file_types="json")
+        )
+        assert data["success"] is True
+        matching = data["matching_files"]
+        filenames = [m.get("file", "") for m in matching]
+        assert any("data.json" in f for f in filenames)
+        assert not any("data.yaml" in f for f in filenames)
+
+
+class TestGetConfigStructureExtended:
+    """Additional tests for get_config_structure()."""
+
+    def test_structure_with_subdirectories(self, mock_mcp, tmp_path):
+        """Config directory with nested subdirectories."""
+        (tmp_path / "configuration.yaml").write_text("homeassistant:", encoding="utf-8")
+        sub = tmp_path / "packages"
+        sub.mkdir()
+        (sub / "sensors.yaml").write_text("sensor:", encoding="utf-8")
+        nested = sub / "nested"
+        nested.mkdir()
+        (nested / "automations.yaml").write_text("automation:", encoding="utf-8")
+
+        register_config_tools(mock_mcp, str(tmp_path))
+        data = json.loads(mock_mcp._tools["get_config_structure"]())
+        assert data["success"] is True
+        assert "structure" in data
+        assert len(data["structure"]) >= 2  # root + packages dirs
+
+    def test_structure_empty_dir(self, mock_mcp, tmp_path):
+        """Empty config directory should still return structure."""
+        register_config_tools(mock_mcp, str(tmp_path))
+        data = json.loads(mock_mcp._tools["get_config_structure"]())
+        assert data["success"] is True
+        assert "structure" in data
+
+
+class TestValidateYamlExtended:
+    """Additional tests for validate_yaml_syntax()."""
+
+    def test_validate_with_entity_checking(self, mock_mcp, config_path):
+        """validate_yaml_syntax with check_entities_services=True."""
+        register_config_tools(mock_mcp, config_path, "http://test", "token")
+        yaml_content = """
+        - alias: "Test"
+          trigger:
+            - platform: "state"
+              entity_id: "light.kitchen"
+              to: "on"
+          action:
+            - service: "light.turn_on"
+              data:
+                entity_id: "light.kitchen"
+        """
+
+        with patch("tools.config.make_ha_request") as mock_req:
+            mock_req.side_effect = [
+                {
+                    "success": True,
+                    "data": [
+                        {"entity_id": "light.kitchen", "state": "on", "attributes": {}},
+                    ],
+                },
+                {
+                    "success": True,
+                    "data": [
+                        {
+                            "domain": "light",
+                            "services": {"turn_on": {}, "turn_off": {}},
+                        }
+                    ],
+                },
+            ]
+
+            result = mock_mcp._tools["validate_yaml_syntax"](
+                yaml_content=yaml_content,
+                check_entities_services=True,
+            )
+            data = json.loads(result)
+
+        assert data["success"] is True
+        assert data["syntax_valid"] is True
+
+    def test_validate_file_not_found(self, mock_mcp, config_path):
+        """validate_yaml_syntax with nonexistent file path."""
+        register_config_tools(mock_mcp, config_path)
+        data = json.loads(
+            mock_mcp._tools["validate_yaml_syntax"](file_path="nonexistent_file.yaml")
+        )
+        assert data["success"] is False
+        assert "not found" in data["error"]
+
+
+# ============================================================
+# Tests for get_lovelace_entity_usage() (lines 699-775)
+# ============================================================
+
+MOCK_DASHBOARD_REGISTRY = {
+    "data": {
+        "items": [
+            {"url_path": "lovelace", "title": "Home"},
+        ]
+    }
+}
+
+MOCK_DASHBOARD_CONFIG_BASE = {
+    "data": {
+        "config": {
+            "views": [
+                {
+                    "title": "Main View",
+                    "cards": [
+                        {"type": "tile", "entity": "light.test_entity"},
+                        {
+                            "type": "entities",
+                            "entities": [
+                                "light.test_other",
+                                {"entity": "light.test_entity"},
+                            ],
+                        },
+                    ],
+                }
+            ]
+        }
+    }
+}
+
+
+class TestLovelaceEntityUsage:
+    def test_entity_found_in_main_card(self, mock_mcp, config_path):
+        register_config_tools(mock_mcp, config_path)
+
+        dashboard_config = json.loads(json.dumps(MOCK_DASHBOARD_CONFIG_BASE))
+
+        with patch("tools.config.load_registry") as mock_load:
+            mock_load.side_effect = [
+                MOCK_DASHBOARD_REGISTRY,
+                dashboard_config,
+            ]
+
+            result = mock_mcp._tools["get_lovelace_entity_usage"](entity_id="light.test_entity")
+            data = json.loads(result)
+
+        assert data["success"] is True
+        assert data["entity_id"] == "light.test_entity"
+        assert data["usage_count"] >= 1
+        roles = [u["role"] for u in data["usage"]]
+        assert "main_entity" in roles
+
+    def test_entity_found_in_entities_list(self, mock_mcp, config_path):
+        register_config_tools(mock_mcp, config_path)
+
+        dashboard_config = {
+            "data": {
+                "config": {
+                    "views": [
+                        {
+                            "title": "List View",
+                            "cards": [
+                                {
+                                    "type": "entities",
+                                    "entities": [
+                                        "light.test_entity",
+                                        "sensor.other",
+                                    ],
+                                }
+                            ],
+                        }
+                    ]
+                }
+            }
+        }
+
+        with patch("tools.config.load_registry") as mock_load:
+            mock_load.side_effect = [
+                MOCK_DASHBOARD_REGISTRY,
+                dashboard_config,
+            ]
+
+            result = mock_mcp._tools["get_lovelace_entity_usage"](entity_id="light.test_entity")
+            data = json.loads(result)
+
+        assert data["success"] is True
+        roles = [u["role"] for u in data["usage"]]
+        assert "entities_list" in roles
+
+    def test_entity_not_found(self, mock_mcp, config_path):
+        register_config_tools(mock_mcp, config_path)
+
+        dashboard_config = {
+            "data": {
+                "config": {
+                    "views": [
+                        {
+                            "title": "Other View",
+                            "cards": [
+                                {
+                                    "type": "tile",
+                                    "entity": "light.other_entity",
+                                }
+                            ],
+                        }
+                    ]
+                }
+            }
+        }
+
+        with patch("tools.config.load_registry") as mock_load:
+            mock_load.side_effect = [
+                MOCK_DASHBOARD_REGISTRY,
+                dashboard_config,
+            ]
+
+            result = mock_mcp._tools["get_lovelace_entity_usage"](entity_id="light.nonexistent")
+            data = json.loads(result)
+
+        assert data["success"] is True
+        assert data["usage_count"] == 0
+        assert data["usage"] == []
+
+    def test_entity_in_badge(self, mock_mcp, config_path):
+        register_config_tools(mock_mcp, config_path)
+
+        dashboard_config = {
+            "data": {
+                "config": {
+                    "views": [
+                        {
+                            "title": "Badge View",
+                            "cards": [
+                                {
+                                    "type": "custom:badge-card",
+                                    "entity": "light.test_entity",
+                                    "badge": True,
+                                }
+                            ],
+                        }
+                    ]
+                }
+            }
+        }
+
+        with patch("tools.config.load_registry") as mock_load:
+            mock_load.side_effect = [
+                MOCK_DASHBOARD_REGISTRY,
+                dashboard_config,
+            ]
+
+            result = mock_mcp._tools["get_lovelace_entity_usage"](entity_id="light.test_entity")
+            data = json.loads(result)
+
+        assert data["success"] is True
+        assert data["usage_count"] >= 1
+        assert data["usage"][0]["entity_id"] == "light.test_entity"
+
+
+# ============================================================
+# Tests for template validation in validate_yaml_syntax()
+# (lines 676-691)
+# ============================================================
+
+
+class TestValidateYamlTemplateValidation:
+    def test_template_validation_active(self, mock_mcp, config_path):
+        register_config_tools(mock_mcp, config_path, "http://test", "token")
+
+        yaml_content = """- alias: Template Test
+  trigger: []
+  action:
+    - service: notify.mobile
+      data:
+        message: "{{ states('sensor.temp') }}" """
+
+        with patch("tools.config.make_ha_request") as mock_req:
+            mock_req.side_effect = [
+                {
+                    "success": True,
+                    "data": [
+                        {"entity_id": "sensor.temp", "state": "22.5", "attributes": {}},
+                    ],
+                },
+                {
+                    "success": True,
+                    "data": [
+                        {
+                            "domain": "notify",
+                            "services": {"mobile": {}},
+                        }
+                    ],
+                },
+                {
+                    "success": True,
+                    "data": {"result": "22.5"},
+                },
+            ]
+
+            result = mock_mcp._tools["validate_yaml_syntax"](
+                yaml_content=yaml_content,
+                check_entities_services=True,
+                check_templates=True,
+            )
+            data = json.loads(result)
+
+        assert data["success"] is True
+        assert data["syntax_valid"] is True
+
+    def test_template_validation_error(self, mock_mcp, config_path):
+        register_config_tools(mock_mcp, config_path, "http://test", "token")
+
+        yaml_content = """- alias: Bad Template Test
+  trigger: []
+  action:
+    - service: notify.mobile
+      data:
+        message: "{{ states('bad.sensor' | invalid_filter()) }}" """
+
+        with patch("tools.config.make_ha_request") as mock_req:
+            mock_req.side_effect = [
+                {
+                    "success": True,
+                    "data": [],
+                },
+                {
+                    "success": True,
+                    "data": [
+                        {"domain": "notify", "services": {"mobile": {}}},
+                    ],
+                },
+                {
+                    "success": False,
+                    "error": "TemplateSyntaxError: unexpected token",
+                },
+            ]
+
+            result = mock_mcp._tools["validate_yaml_syntax"](
+                yaml_content=yaml_content,
+                check_entities_services=True,
+                check_templates=True,
+            )
+            data = json.loads(result)
+
+        assert data["success"] is True
+        assert data["syntax_valid"] is True
+        template_issues = [i for i in data["issues"] if i["type"] == "template_error"]
+        assert len(template_issues) >= 1
+
+
+# ============================================================
+# Tests for _sanitize_config() list handling (line 58)
+# ============================================================
+
+
+class TestSanitizeConfigList:
+    def test_sanitize_list_items(self, mock_mcp, tmp_path):
+        config_content = """
+- server: "main"
+  password: "secret123"
+- server: "backup"
+  token: "abc-token"
+        """
+        (tmp_path / "configuration.yaml").write_text(
+            "sections:" + config_content.replace("\n", "\n  "),
+            encoding="utf-8",
+        )
+        register_config_tools(mock_mcp, str(tmp_path))
+        result = mock_mcp._tools["get_main_configuration"]()
+
+        assert "secret123" not in result
+        assert "abc-token" not in result
+        assert "REDACTED" in result
+
+    def test_sanitize_nested_list_dicts(self, mock_mcp, tmp_path):
+        config_content = """
+section:
+  - name: "test1"
+    config:
+      api_key: "key123"
+  - name: "test2"
+    config:
+      password: "pw456"
+        """
+        (tmp_path / "configuration.yaml").write_text(config_content, encoding="utf-8")
+        register_config_tools(mock_mcp, str(tmp_path))
+        result = mock_mcp._tools["get_main_configuration"]()
+
+        assert "key123" not in result
+        assert "pw456" not in result
+        assert "REDACTED" in result
+
+
+class TestSearchConfigByParamsExtended2:
+    def test_search_config_by_params_with_file_pattern(self, mock_mcp, tmp_path):
+        """file_pattern should restrict search to only matching files."""
+        (tmp_path / "sensors.yaml").write_text(
+            "- platform: mqtt\n  entity_id: sensor.match_me\n", encoding="utf-8"
+        )
+        (tmp_path / "lights.yaml").write_text(
+            "- platform: mqtt\n  entity_id: light.no_match\n", encoding="utf-8"
+        )
+        register_config_tools(mock_mcp, str(tmp_path))
+        data = json.loads(
+            mock_mcp._tools["search_config_by_params"](
+                entity_id="sensor.match_me", file_pattern="sensors*"
+            )
+        )
+        assert data["success"] is True
+        matching = data["results"]
+        filenames = [r.get("file", "") for r in matching]
+        assert any("sensors" in f for f in filenames)
+        assert not any("lights" in f for f in filenames)
+
+    def test_search_config_by_params_entity_id_match(self, mock_mcp, tmp_path):
+        """Specific entity_id should be found in config files."""
+        (tmp_path / "automations.yaml").write_text(
+            "- alias: Test\n"
+            "  trigger: []\n"
+            "  action:\n"
+            "    - service: light.turn_on\n"
+            "      data:\n"
+            "        entity_id: light.unique_k4x9\n",
+            encoding="utf-8",
+        )
+        register_config_tools(mock_mcp, str(tmp_path))
+        data = json.loads(mock_mcp._tools["search_config_by_params"](entity_id="light.unique_k4x9"))
+        assert data["success"] is True
+        results = data["results"]
+        assert len(results) >= 1
+        assert any("light.unique_k4x9" in str(r) for r in results)

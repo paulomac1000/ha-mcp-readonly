@@ -17,6 +17,7 @@ CHANGES vs original:
 """
 
 import json
+import logging
 import os
 import re
 import subprocess
@@ -25,6 +26,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import requests
+
+logger = logging.getLogger(__name__)
 
 # =============================================================================
 # CONFIGURATION
@@ -198,7 +201,7 @@ def load_registry(
         return data
 
     except (json.JSONDecodeError, IOError, KeyError) as exc:
-        print(f"[utils] Error loading registry {registry_name}: {exc}")
+        logger.warning(f"Error loading registry {registry_name}: {exc}")
         _REGISTRY_CACHE.pop(cache_key, None)
         return {}
 
@@ -272,7 +275,7 @@ def tail_log_file(
         )
         return result.stdout.splitlines()
     except (subprocess.TimeoutExpired, subprocess.SubprocessError) as exc:
-        print(f"[utils] Error reading log file: {exc}")
+        logger.warning(f"Error reading log file: {exc}")
         return []
 
 

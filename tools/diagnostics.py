@@ -112,7 +112,7 @@ def register_diagnostics_tools(mcp, ha_url, ha_token, config_path):
                     if not is_error and not is_warning:
                         continue
 
-                    # Parsowanie daty
+                    # Date parsing
                     try:
                         ts_match = timestamp_pattern.match(line)
                         if ts_match:
@@ -358,7 +358,7 @@ def register_diagnostics_tools(mcp, ha_url, ha_token, config_path):
         return dict(domain_counts.most_common())
 
     # ========================================
-    # 🩺 CORE DIAGNOSTICS - ROZSZERZONE
+    # Core diagnostics - extended
     # ========================================
 
     @mcp.tool()
@@ -369,11 +369,11 @@ def register_diagnostics_tools(mcp, ha_url, ha_token, config_path):
         hours_back: int = 1,
     ) -> str:
         """
-        🩺 COMPLETE SYSTEM DIAGNOSTICS - full audit in a single call.
+        Complete system diagnostics: health score, error patterns, unavailable entities, performance issues, and recommendations in a single call.
 
-        Zawiera WSZYSTKO czego AI potrzebuje do diagnozy:
-        - Health Score i summary
-        - Top error patterns z affected entities
+        Provides everything needed for AI-driven diagnosis:
+        - Health Score and summary
+        - Top error patterns with affected entities
         - Unavailable entities grouped by integration
         - Slow entities (performance issues)
         - API errors
@@ -402,7 +402,7 @@ def register_diagnostics_tools(mcp, ha_url, ha_token, config_path):
 
         states = states_res["data"]
 
-        # 2. Pobierz registry dla lepszego grupowania
+        # 2. Load registries for better grouping
         entity_reg = (
             load_registry("core.entity_registry", config_path).get("data", {}).get("entities", [])
         )
@@ -442,7 +442,7 @@ def register_diagnostics_tools(mcp, ha_url, ha_token, config_path):
         # 6. Persistent notifications
         notifications = [s for s in states if s["entity_id"].startswith("persistent_notification.")]
 
-        # 7. Oblicz Health Score (0-100)
+        # 7. Health Score calculation (0-100)
         score = 100
         score -= min(len(unavailable) * 2, 40)
         score -= min(log_analysis["errors"] * 3, 30)  # Zmniejszone z 5 do 3
@@ -458,7 +458,7 @@ def register_diagnostics_tools(mcp, ha_url, ha_token, config_path):
         else:
             status = "Critical"
 
-        # 9. Recommendations (inteligentne)
+        # 9. Recommendations (intelligent)
         recommendations = []
 
         if score < 50:
@@ -544,7 +544,7 @@ def register_diagnostics_tools(mcp, ha_url, ha_token, config_path):
             recommendations.append(
                 {
                     "priority": "info",
-                    "message": "✅ System is healthy! No critical issues detected.",
+                    "message": "System is healthy! No critical issues detected.",
                 }
             )
 
@@ -593,7 +593,7 @@ def register_diagnostics_tools(mcp, ha_url, ha_token, config_path):
         max_sample_entities: int = 5,
     ) -> str:
         """
-        📊 GROUPED UNAVAILABLE ENTITIES - Effective summary of unavailable entities.
+        Group unavailable entities by integration or domain for efficient health analysis. ~95% token savings vs listing all.
 
         Instead of returning 200+ entities (48k tokens), groups them by integration (~2k tokens).
 
@@ -603,7 +603,7 @@ def register_diagnostics_tools(mcp, ha_url, ha_token, config_path):
             max_sample_entities: How many sample entities per group (default: 5)
 
         Returns:
-            JSON z pogrupowanymi entitymi i statystykami
+            JSON with grouped entities and statistics.
         """
         cache_key = f"unavailable_grouped_{group_by}_{include_device_names}_{max_sample_entities}"
         cached = _get_cached(cache_key)
@@ -617,7 +617,7 @@ def register_diagnostics_tools(mcp, ha_url, ha_token, config_path):
 
         states = states_res["data"]
 
-        # 2. Pobierz registry
+        # 2. Load registries
         entity_reg = (
             load_registry("core.entity_registry", config_path).get("data", {}).get("entities", [])
         )
@@ -625,7 +625,7 @@ def register_diagnostics_tools(mcp, ha_url, ha_token, config_path):
             load_registry("core.device_registry", config_path).get("data", {}).get("devices", [])
         )
 
-        # 3. Grupuj
+        # 3. Group
         if group_by == "integration":
             grouped_data = _get_unavailable_by_integration(states, entity_reg, device_reg)
 
@@ -665,7 +665,7 @@ def register_diagnostics_tools(mcp, ha_url, ha_token, config_path):
     @mcp.tool()
     def get_integration_health(domain: str) -> str:
         """
-        🔍 INTEGRATION HEALTH - detailed state of a specific integration.
+        Get detailed health status of a specific integration domain (e.g. "mqtt", "tuya", "zha").
 
         Args:
             domain: Integration domain (e.g. "mqtt", "tuya", "zha").
@@ -682,7 +682,7 @@ def register_diagnostics_tools(mcp, ha_url, ha_token, config_path):
         # Find entities for this platform
         platform_entity_ids = {e["entity_id"] for e in entity_reg if e.get("platform") == domain}
 
-        # Filtruj statey
+        # Filter states
         domain_entities = [
             s
             for s in states_res["data"]
@@ -770,11 +770,10 @@ def register_diagnostics_tools(mcp, ha_url, ha_token, config_path):
     @mcp.tool()
     def get_area_automation_summary(area_id: str) -> str:
         """
-        🏠 AREA INTELLIGENCE - analyzes what is happening in a given room.
-        Checks devices, automations related to these devices, and their activity.
+        Analyze what is happening in a room: devices, automations related to those devices, and recent activity.
 
         Args:
-            area_id: Area id (e.g. "salon") or name (e.g. "Salon").
+            area_id: Area id (e.g. "living_room") or name (e.g. "Living Room").
         """
         # 1. Area -> Devices -> Entities mapping
         area_reg = load_registry("core.area_registry", config_path).get("data", {}).get("areas", [])
@@ -916,7 +915,7 @@ def register_diagnostics_tools(mcp, ha_url, ha_token, config_path):
     @mcp.tool()
     def get_notification_history() -> str:
         """
-        🔔 NOTIFICATION TRACKING - checks active notifications.
+        Check active persistent notifications in Home Assistant.
         """
         states_res = make_ha_request(ha_url, ha_token, "/api/states")
         active = []
@@ -973,7 +972,7 @@ def register_diagnostics_tools(mcp, ha_url, ha_token, config_path):
     @mcp.tool()
     def get_energy_dashboard_data() -> str:
         """
-        ⚡ ENERGY DASHBOARD (G12w) - energy summary.
+        Get energy dashboard summary: current power, tariff info, daily consumption, and cost analysis.
         """
         states_res = make_ha_request(ha_url, ha_token, "/api/states")
         if not states_res["success"]:
@@ -1011,12 +1010,12 @@ def register_diagnostics_tools(mcp, ha_url, ha_token, config_path):
 
         is_workday = workday_sensor["state"] == "on" if workday_sensor else now.weekday() < 5
 
-        tariff = "G12w - Pozaszczyt (Tania)"
+        tariff = "G12w - Off-Peak (Low Rate)"
         is_peak = False
 
         if is_workday:
             if (6 <= hour < 13) or (15 <= hour < 22):
-                tariff = "G12w - Szczyt (Droga)"
+                tariff = "G12w - Peak (High Rate)"
                 is_peak = True
 
         # Prices
@@ -1068,20 +1067,20 @@ def register_diagnostics_tools(mcp, ha_url, ha_token, config_path):
             recommendations.append(
                 {
                     "priority": "high",
-                    "message": "⚠️ PEAK! Avoid large consumers (washing machine, dishwasher, water heater)",
+                    "message": "PEAK! Avoid large consumers (washing machine, dishwasher, water heater)",
                 }
             )
             recommendations.append(
                 {
                     "priority": "medium",
-                    "message": f"Savings: {rate_peak - rate_offpeak:.2f} PLN/kWh if you shift to later",
+                    "message": f"Savings: {rate_peak - rate_offpeak:.2f}/kWh if you shift to later",
                 }
             )
         else:
             recommendations.append(
                 {
                     "priority": "info",
-                    "message": "✅ Cheap tariff - good time for large consumers",
+                    "message": "Off-peak tariff - good time for large consumers",
                 }
             )
 
@@ -1098,7 +1097,7 @@ def register_diagnostics_tools(mcp, ha_url, ha_token, config_path):
                 )
             elif hour >= 22:
                 recommendations.append(
-                    {"priority": "info", "message": "Tania taryfa do 06:00 rano"}
+                    {"priority": "info", "message": "Off-peak rate until 06:00 AM"}
                 )
 
         if current_power > 3000:
@@ -1116,7 +1115,7 @@ def register_diagnostics_tools(mcp, ha_url, ha_token, config_path):
                     "current_tariff": tariff,
                     "is_peak": is_peak,
                     "is_workday": is_workday,
-                    "current_rate_pln_kwh": current_rate,
+                    "current_rate_per_kwh": current_rate,
                     "peak_rate": rate_peak,
                     "offpeak_rate": rate_offpeak,
                     "savings_potential": round(rate_peak - rate_offpeak, 2),
@@ -1124,7 +1123,7 @@ def register_diagnostics_tools(mcp, ha_url, ha_token, config_path):
                 "consumption": {
                     "current_power_w": round(current_power, 2),
                     "today_energy_kwh": round(today_consumption_kwh, 2),
-                    "estimated_cost_today_pln": round(today_consumption_kwh * current_rate, 2),
+                    "estimated_cost_today": round(today_consumption_kwh * current_rate, 2),
                 },
                 "sensors_found": {
                     "energy_sensors": len(energy_sensors),
@@ -1137,3 +1136,347 @@ def register_diagnostics_tools(mcp, ha_url, ha_token, config_path):
             indent=2,
             ensure_ascii=False,
         )
+
+    @mcp.tool()
+    async def diagnose_person_tracking(person_entity: str = "person.test_user") -> str:
+        """
+        Full person tracking diagnostics: entity state, tracker freshness, zone proximity, and related automations. ~85% token savings.
+
+        Aggregates ~6 individual calls into one:
+        - Person entity state + device trackers
+        - Each tracker: state, freshness, accuracy, integration type
+        - Zones near the person (entered/at boundary)
+        - Automations using this person entity
+        - Recommendations for tracking reliability
+
+        Args:
+            person_entity: Person entity_id (default: "person.test_user")
+
+        Returns:
+            JSON with person state, tracker details, zones, automations, issues.
+        """
+        import math as _math
+        from datetime import datetime as _dt
+
+        if not person_entity.startswith("person."):
+            person_entity = f"person.{person_entity}"
+
+        person_res = make_ha_request(ha_url, ha_token, f"/api/states/{person_entity}")
+        if not person_res["success"]:
+            return json.dumps(
+                {
+                    "success": False,
+                    "error": f"Person entity '{person_entity}' not found",
+                    "suggestion": "Use ha_search_entities(query='person') to list persons",
+                },
+                indent=2,
+            )
+
+        person_data = person_res["data"]
+        person_state = person_data.get("state", "unknown")
+        person_attrs = person_data.get("attributes", {})
+        trackers = person_attrs.get("device_trackers", [])
+        person_lat = person_attrs.get("latitude")
+        person_lon = person_attrs.get("longitude")
+        person_accuracy = person_attrs.get("gps_accuracy")
+        person_source = person_attrs.get("source")
+
+        # Get zones (from config_entries — newer HA stores zones there; fallback to zone registry)
+        zones_list = []
+        try:
+            # Primary: config_entries (UI-created zones)
+            ce_data = load_registry("core.config_entries", config_path)
+            for entry in ce_data.get("data", {}).get("entries", []):
+                if entry.get("domain") == "zone":
+                    data = entry.get("data", {})
+                    zones_list.append(
+                        {
+                            "entity_id": f"zone.{entry.get('entry_id', '')}",
+                            "name": entry.get("title", entry.get("entry_id", "")),
+                            "latitude": data.get("latitude"),
+                            "longitude": data.get("longitude"),
+                            "radius": data.get("radius"),
+                            "passive": data.get("passive", False),
+                        }
+                    )
+            # Fallback: legacy zone registry
+            if not zones_list:
+                zone_reg = load_registry("zone", config_path)
+                for z in zone_reg.get("data", {}).get("items", []):
+                    zones_list.append(
+                        {
+                            "entity_id": f"zone.{z.get('id', '')}",
+                            "name": z.get("name", z.get("id", "")),
+                            "latitude": z.get("latitude"),
+                            "longitude": z.get("longitude"),
+                            "radius": z.get("radius"),
+                            "passive": z.get("passive", False),
+                        }
+                    )
+        except Exception:
+            pass
+
+        current_zone = (
+            person_state
+            if person_state not in ["home", "not_home", "unknown", "unavailable"]
+            else person_state
+        )
+
+        nearby_zones = []
+        if person_lat and person_lon:
+            for z in zones_list:
+                z_lat = z.get("latitude")
+                z_lon = z.get("longitude")
+                if z_lat and z_lon:
+                    dx = (person_lat - z_lat) * 111320
+                    dy = (person_lon - z_lon) * 111320 * _math.cos(_math.radians(person_lat))
+                    dist = _math.sqrt(dx**2 + dy**2)
+                    z_radius = z.get("radius", 100)
+                    if dist < z_radius + 500:
+                        nearby_zones.append(
+                            {
+                                "entity_id": z["entity_id"],
+                                "name": z["name"],
+                                "distance_m": round(dist, 1),
+                                "radius_m": z_radius,
+                                "in_zone": dist <= z_radius,
+                            }
+                        )
+            nearby_zones.sort(key=lambda x: x["distance_m"])
+
+        # Get all states
+        states_result = make_ha_request(ha_url, ha_token, "/api/states")
+        states_map = {}
+        if states_result.get("success"):
+            states_map = {s["entity_id"]: s for s in states_result.get("data", [])}
+
+        # Entity + device registries
+        entity_reg = (
+            load_registry("core.entity_registry", config_path).get("data", {}).get("entities", [])
+        )
+        entity_to_platform = {e["entity_id"]: e.get("platform", "unknown") for e in entity_reg}
+        entity_to_device = {e["entity_id"]: e.get("device_id") for e in entity_reg}
+
+        device_reg = (
+            load_registry("core.device_registry", config_path).get("data", {}).get("devices", [])
+        )
+        device_map = {}
+        # Build entry_id → domain map from config_entries
+        entry_domain_map = {}
+        try:
+            ce_data = load_registry("core.config_entries", config_path)
+            for e in ce_data.get("data", {}).get("entries", []):
+                entry_domain_map[e.get("entry_id", "")] = e.get("domain", "unknown")
+        except Exception:
+            pass
+
+        for d in device_reg:
+            did = d.get("id", "")
+            integration = "unknown"
+            ce = d.get("config_entries", [])
+            if ce:
+                eid = (
+                    ce[0]
+                    if isinstance(ce, list)
+                    else (list(ce.keys())[0] if isinstance(ce, dict) else None)
+                )
+                if eid:
+                    integration = entry_domain_map.get(eid, eid)
+            device_map[did] = {
+                "name": d.get("name_by_user") or d.get("name") or did,
+                "manufacturer": d.get("manufacturer"),
+                "model": d.get("model"),
+                "integration": integration,
+            }
+
+        # Analyze trackers
+        tracker_details = []
+        tracker_issues = []
+        now_ts = time.time()
+
+        for tracker_id in trackers:
+            tracker_state = states_map.get(tracker_id, {})
+            tracker_attrs = tracker_state.get("attributes", {}) if tracker_state else {}
+            state_val = tracker_state.get("state", "unavailable") if tracker_state else "not_found"
+
+            last_updated = tracker_state.get("last_updated") if tracker_state else None
+            age_seconds = None
+            is_stale = False
+            staleness = "unknown"
+
+            if last_updated:
+                try:
+                    lu = _dt.fromisoformat(last_updated.replace("Z", "+00:00"))
+                    age_seconds = now_ts - lu.timestamp()
+                    if age_seconds > 86400:
+                        staleness = "stale_days"
+                        is_stale = True
+                    elif age_seconds > 3600:
+                        staleness = "stale_hours"
+                        is_stale = True
+                    elif age_seconds > 1800:
+                        staleness = "stale_30min"
+                        is_stale = True
+                    elif age_seconds > 300:
+                        staleness = "aging"
+                    else:
+                        staleness = "fresh"
+                except Exception:
+                    pass
+
+            source_type = tracker_attrs.get("source_type", "unknown")
+            accuracy = tracker_attrs.get("gps_accuracy")
+            platform = entity_to_platform.get(tracker_id, tracker_id.split(".")[0])
+            device_id = entity_to_device.get(tracker_id)
+            device_info = device_map.get(device_id, {}) if device_id else {}
+
+            detail = {
+                "entity_id": tracker_id,
+                "state": state_val,
+                "source_type": source_type,
+                "platform": platform,
+                "gps_accuracy_m": accuracy,
+                "age_seconds": round(age_seconds) if age_seconds is not None else None,
+                "staleness": staleness,
+                "last_updated": last_updated,
+                "device_name": device_info.get("name", "unknown"),
+                "integration": device_info.get("integration", platform),
+            }
+            if tracker_attrs.get("latitude"):
+                detail["latitude"] = tracker_attrs["latitude"]
+            if tracker_attrs.get("longitude"):
+                detail["longitude"] = tracker_attrs["longitude"]
+
+            tracker_details.append(detail)
+
+            if is_stale:
+                tracker_issues.append(
+                    {
+                        "severity": "error" if staleness == "stale_days" else "warning",
+                        "tracker": tracker_id,
+                        "message": (
+                            f"Tracker stale {round(age_seconds / 3600, 1)}h "
+                            f"— last update {last_updated}"
+                        ),
+                    }
+                )
+            elif staleness == "aging":
+                tracker_issues.append(
+                    {
+                        "severity": "info",
+                        "tracker": tracker_id,
+                        "message": f"Tracker aging ({round(age_seconds / 60, 1)}min)",
+                    }
+                )
+
+        # Find automations using this person
+        related_automations = []
+        try:
+            import yaml as _yaml
+
+            auto_path = Path(config_path) / "automations.yaml"
+            if auto_path.exists():
+                with open(auto_path, "r", encoding="utf-8") as f:
+                    auto_data = _yaml.safe_load(f) or []
+                for auto in auto_data:
+                    auto_str = str(auto)
+                    if person_entity in auto_str:
+                        alias = auto.get("alias", "Unknown")
+                        auto_id = auto.get("id")
+                        usage = []
+                        if person_entity in str(auto.get("trigger", "")):
+                            usage.append("trigger")
+                        if person_entity in str(auto.get("condition", "")):
+                            usage.append("condition")
+                        if person_entity in str(auto.get("action", "")):
+                            usage.append("action")
+                        if not usage:
+                            usage.append("config")
+                        related_automations.append({"alias": alias, "id": auto_id, "usage": usage})
+        except Exception:
+            pass
+
+        # Issues + recommendations
+        issues = []
+        recommendations = []
+        issues.extend(tracker_issues)
+
+        if len(trackers) == 0:
+            issues.append(
+                {
+                    "severity": "error",
+                    "type": "no_trackers",
+                    "message": "No device trackers assigned",
+                }
+            )
+            recommendations.append("Add at least one device_tracker to this person entity")
+        elif len(trackers) == 1:
+            issues.append(
+                {
+                    "severity": "info",
+                    "type": "single_tracker",
+                    "message": "Only one tracker — no redundancy",
+                }
+            )
+
+        active = [
+            t
+            for t in tracker_details
+            if t["staleness"] not in ("stale_days", "stale_hours", "stale_30min")
+        ]
+        if not active and len(trackers) > 0:
+            issues.append(
+                {
+                    "severity": "error",
+                    "type": "all_stale",
+                    "message": "All trackers stale — location frozen",
+                }
+            )
+            recommendations.append(
+                "Check HA Companion app: location permissions, battery optimization"
+            )
+
+        if person_accuracy and person_accuracy > 50:
+            issues.append(
+                {
+                    "severity": "warning",
+                    "type": "low_accuracy",
+                    "message": f"GPS accuracy low ({person_accuracy}m)",
+                }
+            )
+
+        if not issues:
+            issues.append({"severity": "info", "type": "healthy", "message": "Healthy"})
+
+        result = {
+            "success": True,
+            "person": {
+                "entity_id": person_entity,
+                "state": person_state,
+                "source": person_source,
+                "latitude": person_lat,
+                "longitude": person_lon,
+                "gps_accuracy_m": person_accuracy,
+                "last_changed": person_data.get("last_changed"),
+                "last_updated": person_data.get("last_updated"),
+            },
+            "trackers": {
+                "total": len(trackers),
+                "active": len(active),
+                "stale": len(trackers) - len(active),
+                "details": tracker_details,
+            },
+            "zones": {
+                "current": current_zone,
+                "nearby": nearby_zones[:10],
+                "total_configured": len(zones_list),
+            },
+            "automations": {
+                "using_this_person": len(related_automations),
+                "details": related_automations[:15],
+            },
+            "issues": issues,
+            "recommendations": recommendations[:5],
+        }
+
+        return json.dumps(result, indent=2, ensure_ascii=False)

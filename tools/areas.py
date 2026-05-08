@@ -55,7 +55,7 @@ def register_area_tools(mcp, config_path: str, ha_url: str, ha_token: str):
         ~80% token savings vs get_area_overview() + get_device_registry().
 
         Args:
-            area_id: Area id or name (e.g. "bedroom", "Sypialnia")
+            area_id: Area id or name (e.g. "bedroom", "Bedroom")
 
         Returns:
             JSON with:

@@ -269,7 +269,7 @@ def register_state_tools(mcp, ha_url, ha_token, config_path: Optional[str] = Non
         Batch: get states for a list of entities in one request.
 
         Args:
-            entity_ids: Comma-separated entity ids (e.g., "light.salon,sensor.temp").
+            entity_ids: Comma-separated entity ids (e.g., "light.living_room,sensor.temp").
 
         Returns:
             JSON with found entities and missing ids.
@@ -841,7 +841,7 @@ def register_state_tools(mcp, ha_url, ha_token, config_path: Optional[str] = Non
         min_changes: int = 1,
     ) -> str:
         """
-        📊 ENTITY CHANGES - Detects entities that changed state recently.
+        Detect entities that changed state recently. Useful for "what changed in the last hour?" queries.
 
         Useful for:
         - "What changed in the last hour?"
@@ -930,7 +930,7 @@ def register_state_tools(mcp, ha_url, ha_token, config_path: Optional[str] = Non
     @mcp.tool()
     async def get_history_batch(entity_ids: str, hours_back: int = 24, limit: int = 10) -> str:
         """
-        📜 HISTORY BATCH - Fetches history of changes for a list of entities.
+        Fetch history of state changes for a list of entities. ~85% token savings when analyzing history.
 
         ~85% token savings when analyzing history.
 
@@ -1011,13 +1011,7 @@ def register_state_tools(mcp, ha_url, ha_token, config_path: Optional[str] = Non
         automation_ids: Optional[str] = None,
     ) -> str:
         """
-        🚀 verify_recent_implementation()
-
-        Quick verification of recent changes in the Home Assistant system.
-
-        ~85% token savings for questions like:
-        - "Did new entities appear?"
-        - "Are recent automations working?"
+        Quick verification of recent changes in the Home Assistant system. ~85% token savings for questions about new entities or recent automation runs.
 
         Args:
             hours_back: How many hours back to analyze (default: 1)
@@ -1053,7 +1047,7 @@ def register_state_tools(mcp, ha_url, ha_token, config_path: Optional[str] = Non
             last_updated = _parse_ha_datetime(s.get("last_updated"))
             _parse_ha_datetime(s.get("last_changed"))
 
-            # 1) Nowe / zmienione entities
+            # 1) New / changed entities
             if last_updated and last_updated >= cutoff:
                 if _match_entity_pattern(entity_id, friendly_name, entity_pattern):
                     recent_entities.append(

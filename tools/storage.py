@@ -39,9 +39,8 @@ def register_storage_tools(mcp, config_path: str, ha_url: str = None, ha_token: 
         include_states: bool = False,
     ) -> str:
         """
-        🚀 OPTIMIZED - searches multiple registries simultaneously.
+        Search multiple registries (entity, device, area) simultaneously by name, entity_ids, area, device, or platform. ~85% token savings.
 
-        ~85% token savings for complex queries.
         Instead of: get_entity_registry() + get_device_registry() + filter × N
 
         Args:
@@ -57,7 +56,7 @@ def register_storage_tools(mcp, config_path: str, ha_url: str = None, ha_token: 
             - matched_entities: matching entities with full context
             - matched_devices: matching devices (if search_term)
             - matched_areas: matching areas (if search_term)
-            - summary: statystyki
+            - summary: statistics
 
         Examples:
             search_registries_batch(search_term="temperature")
@@ -225,13 +224,13 @@ def register_storage_tools(mcp, config_path: str, ha_url: str = None, ha_token: 
     @mcp.tool()
     async def get_entity_context(entity_id: str) -> str:
         """
-        🚀 CONTEXTUALIZED DIAGNOSTICS - Comprehensive entity context.
+        Get comprehensive entity context: state, registry info, related entities, automations, and device details. ~75% token savings.
 
         ~75% token savings when analyzing an entity.
         Instead of: get_entity_details() + get_entity_state() + search related entities
 
         Args:
-            entity_id: Entity id (np. "sensor.temperature_living_room")
+            entity_id: Entity id (e.g. "sensor.temperature_living_room")
 
         Returns:
             JSON with:
@@ -431,10 +430,10 @@ def register_storage_tools(mcp, config_path: str, ha_url: str = None, ha_token: 
     @mcp.tool()
     async def get_area_overview(area_id: str) -> str:
         """
-        🚀 BATCH ENDPOINT - Comprehensive area overview.
+        BATCH ENDPOINT - Comprehensive area overview.
 
         ~70% token savings when analyzing an area.
-        Zamiast: get_area_registry() + filter entities + get states × N
+        Instead of: get_area_registry() + filter entities + get states × N
 
         Args:
             area_id: Area id or name (e.g. "living_room", "kitchen")
@@ -582,7 +581,7 @@ def register_storage_tools(mcp, config_path: str, ha_url: str = None, ha_token: 
     @mcp.tool()
     async def get_history_stats(entity_id: str, hours_back: int = 24) -> str:
         """
-        📊 SMART HISTORY - Entity history statistics.
+        Get entity history statistics: min, max, average values from the recorder. ~90% token savings vs raw history.
 
         Returns processed data (Min, Max, Average) instead of raw list.
         ~90% token savings when analyzing history.
@@ -655,7 +654,7 @@ def register_storage_tools(mcp, config_path: str, ha_url: str = None, ha_token: 
         Fetches registry of all entities from .storage.
         Contains: entity_id, platform, device_id, aliases, disabled_by, hidden_by.
 
-        ⚠️ Warning: returns all entities - use search_registries_batch() for filtering.
+        Warning: returns all entities - use search_registries_batch() for filtering.
         """
         data = (
             load_registry("core.entity_registry", config_path).get("data", {}).get("entities", [])
@@ -748,9 +747,9 @@ def register_storage_tools(mcp, config_path: str, ha_url: str = None, ha_token: 
         """
         Fetches list of all Lovelace dashboards.
         """
-        data = load_registry("lovelace.dashboards", config_path).get("data", {}).get("items", [])
+        data = load_registry("lovelace_dashboards", config_path).get("data", {}).get("items", [])
         return json.dumps(
-            {"total_dashboards": len(data), "dashboards": data},
+            {"success": True, "total_dashboards": len(data), "dashboards": data},
             indent=2,
             ensure_ascii=False,
         )
@@ -763,11 +762,505 @@ def register_storage_tools(mcp, config_path: str, ha_url: str = None, ha_token: 
         Args:
             dashboard: Dashboard name (default: "lovelace" for main)
         """
-        registry_name = f"lovelace.{dashboard}" if dashboard != "lovelace" else "lovelace"
+        registry_name = _resolve_dashboard_registry(dashboard)
         data = load_registry(registry_name, config_path)
         if not data:
             return json.dumps({"error": f"Dashboard '{dashboard}' not found"}, indent=2)
         return json.dumps(data, indent=2, ensure_ascii=False)
+
+    def _resolve_dashboard_registry(dashboard: str) -> str:
+        """Resolve a dashboard identifier to a .storage registry name."""
+        if dashboard.startswith("lovelace."):
+            return dashboard
+        dashboards_data = (
+            load_registry("lovelace_dashboards", config_path).get("data", {}).get("items", [])
+        )
+        for d in dashboards_data:
+            if d.get("url_path") == dashboard or d.get("id") == dashboard:
+                resolved = d.get("id", dashboard)
+                return f"lovelace.{resolved}"
+        return f"lovelace.{dashboard}"
+
+    def _get_dashboards_registry() -> list:
+        """Load dashboards registry and return items list."""
+        return load_registry("lovelace_dashboards", config_path).get("data", {}).get("items", [])
+
+    def _get_lovelace_cards(dashboard_id: str) -> list:
+        """Extract flat list of card dicts from a dashboard config, with position info."""
+        registry_name = _resolve_dashboard_registry(dashboard_id)
+        config = load_registry(registry_name, config_path)
+        if not config:
+            return []
+        views = config.get("data", {}).get("config", {}).get("views", [])
+        cards_with_pos = []
+        for view_idx, view in enumerate(views):
+            for card_idx, card in enumerate(view.get("cards", [])):
+                card_copy = dict(card)
+                card_copy["_view_idx"] = view_idx
+                card_copy["_view_title"] = view.get("title", f"View {view_idx + 1}")
+                card_copy["_view_path"] = view.get("path", "")
+                card_copy["_card_idx"] = card_idx
+                cards_with_pos.append(card_copy)
+            for badge_idx, badge in enumerate(view.get("badges", [])):
+                badge_copy = dict(badge) if isinstance(badge, dict) else {"entity": badge}
+                badge_copy["_view_idx"] = view_idx
+                badge_copy["_view_title"] = view.get("title", f"View {view_idx + 1}")
+                badge_copy["_view_path"] = view.get("path", "")
+                badge_copy["_badge_idx"] = badge_idx
+                badge_copy["_is_badge"] = True
+                cards_with_pos.append(badge_copy)
+        return cards_with_pos
+
+    @mcp.tool()
+    async def get_lovelace_resources() -> str:
+        """
+        Fetches list of registered Lovelace resources (custom cards, JS modules, CSS).
+
+        Returns:
+            JSON with resource list, type breakdown, and source classification.
+        """
+        data = load_registry("lovelace_resources", config_path).get("data", {}).get("items", [])
+        by_type = {}
+        for r in data:
+            rtype = r.get("type", "unknown")
+            by_type[rtype] = by_type.get(rtype, 0) + 1
+        return json.dumps(
+            {
+                "success": True,
+                "total_resources": len(data),
+                "resources": data,
+                "by_type": by_type,
+            },
+            indent=2,
+            ensure_ascii=False,
+        )
+
+    @mcp.tool()
+    async def search_lovelace_config(
+        search_term: str = None,
+        card_type: str = None,
+        entity_id: str = None,
+        dashboard: str = None,
+        max_results: int = 50,
+    ) -> str:
+        """
+        Search inside Lovelace dashboard configurations by entity_id, card_type, or free-text.
+
+        Searches cards/badges across all dashboards by entity_id, card_type,
+        or free-text search_term. ~90% token savings vs returning full configs.
+
+        Args:
+            search_term: Free-text search in card JSON (case-insensitive).
+            card_type: Filter by card type (e.g. "tile", "custom:mushroom-light-card").
+            entity_id: Find cards referencing this entity.
+            dashboard: Limit search to a specific dashboard (url_path or id).
+            max_results: Maximum results (default 50).
+        """
+        try:
+            matches = []
+            dashboards_data = _get_dashboards_registry()
+
+            target_ids = []
+            if dashboard:
+                for d in dashboards_data:
+                    if d.get("url_path") == dashboard or d.get("id") == dashboard:
+                        target_ids.append(d.get("id", ""))
+                if not target_ids:
+                    return json.dumps(
+                        {
+                            "success": True,
+                            "matched_count": 0,
+                            "matches": [],
+                            "warnings": [f"Dashboard '{dashboard}' not found"],
+                        },
+                        indent=2,
+                        ensure_ascii=False,
+                    )
+            else:
+                target_ids = [d.get("id", "") for d in dashboards_data]
+
+            dashboards_scanned = 0
+            warnings = []
+
+            for dash_id in target_ids:
+                if not dash_id:
+                    continue
+                try:
+                    cards = _get_lovelace_cards(dash_id)
+                except Exception:
+                    warnings.append(f"Could not scan dashboard '{dash_id}'")
+                    continue
+
+                if not cards:
+                    warnings.append(f"Dashboard '{dash_id}' is strategy-based — no cards to search")
+                    continue
+
+                dashboards_scanned += 1
+
+                for card in cards:
+                    if len(matches) >= max_results:
+                        break
+
+                    card_str = json.dumps(card).lower()
+                    matched = False
+                    matched_by = []
+
+                    if search_term and search_term.lower() in card_str:
+                        matched = True
+                        matched_by.append("search_term")
+                    if card_type and card.get("type", "").lower() == card_type.lower():
+                        matched = True
+                        matched_by.append("card_type")
+                    if entity_id:
+                        if card.get("entity") == entity_id:
+                            matched = True
+                            matched_by.append("entity_id")
+                        elif "entities" in card:
+                            entities_list = card["entities"]
+                            for e in entities_list:
+                                if e == entity_id or (
+                                    isinstance(e, dict) and e.get("entity") == entity_id
+                                ):
+                                    matched = True
+                                    matched_by.append("entity_id")
+                                    break
+                        if not matched:
+                            card_json = json.dumps(card)
+                            if entity_id in card_json:
+                                matched = True
+                                matched_by.append("entity_in_card_attr")
+
+                    if matched or (not search_term and not card_type and not entity_id):
+                        if not search_term and not card_type and not entity_id:
+                            break
+                        match_info = {
+                            "dashboard": dash_id,
+                            "view_title": card.get("_view_title", ""),
+                            "view_path": card.get("_view_path", ""),
+                            "card_type": card.get("type", "unknown"),
+                            "card_index": card.get("_card_idx", card.get("_badge_idx", 0)),
+                            "is_badge": card.get("_is_badge", False),
+                            "matched_by": matched_by,
+                        }
+                        if entity_id:
+                            match_info["entity_id"] = entity_id
+                        if card.get("name"):
+                            match_info["card_name"] = card["name"]
+                        if card.get("title"):
+                            match_info["card_title"] = card["title"]
+                        matches.append(match_info)
+
+                if len(matches) >= max_results:
+                    break
+
+            return json.dumps(
+                {
+                    "success": True,
+                    "matched_count": len(matches),
+                    "dashboards_scanned": dashboards_scanned,
+                    "dashboards_skipped": len(target_ids) - dashboards_scanned,
+                    "matches": matches,
+                    "warnings": warnings if warnings else None,
+                },
+                indent=2,
+                ensure_ascii=False,
+            )
+        except Exception as e:
+            return json.dumps(
+                {"success": False, "error": str(e)},
+                indent=2,
+            )
+
+    @mcp.tool()
+    async def get_lovelace_config_summary(dashboard: str = None) -> str:
+        """
+        Token-efficient Lovelace dashboard structure overview: card type breakdown, view counts, strategy detection. ~95% token savings.
+
+        Returns card counts, type breakdown, view info. ~95% token savings
+        vs returning full dashboard JSON.
+
+        Args:
+            dashboard: Specific dashboard url_path/id, or None for all dashboards.
+        """
+        try:
+            dashboards_data = _get_dashboards_registry()
+
+            if dashboard:
+                target = None
+                for d in dashboards_data:
+                    if d.get("url_path") == dashboard or d.get("id") == dashboard:
+                        target = d
+                        break
+                if not target:
+                    return json.dumps(
+                        {"success": False, "error": f"Dashboard '{dashboard}' not found"},
+                        indent=2,
+                    )
+                dashboards_data = [target]
+
+            summaries = []
+            for d in dashboards_data:
+                dash_id = d.get("id", "")
+                info = {
+                    "id": dash_id,
+                    "url_path": d.get("url_path", ""),
+                    "title": d.get("title", ""),
+                    "mode": d.get("mode", "unknown"),
+                    "show_in_sidebar": d.get("show_in_sidebar", True),
+                    "icon": d.get("icon"),
+                    "views": [],
+                    "total_views": 0,
+                    "total_cards": 0,
+                    "total_badges": 0,
+                    "card_types_breakdown": {},
+                    "strategy": None,
+                }
+
+                try:
+                    cards = _get_lovelace_cards(dash_id)
+                except Exception:
+                    info["error"] = "Could not load dashboard config"
+                    summaries.append(info)
+                    continue
+
+                if not cards:
+                    config = load_registry(_resolve_dashboard_registry(dash_id), config_path)
+                    strategy = config.get("data", {}).get("config", {}).get("strategy", {})
+                    if strategy:
+                        info["strategy"] = strategy.get("type", "unknown")
+                    summaries.append(info)
+                    continue
+
+                views_map = {}
+                badges_count = 0
+                card_types = {}
+                for card in cards:
+                    if card.get("_is_badge"):
+                        badges_count += 1
+                    else:
+                        ctype = card.get("type", "unknown")
+                        card_types[ctype] = card_types.get(ctype, 0) + 1
+                    vi = card.get("_view_idx", 0)
+                    if vi not in views_map:
+                        views_map[vi] = {
+                            "title": card.get("_view_title", ""),
+                            "path": card.get("_view_path", ""),
+                            "cards": 0,
+                        }
+                    if not card.get("_is_badge"):
+                        views_map[vi]["cards"] += 1
+
+                info["views"] = list(views_map.values())
+                info["total_views"] = len(views_map)
+                info["total_cards"] = sum(v["cards"] for v in views_map.values())
+                info["total_badges"] = badges_count
+                info["card_types_breakdown"] = dict(sorted(card_types.items(), key=lambda x: -x[1]))
+                summaries.append(info)
+
+            if dashboard and len(summaries) == 1:
+                return json.dumps(
+                    {"success": True, "dashboard": summaries[0]},
+                    indent=2,
+                    ensure_ascii=False,
+                )
+
+            total_views = sum(s["total_views"] for s in summaries if "total_views" in s)
+            total_cards = sum(s["total_cards"] for s in summaries if "total_cards" in s)
+            strategy_dashboards = [s["id"] for s in summaries if s.get("strategy")]
+            yaml_dashboards = [s["id"] for s in summaries if s.get("mode") == "yaml"]
+
+            global_ct = {}
+            for s in summaries:
+                for ct, cnt in s.get("card_types_breakdown", {}).items():
+                    global_ct[ct] = global_ct.get(ct, 0) + cnt
+
+            return json.dumps(
+                {
+                    "success": True,
+                    "total_dashboards": len(summaries),
+                    "dashboards_summary": summaries,
+                    "global_stats": {
+                        "total_views": total_views,
+                        "total_cards": total_cards,
+                        "top_card_types": dict(sorted(global_ct.items(), key=lambda x: -x[1])[:10]),
+                        "strategy_dashboards": strategy_dashboards,
+                        "yaml_mode_dashboards": yaml_dashboards,
+                    },
+                },
+                indent=2,
+                ensure_ascii=False,
+            )
+        except Exception as e:
+            return json.dumps(
+                {"success": False, "error": str(e)},
+                indent=2,
+            )
+
+    @mcp.tool()
+    async def diagnose_lovelace_setup() -> str:
+        """
+        Full Lovelace diagnostics: missing entity references, strategy/YAML mode, resource analysis, recommendations. ~85% token savings.
+
+        Checks: missing entity references, strategy/YAML mode dashboards,
+        resource analysis, and generates recommendations. ~85% token savings
+        vs manual multi-call workflow.
+        """
+        try:
+            dashboards_data = _get_dashboards_registry()
+            resources_data = (
+                load_registry("lovelace_resources", config_path).get("data", {}).get("items", [])
+            )
+
+            entity_registry = (
+                load_registry("core.entity_registry", config_path)
+                .get("data", {})
+                .get("entities", [])
+            )
+            known_entity_ids = {e.get("entity_id", "") for e in entity_registry}
+
+            missing_refs = []
+            strategy_dashboards = []
+            yaml_dashboards = []
+            dashboard_stats = []
+            all_referenced_entities = set()
+
+            for d in dashboards_data:
+                dash_id = d.get("id", "")
+                info = {
+                    "id": dash_id,
+                    "url_path": d.get("url_path", ""),
+                    "title": d.get("title", ""),
+                    "mode": d.get("mode", "unknown"),
+                    "cards_count": 0,
+                    "views_count": 0,
+                    "is_strategy": False,
+                    "strategy_type": None,
+                }
+
+                if d.get("mode") == "yaml":
+                    yaml_dashboards.append(dash_id)
+                    info["is_yaml"] = True
+                    dashboard_stats.append(info)
+                    continue
+
+                try:
+                    cards = _get_lovelace_cards(dash_id)
+                except Exception:
+                    dashboard_stats.append(info)
+                    continue
+
+                if not cards:
+                    config = load_registry(_resolve_dashboard_registry(dash_id), config_path)
+                    strategy = config.get("data", {}).get("config", {}).get("strategy", {})
+                    if strategy:
+                        info["is_strategy"] = True
+                        info["strategy_type"] = strategy.get("type", "unknown")
+                        strategy_dashboards.append(dash_id)
+                    dashboard_stats.append(info)
+                    continue
+
+                views = set()
+                card_entities = []
+                for card in cards:
+                    if not card.get("_is_badge"):
+                        info["cards_count"] += 1
+                    cid = card.get("entity")
+                    if cid:
+                        card_entities.append(cid)
+                    if "entities" in card:
+                        for e in card["entities"]:
+                            eid = e.get("entity", e) if isinstance(e, dict) else e
+                            if isinstance(eid, str):
+                                card_entities.append(eid)
+                    views.add(card.get("_view_idx", 0))
+
+                    card_json = json.dumps(card)
+                    for eid in known_entity_ids:
+                        if eid in card_json:
+                            all_referenced_entities.add(eid)
+
+                info["views_count"] = len(views)
+
+                for eid in card_entities:
+                    if eid not in known_entity_ids:
+                        missing_refs.append(
+                            {
+                                "entity_id": eid,
+                                "dashboard": dash_id,
+                                "dashboard_title": d.get("title", ""),
+                            }
+                        )
+
+                dashboard_stats.append(info)
+
+            resource_urls = [r.get("url", "").split("?")[0].split("/")[-1] for r in resources_data]
+
+            issues = []
+            recommendations = []
+
+            if missing_refs:
+                unique_missing = {}
+                for mr in missing_refs:
+                    eid = mr["entity_id"]
+                    if eid not in unique_missing:
+                        unique_missing[eid] = []
+                    unique_missing[eid].append(mr["dashboard"])
+                for eid, dashbs in unique_missing.items():
+                    issues.append(
+                        f"Entity '{eid}' referenced in {len(dashbs)} dashboard(s) "
+                        f"does not exist in registry"
+                    )
+                    recommendations.append(
+                        f"Remove or replace references to '{eid}' in dashboards: "
+                        f"{', '.join(dashbs)}"
+                    )
+
+            if strategy_dashboards:
+                issues.append(
+                    f"{len(strategy_dashboards)} strategy-based dashboard(s): "
+                    f"{', '.join(strategy_dashboards)}"
+                )
+                recommendations.append(
+                    "Strategy-based dashboards have no explicit card data — "
+                    "cards are generated dynamically by Home Assistant"
+                )
+
+            if yaml_dashboards:
+                issues.append(
+                    f"{len(yaml_dashboards)} YAML-mode dashboard(s): {', '.join(yaml_dashboards)}"
+                )
+                recommendations.append(
+                    "YAML-mode dashboards are read-only via storage; only file-based "
+                    "configs can provide card data"
+                )
+
+            return json.dumps(
+                {
+                    "success": True,
+                    "dashboards": dashboard_stats,
+                    "resources": {
+                        "total": len(resources_data),
+                        "items": resources_data,
+                        "filenames": resource_urls,
+                    },
+                    "health_checks": {
+                        "missing_entity_references": missing_refs[:50],
+                        "missing_entity_count": len(set(m["entity_id"] for m in missing_refs)),
+                        "total_referenced_entities": len(all_referenced_entities),
+                        "strategy_dashboards": strategy_dashboards,
+                        "yaml_mode_dashboards": yaml_dashboards,
+                    },
+                    "issues": issues,
+                    "recommendations": recommendations,
+                },
+                indent=2,
+                ensure_ascii=False,
+            )
+        except Exception as e:
+            return json.dumps(
+                {"success": False, "error": str(e)},
+                indent=2,
+            )
 
     @mcp.tool()
     async def get_exposed_entities() -> str:
@@ -788,7 +1281,9 @@ def register_storage_tools(mcp, config_path: str, ha_url: str = None, ha_token: 
         """
         data = load_registry("person", config_path).get("data", {}).get("items", [])
         return json.dumps(
-            {"total_persons": len(data), "persons": data}, indent=2, ensure_ascii=False
+            {"success": True, "total_persons": len(data), "persons": data},
+            indent=2,
+            ensure_ascii=False,
         )
 
     @mcp.tool()
@@ -797,7 +1292,9 @@ def register_storage_tools(mcp, config_path: str, ha_url: str = None, ha_token: 
         Fetches list of zones with their configuration.
         """
         data = load_registry("zone", config_path).get("data", {}).get("items", [])
-        return json.dumps({"total_zones": len(data), "zones": data}, indent=2, ensure_ascii=False)
+        return json.dumps(
+            {"success": True, "total_zones": len(data), "zones": data}, indent=2, ensure_ascii=False
+        )
 
     @mcp.tool()
     async def get_input_helpers() -> str:
@@ -829,8 +1326,10 @@ def register_storage_tools(mcp, config_path: str, ha_url: str = None, ha_token: 
         """
         data = load_registry("hacs.data", config_path)
         if not data:
-            return json.dumps({"info": "HACS not installed or storage file not found"}, indent=2)
-        return json.dumps(data, indent=2, ensure_ascii=False)
+            return json.dumps(
+                {"success": True, "info": "HACS not installed or storage file not found"}, indent=2
+            )
+        return json.dumps({"success": True, **data}, indent=2, ensure_ascii=False)
 
     @mcp.tool()
     async def get_timers() -> str:
@@ -853,36 +1352,64 @@ def register_storage_tools(mcp, config_path: str, ha_url: str = None, ha_token: 
         )
 
     @mcp.tool()
-    async def get_template_entities() -> str:
+    async def get_template_entities(entity_id: str = None) -> str:
         """
-        Fetches all template sensors and binary_sensors created via UI.
+        Fetches template sensors and binary_sensors created via UI.
         Template helpers are stored in .storage/core.config_entries.
 
+        Args:
+            entity_id: Optional filter by entity_id (e.g. "sensor.my_template").
+                       When provided, returns only the matching template.
+
         Returns:
-            List of template entities with their configuration (template code, device_class, etc.)
+            JSON with total_templates, templates list, and their configuration.
         """
         data = load_registry("core.config_entries", config_path).get("data", {}).get("entries", [])
         templates = []
 
-        def slugify(text):
+        # Build entity_id lookup from entity registry for accurate matching
+        entity_reg = load_registry("core.entity_registry", config_path)
+        entry_to_entity = {}
+        for ent in entity_reg.get("data", {}).get("entities", []):
+            ce_id = ent.get("config_entry_id")
+            if ce_id:
+                entry_to_entity[ce_id] = ent.get("entity_id")
+
+        def normalize_for_matching(text):
+            """Normalize text for diacritic-insensitive matching."""
             if not text:
-                return "unknown"
-            text = text.lower()
-            text = re.sub(r"[^a-z0-9]+", "_", text)
-            return text.strip("_")
+                return ""
+            import unicodedata
+
+            text = unicodedata.normalize("NFKD", text.lower())
+            text = "".join(c for c in text if not unicodedata.combining(c))
+            return re.sub(r"[^a-z0-9]+", "_", text).strip("_")
 
         for entry in data:
             if entry.get("domain") != "template":
                 continue
 
             opts = entry.get("options", {})
+            entry_id = entry.get("entry_id")
             name = entry.get("title") or opts.get("name", "unknown")
             ttype = opts.get("template_type", "sensor")
+
+            # Use authoritative entity_id from registry; fallback to normalized slug
+            eid = entry_to_entity.get(entry_id)
+            if not eid:
+                eid = f"{ttype}.{normalize_for_matching(name)}"
+
+            # Match: exact entity_id OR normalized diacritic-insensitive match
+            if entity_id:
+                if eid != entity_id and normalize_for_matching(name) != normalize_for_matching(
+                    entity_id.split(".", 1)[-1] if "." in entity_id else entity_id
+                ):
+                    continue
 
             templates.append(
                 {
                     "name": name,
-                    "entity_id": f"{ttype}.{slugify(name)}",
+                    "entity_id": eid,
                     "template_type": ttype,
                     "state_template": opts.get("state", ""),
                     "device_class": opts.get("device_class"),
@@ -901,9 +1428,88 @@ def register_storage_tools(mcp, config_path: str, ha_url: str = None, ha_token: 
         templates.sort(key=lambda x: x.get("name", "").lower())
 
         return json.dumps(
-            {"total_templates": len(templates), "templates": templates},
+            {"success": True, "total_templates": len(templates), "templates": templates},
             indent=2,
             ensure_ascii=False,
+        )
+
+    @mcp.tool()
+    async def get_template_entity_code(entity_id: str) -> str:
+        """
+        Returns full Jinja2 template code for a single template helper entity.
+        ~95% token savings vs get_template_entities().
+
+        Args:
+            entity_id: Entity id of the template (e.g. "sensor.my_template").
+
+        Returns:
+            JSON with template metadata and full Jinja2 code.
+        """
+        if not entity_id or not isinstance(entity_id, str) or not entity_id.strip():
+            return json.dumps(
+                {"success": False, "error": "entity_id is required and must be a non-empty string"},
+                indent=2,
+            )
+
+        data = load_registry("core.config_entries", config_path).get("data", {}).get("entries", [])
+
+        # Build entity_id lookup from entity registry for accurate matching
+        entity_reg = load_registry("core.entity_registry", config_path)
+        entry_to_entity = {}
+        for ent in entity_reg.get("data", {}).get("entities", []):
+            ce_id = ent.get("config_entry_id")
+            if ce_id:
+                entry_to_entity[ce_id] = ent.get("entity_id")
+
+        import unicodedata
+
+        def normalize_name(text):
+            text = unicodedata.normalize("NFKD", text.lower())
+            text = "".join(c for c in text if not unicodedata.combining(c))
+            return re.sub(r"[^a-z0-9]+", "_", text).strip("_")
+
+        for entry in data:
+            if entry.get("domain") != "template":
+                continue
+
+            opts = entry.get("options", {})
+            entry_id = entry.get("entry_id")
+            name = entry.get("title") or opts.get("name", "unknown")
+            ttype = opts.get("template_type", "sensor")
+
+            # Use authoritative entity_id from registry; fallback to normalized slug
+            eid = entry_to_entity.get(entry_id)
+            if not eid:
+                eid = f"{ttype}.{normalize_name(name)}"
+
+            # Match: exact entity_id OR normalized diacritic-insensitive match
+            if eid != entity_id and normalize_name(name) != normalize_name(
+                entity_id.split(".", 1)[-1] if "." in entity_id else entity_id
+            ):
+                continue
+
+            return json.dumps(
+                {
+                    "success": True,
+                    "entity_id": entity_id,
+                    "name": name,
+                    "template_type": ttype,
+                    "state_template": opts.get("state", ""),
+                    "unit_of_measurement": opts.get("unit_of_measurement"),
+                    "device_class": opts.get("device_class"),
+                    "availability_template": opts.get("availability"),
+                    "attribute_templates": opts.get("attributes", {}),
+                    "entry_id": entry.get("entry_id"),
+                    "created_at": entry.get("created_at"),
+                    "modified_at": entry.get("modified_at"),
+                },
+                indent=2,
+                ensure_ascii=False,
+            )
+
+        return json.dumps(
+            {"success": False, "error": f"Template '{entity_id}' not found"},
+            indent=2,
         )
 
     # ========================================
@@ -915,7 +1521,7 @@ def register_storage_tools(mcp, config_path: str, ha_url: str = None, ha_token: 
         """
         Searches entities by name or entity_id in the registry.
 
-        ⚠️ Warning: Use search_registries_batch() for more advanced searching.
+        Warning: Use search_registries_batch() for more advanced searching.
 
         Args:
             search_term: Phrase to search for
@@ -928,9 +1534,9 @@ def register_storage_tools(mcp, config_path: str, ha_url: str = None, ha_token: 
         Fetches detailed information about a specific entity from the registry.
         Contains related device and area.
 
-        ⚠️ Warning: Use get_entity_context() for full context with live state.
+        Warning: Use get_entity_context() for full context with live state.
 
         Args:
-            entity_id: Entity id (np. "sensor.temperature_living_room")
+            entity_id: Entity id (e.g. "sensor.temperature_living_room")
         """
         return await get_entity_context(entity_id)

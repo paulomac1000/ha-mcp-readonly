@@ -47,7 +47,7 @@ def mock_registry_data():
                         "entity_id": "light.room",
                         "name": "Room Light",
                         "platform": "hue",
-                        "area_id": "salon",
+                        "area_id": "living_room",
                     },
                 ]
             }
@@ -59,7 +59,7 @@ def mock_registry_data():
             "data": {
                 "areas": [
                     {"id": "kitchen", "name": "Kitchen"},
-                    {"id": "salon", "name": "Salon"},
+                    {"id": "living_room", "name": "Living Room"},
                 ]
             }
         },
@@ -85,9 +85,6 @@ class TestSearchRegistries:
             # Test search by name
             result = await tool(search_term="Temp")
             data = json.loads(result)
-
-            if not data["success"]:
-                print(f"Error: {data.get('error')}")
 
             assert data["success"] is True
             assert len(data["matched_entities"]) == 1
@@ -157,9 +154,6 @@ class TestEntityContext:
                 result = await tool("sensor.temp")
                 data = json.loads(result)
 
-                if not data["success"]:
-                    print(f"Error: {data.get('error')}")
-
                 assert data["success"] is True
                 assert data["entity_info"]["name"] == "Temp"
                 assert data["device_info"]["name"] == "Sensor Device"
@@ -211,6 +205,51 @@ class TestAreaOverview:
         assert "available_areas" in data
 
 
+class TestRegistryDumpTools:
+    @pytest.mark.asyncio
+    async def test_get_entity_registry(self, mock_mcp, config_path, mock_registry_data):
+        with patch("tools.storage.load_registry") as mock_load:
+            mock_load.side_effect = lambda name, path, use_cache=True: mock_registry_data.get(
+                name, {}
+            )
+            register_storage_tools(mock_mcp, config_path)
+            data = json.loads(await mock_mcp._tools["get_entity_registry"]())
+        assert "total_entities" in data
+        assert data["total_entities"] == 2
+
+    @pytest.mark.asyncio
+    async def test_get_device_registry(self, mock_mcp, config_path, mock_registry_data):
+        with patch("tools.storage.load_registry") as mock_load:
+            mock_load.side_effect = lambda name, path, use_cache=True: mock_registry_data.get(
+                name, {}
+            )
+            register_storage_tools(mock_mcp, config_path)
+            data = json.loads(await mock_mcp._tools["get_device_registry"]())
+        assert "total_devices" in data
+        assert data["total_devices"] == 1
+
+    @pytest.mark.asyncio
+    async def test_get_area_registry(self, mock_mcp, config_path, mock_registry_data):
+        with patch("tools.storage.load_registry") as mock_load:
+            mock_load.side_effect = lambda name, path, use_cache=True: mock_registry_data.get(
+                name, {}
+            )
+            register_storage_tools(mock_mcp, config_path)
+            data = json.loads(await mock_mcp._tools["get_area_registry"]())
+        assert "total_areas" in data
+        assert data["total_areas"] == 2
+
+    @pytest.mark.asyncio
+    async def test_get_config_entries(self, mock_mcp, config_path, mock_registry_data):
+        with patch("tools.storage.load_registry") as mock_load:
+            mock_load.side_effect = lambda name, path, use_cache=True: mock_registry_data.get(
+                name, {}
+            )
+            register_storage_tools(mock_mcp, config_path)
+            data = json.loads(await mock_mcp._tools["get_config_entries"]())
+        assert "total_entries" in data or "entries" in data
+
+
 class TestHistoryStats:
     @pytest.mark.asyncio
     async def test_numeric_analysis(self, mock_mcp, config_path):
@@ -259,47 +298,833 @@ class TestHistoryStats:
         data = json.loads(await mock_mcp._tools["get_history_stats"]("sensor.temp"))
         assert "error" in data
 
-
-class TestRegistryDumpTools:
     @pytest.mark.asyncio
-    async def test_get_entity_registry(self, mock_mcp, config_path, mock_registry_data):
+    async def test_empty_history_data(self, mock_mcp, config_path):
+        """HA returns success but empty data — covers line 608."""
+        with patch(
+            "tools.storage.make_ha_request",
+            return_value={"success": True, "data": []},
+        ):
+            register_storage_tools(mock_mcp, config_path, "http://ha", "token")
+            data = json.loads(
+                await mock_mcp._tools["get_history_stats"]("sensor.temp", hours_back=24)
+            )
+        assert "error" in data
+        assert "No history data found" in data["error"]
+
+    @pytest.mark.asyncio
+    async def test_no_valid_states(self, mock_mcp, config_path):
+        """All states are unavailable/unknown — covers line 614."""
+        history = [
+            [
+                {"state": "unavailable", "last_changed": "2025-01-01T00:00:00Z"},
+                {"state": "unknown", "last_changed": "2025-01-01T01:00:00Z"},
+            ]
+        ]
+        with patch(
+            "tools.storage.make_ha_request",
+            return_value={"success": True, "data": history},
+        ):
+            register_storage_tools(mock_mcp, config_path, "http://ha", "token")
+            data = json.loads(
+                await mock_mcp._tools["get_history_stats"]("sensor.temp", hours_back=24)
+            )
+        assert "info" in data
+        assert "No valid states" in data["info"]
+
+
+class TestSearchRegistriesEdgeCases:
+    @pytest.mark.asyncio
+    async def test_filter_by_platform(self, mock_mcp, config_path, mock_registry_data):
+        """Filter by platform — covers line 101."""
         with patch("tools.storage.load_registry") as mock_load:
             mock_load.side_effect = lambda name, path, use_cache=True: mock_registry_data.get(
                 name, {}
             )
             register_storage_tools(mock_mcp, config_path)
-            data = json.loads(await mock_mcp._tools["get_entity_registry"]())
-        assert "total_entities" in data
-        assert data["total_entities"] == 2
+            data = json.loads(await mock_mcp._tools["search_registries_batch"](platform="mqtt"))
+        assert data["success"] is True
+        assert data["summary"]["matched_entities"] == 1
+        assert data["matched_entities"][0]["entity_id"] == "sensor.temp"
 
     @pytest.mark.asyncio
-    async def test_get_device_registry(self, mock_mcp, config_path, mock_registry_data):
+    async def test_filter_by_platform_no_match(self, mock_mcp, config_path, mock_registry_data):
+        """Platform filter returns no matches — covers line 101."""
         with patch("tools.storage.load_registry") as mock_load:
             mock_load.side_effect = lambda name, path, use_cache=True: mock_registry_data.get(
                 name, {}
             )
             register_storage_tools(mock_mcp, config_path)
-            data = json.loads(await mock_mcp._tools["get_device_registry"]())
-        assert "total_devices" in data
-        assert data["total_devices"] == 1
+            data = json.loads(await mock_mcp._tools["search_registries_batch"](platform="zwave"))
+        assert data["success"] is True
+        assert data["summary"]["matched_entities"] == 0
 
     @pytest.mark.asyncio
-    async def test_get_area_registry(self, mock_mcp, config_path, mock_registry_data):
+    async def test_filter_by_device_id(self, mock_mcp, config_path, mock_registry_data):
+        """Filter by device_id — covers line 110."""
         with patch("tools.storage.load_registry") as mock_load:
             mock_load.side_effect = lambda name, path, use_cache=True: mock_registry_data.get(
                 name, {}
             )
             register_storage_tools(mock_mcp, config_path)
-            data = json.loads(await mock_mcp._tools["get_area_registry"]())
-        assert "total_areas" in data
-        assert data["total_areas"] == 2
+            data = json.loads(await mock_mcp._tools["search_registries_batch"](device_id="dev1"))
+        assert data["success"] is True
+        assert data["summary"]["matched_entities"] == 1
+        assert data["matched_entities"][0]["entity_id"] == "sensor.temp"
 
     @pytest.mark.asyncio
-    async def test_get_config_entries(self, mock_mcp, config_path, mock_registry_data):
+    async def test_filter_by_entity_ids(self, mock_mcp, config_path, mock_registry_data):
+        """Filter by specific entity_ids — covers line 98."""
         with patch("tools.storage.load_registry") as mock_load:
             mock_load.side_effect = lambda name, path, use_cache=True: mock_registry_data.get(
                 name, {}
             )
             register_storage_tools(mock_mcp, config_path)
-            data = json.loads(await mock_mcp._tools["get_config_entries"]())
-        assert "total_entries" in data or "entries" in data
+            data = json.loads(
+                await mock_mcp._tools["search_registries_batch"](
+                    entity_ids="sensor.temp,light.room"
+                )
+            )
+        assert data["success"] is True
+        assert data["summary"]["matched_entities"] == 2
+
+    @pytest.mark.asyncio
+    async def test_search_device_by_manufacturer(self, mock_mcp, config_path):
+        """Matches device by manufacturer name — covers line 175."""
+        registry_data = {
+            "core.entity_registry": {
+                "data": {
+                    "entities": [
+                        {
+                            "entity_id": "sensor.test",
+                            "name": "Test Sensor",
+                            "platform": "mqtt",
+                            "device_id": "dev1",
+                        }
+                    ]
+                }
+            },
+            "core.device_registry": {
+                "data": {
+                    "devices": [
+                        {
+                            "id": "dev1",
+                            "name": "Test Device",
+                            "manufacturer": "Acme Corp",
+                            "model": "X100",
+                        }
+                    ]
+                }
+            },
+            "core.area_registry": {"data": {"areas": []}},
+        }
+        with patch("tools.storage.load_registry") as mock_load:
+            mock_load.side_effect = lambda name, path, use_cache=True: registry_data.get(name, {})
+            register_storage_tools(mock_mcp, config_path)
+            data = json.loads(await mock_mcp._tools["search_registries_batch"](search_term="Acme"))
+        assert data["success"] is True
+        assert data["summary"]["matched_devices"] == 1
+        assert data["matched_devices"][0]["manufacturer"] == "Acme Corp"
+
+    @pytest.mark.asyncio
+    async def test_search_area_by_name(self, mock_mcp, config_path, mock_registry_data):
+        """Matches area by name — covers line 191."""
+        with patch("tools.storage.load_registry") as mock_load:
+            mock_load.side_effect = lambda name, path, use_cache=True: mock_registry_data.get(
+                name, {}
+            )
+            register_storage_tools(mock_mcp, config_path)
+            data = json.loads(
+                await mock_mcp._tools["search_registries_batch"](search_term="Kitchen")
+            )
+        assert data["success"] is True
+        assert data["summary"]["matched_areas"] == 1
+
+
+class TestEntityContextEdgeCases:
+    @pytest.fixture
+    def registry_data_with_disabled(self):
+        return {
+            "core.entity_registry": {
+                "data": {
+                    "entities": [
+                        {
+                            "entity_id": "sensor.disabled",
+                            "name": "Disabled Sensor",
+                            "platform": "mqtt",
+                            "device_id": "dev1",
+                            "disabled_by": "user",
+                            "hidden_by": "user",
+                            "config_entry_id": "entry1",
+                        },
+                        {
+                            "entity_id": "sensor.sibling",
+                            "name": "Sibling Sensor",
+                            "platform": "mqtt",
+                            "device_id": "dev1",
+                        },
+                    ]
+                }
+            },
+            "core.device_registry": {
+                "data": {"devices": [{"id": "dev1", "name": "Device One", "area_id": "kitchen"}]}
+            },
+            "core.area_registry": {"data": {"areas": [{"id": "kitchen", "name": "Kitchen"}]}},
+            "core.config_entries": {
+                "data": {
+                    "entries": [
+                        {
+                            "entry_id": "entry1",
+                            "domain": "mqtt",
+                            "title": "MQTT",
+                            "source": "user",
+                        }
+                    ]
+                }
+            },
+        }
+
+    @pytest.mark.asyncio
+    async def test_entity_disabled_and_hidden(
+        self, mock_mcp, config_path, registry_data_with_disabled
+    ):
+        """Disabled/hidden entity with config entry — covers lines 402-407, 417-418, 421."""
+        with (
+            patch("tools.storage.load_registry") as mock_load,
+            patch("tools.storage.make_ha_request") as mock_req,
+        ):
+            mock_load.side_effect = lambda name, path, use_cache=True: (
+                registry_data_with_disabled.get(name, {})
+            )
+            mock_req.return_value = {
+                "success": True,
+                "data": {"state": "20", "attributes": {}},
+            }
+            register_storage_tools(mock_mcp, config_path, "http://ha", "token")
+            data = json.loads(await mock_mcp._tools["get_entity_context"]("sensor.disabled"))
+        assert data["success"] is True
+        assert data["entity_info"]["disabled_by"] == "user"
+        assert data["entity_info"]["hidden_by"] == "user"
+        assert "integration_info" in data
+        assert data["integration_info"]["domain"] == "mqtt"
+        issues = [i.lower() for i in data["issues"]]
+        assert any("disabled" in i for i in issues)
+        assert any("hidden" in i for i in issues)
+
+    @pytest.mark.asyncio
+    async def test_entity_unavailable_state(self, mock_mcp, config_path, mock_registry_data):
+        """Entity state is unavailable — covers lines 332-333."""
+        with (
+            patch("tools.storage.load_registry") as mock_load,
+            patch("tools.storage.make_ha_request") as mock_req,
+        ):
+            mock_load.side_effect = lambda name, path, use_cache=True: mock_registry_data.get(
+                name, {}
+            )
+            mock_req.return_value = {
+                "success": True,
+                "data": {"state": "unavailable", "attributes": {}},
+            }
+            register_storage_tools(mock_mcp, config_path, "http://ha", "token")
+            data = json.loads(await mock_mcp._tools["get_entity_context"]("sensor.temp"))
+        assert data["success"] is True
+        assert any("unavailable" in i.lower() for i in data["issues"])
+
+    @pytest.mark.asyncio
+    async def test_entity_unknown_state(self, mock_mcp, config_path, mock_registry_data):
+        """Entity state is unknown — covers lines 337-340."""
+        with (
+            patch("tools.storage.load_registry") as mock_load,
+            patch("tools.storage.make_ha_request") as mock_req,
+        ):
+            mock_load.side_effect = lambda name, path, use_cache=True: mock_registry_data.get(
+                name, {}
+            )
+            mock_req.return_value = {
+                "success": True,
+                "data": {"state": "unknown", "attributes": {}},
+            }
+            register_storage_tools(mock_mcp, config_path, "http://ha", "token")
+            data = json.loads(await mock_mcp._tools["get_entity_context"]("sensor.temp"))
+        assert data["success"] is True
+        assert any("unknown" in i.lower() for i in data["issues"])
+
+    @pytest.mark.asyncio
+    async def test_state_fetch_error(self, mock_mcp, config_path, mock_registry_data):
+        """HA request fails — covers line 340."""
+        with (
+            patch("tools.storage.load_registry") as mock_load,
+            patch("tools.storage.make_ha_request") as mock_req,
+        ):
+            mock_load.side_effect = lambda name, path, use_cache=True: mock_registry_data.get(
+                name, {}
+            )
+            mock_req.return_value = {
+                "success": False,
+                "error": "Connection refused",
+            }
+            register_storage_tools(mock_mcp, config_path, "http://ha", "token")
+            data = json.loads(await mock_mcp._tools["get_entity_context"]("sensor.temp"))
+        assert data["success"] is True
+        assert any("could not fetch" in i.lower() for i in data["issues"])
+
+    @pytest.mark.asyncio
+    async def test_related_entities_same_device(
+        self, mock_mcp, config_path, registry_data_with_disabled
+    ):
+        """Entity on same device as another — covers line 360."""
+        with (
+            patch("tools.storage.load_registry") as mock_load,
+            patch("tools.storage.make_ha_request") as mock_req,
+        ):
+            mock_load.side_effect = lambda name, path, use_cache=True: (
+                registry_data_with_disabled.get(name, {})
+            )
+            mock_req.return_value = {
+                "success": True,
+                "data": {"state": "20", "attributes": {}},
+            }
+            register_storage_tools(mock_mcp, config_path, "http://ha", "token")
+            data = json.loads(await mock_mcp._tools["get_entity_context"]("sensor.disabled"))
+        assert data["success"] is True
+        related = data["related_entities"]
+        assert len(related) == 1
+        assert related[0]["entity_id"] == "sensor.sibling"
+
+
+class TestAreaOverviewEdgeCases:
+    @pytest.mark.asyncio
+    async def test_entity_not_in_states_map(self, mock_mcp, config_path, mock_registry_data):
+        """Entity in area missing from states response — covers line 529."""
+        with (
+            patch("tools.storage.load_registry") as mock_load,
+            patch("tools.storage.make_ha_request") as mock_req,
+        ):
+            mock_load.side_effect = lambda name, path, use_cache=True: mock_registry_data.get(
+                name, {}
+            )
+            mock_req.return_value = {
+                "success": True,
+                "data": [
+                    {
+                        "entity_id": "light.room",
+                        "state": "on",
+                        "attributes": {},
+                    }
+                ],
+            }
+            register_storage_tools(mock_mcp, config_path, "http://ha", "token")
+            data = json.loads(await mock_mcp._tools["get_area_overview"]("kitchen"))
+        assert "area_info" in data
+        summary_entities = [s for s in data["entities_summary"] if "entity_id" in s]
+        all_eids = {s["entity_id"] for s in summary_entities}
+        assert "sensor.temp" not in all_eids
+
+    @pytest.mark.asyncio
+    async def test_entity_unavailable_in_area(self, mock_mcp, config_path, mock_registry_data):
+        """Unavailable entity in area — covers lines 545-546."""
+        with (
+            patch("tools.storage.load_registry") as mock_load,
+            patch("tools.storage.make_ha_request") as mock_req,
+        ):
+            mock_load.side_effect = lambda name, path, use_cache=True: mock_registry_data.get(
+                name, {}
+            )
+            mock_req.return_value = {
+                "success": True,
+                "data": [
+                    {
+                        "entity_id": "sensor.temp",
+                        "state": "unavailable",
+                        "attributes": {},
+                    }
+                ],
+            }
+            register_storage_tools(mock_mcp, config_path, "http://ha", "token")
+            data = json.loads(await mock_mcp._tools["get_area_overview"]("kitchen"))
+        assert "sensor.temp" in data["unavailable_entities"]
+        assert any("unavailable" in i.lower() for i in data["issues"])
+
+    @pytest.mark.asyncio
+    async def test_entity_unknown_in_area(self, mock_mcp, config_path, mock_registry_data):
+        """Unknown state entity in area — covers line 548."""
+        with (
+            patch("tools.storage.load_registry") as mock_load,
+            patch("tools.storage.make_ha_request") as mock_req,
+        ):
+            mock_load.side_effect = lambda name, path, use_cache=True: mock_registry_data.get(
+                name, {}
+            )
+            mock_req.return_value = {
+                "success": True,
+                "data": [
+                    {
+                        "entity_id": "sensor.temp",
+                        "state": "unknown",
+                        "attributes": {},
+                    }
+                ],
+            }
+            register_storage_tools(mock_mcp, config_path, "http://ha", "token")
+            data = json.loads(await mock_mcp._tools["get_area_overview"]("kitchen"))
+        assert any("unknown" in i.lower() for i in data["issues"])
+
+    @pytest.mark.asyncio
+    async def test_sensor_readings_with_unit(self, mock_mcp, config_path, mock_registry_data):
+        """Sensor reading with unit of measurement — covers line 560."""
+        with (
+            patch("tools.storage.load_registry") as mock_load,
+            patch("tools.storage.make_ha_request") as mock_req,
+        ):
+            mock_load.side_effect = lambda name, path, use_cache=True: mock_registry_data.get(
+                name, {}
+            )
+            mock_req.return_value = {
+                "success": True,
+                "data": [
+                    {
+                        "entity_id": "sensor.temp",
+                        "state": "21.5",
+                        "attributes": {"unit_of_measurement": "°C"},
+                    }
+                ],
+            }
+            register_storage_tools(mock_mcp, config_path, "http://ha", "token")
+            data = json.loads(await mock_mcp._tools["get_area_overview"]("kitchen"))
+        assert "sensor (°C)" in data["sensor_readings"]
+        assert "Temp: 21.5" in data["sensor_readings"]["sensor (°C)"]
+
+    @pytest.mark.asyncio
+    async def test_sensor_non_numeric_value(self, mock_mcp, config_path, mock_registry_data):
+        """Non-numeric sensor value → ValueError — covers lines 565-566."""
+        with (
+            patch("tools.storage.load_registry") as mock_load,
+            patch("tools.storage.make_ha_request") as mock_req,
+        ):
+            mock_load.side_effect = lambda name, path, use_cache=True: mock_registry_data.get(
+                name, {}
+            )
+            mock_req.return_value = {
+                "success": True,
+                "data": [
+                    {
+                        "entity_id": "sensor.temp",
+                        "state": "cloudy",
+                        "attributes": {},
+                    }
+                ],
+            }
+            register_storage_tools(mock_mcp, config_path, "http://ha", "token")
+            data = json.loads(await mock_mcp._tools["get_area_overview"]("kitchen"))
+        assert "sensor" not in data["sensor_readings"]
+
+
+class TestRegistryEmpty:
+    """Tests for registry dump tools when registries are empty/missing."""
+
+    @pytest.mark.asyncio
+    async def test_get_lovelace_dashboards_empty(self, mock_mcp, config_path):
+        """Empty lovelace dashboards — covers lines 751-752."""
+        with patch("tools.storage.load_registry", return_value={}):
+            register_storage_tools(mock_mcp, config_path)
+            data = json.loads(await mock_mcp._tools["get_lovelace_dashboards"]())
+        assert data["total_dashboards"] == 0
+        assert data["dashboards"] == []
+
+    @pytest.mark.asyncio
+    async def test_get_lovelace_config_not_found(self, mock_mcp, config_path):
+        """Dashboard not found — covers lines 766-770."""
+        with patch("tools.storage.load_registry", return_value={}):
+            register_storage_tools(mock_mcp, config_path)
+            data = json.loads(await mock_mcp._tools["get_lovelace_config"]("nonexistent"))
+        assert "error" in data
+        assert "not found" in data["error"].lower()
+
+    @pytest.mark.asyncio
+    async def test_get_exposed_entities_empty(self, mock_mcp, config_path):
+        """No exposed entities — covers lines 777-780."""
+        with patch("tools.storage.load_registry", return_value={}):
+            register_storage_tools(mock_mcp, config_path)
+            data = json.loads(await mock_mcp._tools["get_exposed_entities"]())
+        assert data["total_exposed"] == 0
+
+    @pytest.mark.asyncio
+    async def test_get_persons_empty(self, mock_mcp, config_path):
+        """No persons — covers lines 789-790."""
+        with patch("tools.storage.load_registry", return_value={}):
+            register_storage_tools(mock_mcp, config_path)
+            data = json.loads(await mock_mcp._tools["get_persons"]())
+        assert data["total_persons"] == 0
+
+    @pytest.mark.asyncio
+    async def test_get_zones_empty(self, mock_mcp, config_path):
+        """No zones — covers lines 799-800."""
+        with patch("tools.storage.load_registry", return_value={}):
+            register_storage_tools(mock_mcp, config_path)
+            data = json.loads(await mock_mcp._tools["get_zones"]())
+        assert data["total_zones"] == 0
+
+    @pytest.mark.asyncio
+    async def test_get_input_helpers_empty(self, mock_mcp, config_path):
+        """No input helpers — covers lines 807-822."""
+        with patch("tools.storage.load_registry", return_value={}):
+            register_storage_tools(mock_mcp, config_path)
+            data = json.loads(await mock_mcp._tools["get_input_helpers"]())
+        assert data == {}
+
+    @pytest.mark.asyncio
+    async def test_get_input_helpers_some_present(self, mock_mcp, config_path):
+        """Some helper types have data — covers lines 817-822."""
+
+        def registry_mock(name, path, use_cache=True):
+            if name == "input_boolean":
+                return {"data": {"items": [{"id": "b1", "name": "Test"}]}}
+            return {}
+
+        with patch("tools.storage.load_registry", side_effect=registry_mock):
+            register_storage_tools(mock_mcp, config_path)
+            data = json.loads(await mock_mcp._tools["get_input_helpers"]())
+        assert "input_boolean" in data
+        assert data["input_boolean"]["count"] == 1
+
+    @pytest.mark.asyncio
+    async def test_get_hacs_data_empty(self, mock_mcp, config_path):
+        """HACS not installed — covers lines 830-833."""
+        with patch("tools.storage.load_registry", return_value={}):
+            register_storage_tools(mock_mcp, config_path)
+            data = json.loads(await mock_mcp._tools["get_hacs_data"]())
+        assert "info" in data
+
+    @pytest.mark.asyncio
+    async def test_get_timers_empty(self, mock_mcp, config_path):
+        """No timers — covers lines 840-841."""
+        with patch("tools.storage.load_registry", return_value={}):
+            register_storage_tools(mock_mcp, config_path)
+            data = json.loads(await mock_mcp._tools["get_timers"]())
+        assert data["total_timers"] == 0
+
+    @pytest.mark.asyncio
+    async def test_get_counters_empty(self, mock_mcp, config_path):
+        """No counters — covers lines 848-849."""
+        with patch("tools.storage.load_registry", return_value={}):
+            register_storage_tools(mock_mcp, config_path)
+            data = json.loads(await mock_mcp._tools["get_counters"]())
+        assert data["total_counters"] == 0
+
+    @pytest.mark.asyncio
+    async def test_get_template_entities(self, mock_mcp, config_path):
+        """Template entities extracted from config entries — covers lines 864-903."""
+        entries_data = {
+            "data": {
+                "entries": [
+                    {
+                        "entry_id": "tmpl1",
+                        "domain": "template",
+                        "title": "My Sensor",
+                        "created_at": "2025-01-01",
+                        "modified_at": "2025-01-02",
+                        "options": {
+                            "state": "{{ states('sensor.x') }}",
+                            "template_type": "sensor",
+                            "device_class": "temperature",
+                            "unit_of_measurement": "°C",
+                        },
+                    },
+                    {
+                        "entry_id": "not_tmpl",
+                        "domain": "mqtt",
+                        "title": "MQTT Device",
+                        "options": {},
+                    },
+                ]
+            }
+        }
+        with patch("tools.storage.load_registry", return_value=entries_data):
+            register_storage_tools(mock_mcp, config_path)
+            data = json.loads(await mock_mcp._tools["get_template_entities"]())
+        assert data["total_templates"] == 1
+        template = data["templates"][0]
+        assert template["name"] == "My Sensor"
+        assert template["entity_id"] == "sensor.my_sensor"
+        assert template["state_template"] == "{{ states('sensor.x') }}"
+        assert template["device_class"] == "temperature"
+
+    @pytest.mark.asyncio
+    async def test_get_template_entities_no_templates(self, mock_mcp, config_path):
+        """Config entries exist but none are templates — covers lines 874-876."""
+        entries_data = {
+            "data": {
+                "entries": [
+                    {
+                        "entry_id": "not_tmpl",
+                        "domain": "mqtt",
+                        "title": "MQTT Device",
+                        "options": {},
+                    },
+                ]
+            }
+        }
+        with patch("tools.storage.load_registry", return_value=entries_data):
+            register_storage_tools(mock_mcp, config_path)
+            data = json.loads(await mock_mcp._tools["get_template_entities"]())
+        assert data["total_templates"] == 0
+        assert data["templates"] == []
+
+    @pytest.mark.asyncio
+    async def test_get_template_entities_title_fallback(self, mock_mcp, config_path):
+        """Template with no title but name in options — covers line 879 fallback."""
+        entries_data = {
+            "data": {
+                "entries": [
+                    {
+                        "entry_id": "tmpl1",
+                        "domain": "template",
+                        "title": None,
+                        "options": {
+                            "name": "Falling Back",
+                            "state": "{{ 42 }}",
+                            "template_type": "sensor",
+                        },
+                    },
+                ]
+            }
+        }
+        with patch("tools.storage.load_registry", return_value=entries_data):
+            register_storage_tools(mock_mcp, config_path)
+            data = json.loads(await mock_mcp._tools["get_template_entities"]())
+        assert data["total_templates"] == 1
+        assert data["templates"][0]["name"] == "Falling Back"
+        assert data["templates"][0]["entity_id"] == "sensor.falling_back"
+
+    @pytest.mark.asyncio
+    async def test_get_template_entities_disabled(self, mock_mcp, config_path):
+        """Template with disabled_by set — covers line 896."""
+        entries_data = {
+            "data": {
+                "entries": [
+                    {
+                        "entry_id": "tmpl1",
+                        "domain": "template",
+                        "title": "Disabled Tpl",
+                        "disabled_by": "user",
+                        "options": {
+                            "state": "{{ 1 }}",
+                            "template_type": "binary_sensor",
+                        },
+                    },
+                ]
+            }
+        }
+        with patch("tools.storage.load_registry", return_value=entries_data):
+            register_storage_tools(mock_mcp, config_path)
+            data = json.loads(await mock_mcp._tools["get_template_entities"]())
+        assert data["total_templates"] == 1
+        assert data["templates"][0]["disabled"] is True
+        assert data["templates"][0]["entry_id"] == "tmpl1"
+
+
+class TestCompatibilityWrappers:
+    """Tests for wrapper functions that delegate to the batch tools."""
+
+    @pytest.mark.asyncio
+    async def test_search_entity_by_name(self, mock_mcp, config_path, mock_registry_data):
+        """search_entity_by_name delegates to search_registries_batch — covers line 923."""
+        with patch("tools.storage.load_registry") as mock_load:
+            mock_load.side_effect = lambda name, path, use_cache=True: mock_registry_data.get(
+                name, {}
+            )
+            register_storage_tools(mock_mcp, config_path)
+            data = json.loads(await mock_mcp._tools["search_entity_by_name"]("Temp"))
+        assert data["success"] is True
+        assert data["summary"]["matched_entities"] == 1
+        assert data["matched_entities"][0]["entity_id"] == "sensor.temp"
+
+    @pytest.mark.asyncio
+    async def test_get_entity_details(self, mock_mcp, config_path, mock_registry_data):
+        """get_entity_details delegates to get_entity_context — covers line 936."""
+        with (
+            patch("tools.storage.load_registry") as mock_load,
+            patch("tools.storage.make_ha_request") as mock_req,
+        ):
+            mock_load.side_effect = lambda name, path, use_cache=True: mock_registry_data.get(
+                name, {}
+            )
+            mock_req.return_value = {
+                "success": True,
+                "data": {"state": "20", "attributes": {}},
+            }
+            register_storage_tools(mock_mcp, config_path, "http://ha", "token")
+            data = json.loads(await mock_mcp._tools["get_entity_details"]("sensor.temp"))
+        assert data["success"] is True
+        assert data["entity_id"] == "sensor.temp"
+        assert "device_info" in data
+        assert "area_info" in data
+
+
+class TestTemplateEntityTools:
+    """Tests for get_template_entities and get_template_entity_code."""
+
+    MOCK_TEMPLATE_ENTRIES = {
+        "data": {
+            "entries": [
+                {
+                    "entry_id": "tmpl_entry_001",
+                    "domain": "template",
+                    "title": "Test Template Sensor",
+                    "disabled_by": None,
+                    "created_at": "2024-01-15T10:00:00+00:00",
+                    "modified_at": "2024-06-01T14:00:00+00:00",
+                    "options": {
+                        "name": "Test Template Sensor",
+                        "template_type": "sensor",
+                        "state": "{{ states('sun.sun') }}",
+                        "unit_of_measurement": "°C",
+                        "device_class": "temperature",
+                        "availability": "{{ states('sun.sun') != 'unknown' }}",
+                        "attributes": {"custom_attr": "{{ states('sun.sun') }}"},
+                    },
+                },
+                {
+                    "entry_id": "tmpl_entry_002",
+                    "domain": "template",
+                    "title": "Second Template",
+                    "disabled_by": None,
+                    "created_at": "2024-02-01T10:00:00+00:00",
+                    "modified_at": "2024-06-01T14:00:00+00:00",
+                    "options": {
+                        "template_type": "binary_sensor",
+                        "state": "{{ is_state('sun.sun', 'above_horizon') }}",
+                    },
+                },
+                {
+                    "entry_id": "not_template_001",
+                    "domain": "sun",
+                    "title": "Sun",
+                    "options": {},
+                },
+            ]
+        }
+    }
+
+    @pytest.fixture(autouse=True)
+    def setup(self, mock_mcp, config_path, mock_registry_data):
+        self.mock_mcp = mock_mcp
+        self.config_path = config_path
+        self.mock_registry_data = dict(mock_registry_data)
+        self.mock_registry_data["core.config_entries"] = self.MOCK_TEMPLATE_ENTRIES
+
+    @pytest.mark.asyncio
+    async def test_get_template_entities_returns_all(self):
+        """Without filter, should return all template entries."""
+        with patch("tools.storage.load_registry") as mock_load:
+            mock_load.side_effect = lambda name, path, use_cache=True: self.mock_registry_data.get(
+                name, {}
+            )
+            register_storage_tools(self.mock_mcp, self.config_path, "http://test", "token")
+            result = await self.mock_mcp._tools["get_template_entities"]()
+            data = json.loads(result)
+            assert data["success"] is True
+            assert data["total_templates"] == 2
+            assert len(data["templates"]) == 2
+
+    @pytest.mark.asyncio
+    async def test_get_template_entities_filter_by_entity_id(self):
+        """With entity_id filter, should return only matching template."""
+        with patch("tools.storage.load_registry") as mock_load:
+            mock_load.side_effect = lambda name, path, use_cache=True: self.mock_registry_data.get(
+                name, {}
+            )
+            register_storage_tools(self.mock_mcp, self.config_path, "http://test", "token")
+            result = await self.mock_mcp._tools["get_template_entities"](
+                entity_id="sensor.test_template_sensor"
+            )
+            data = json.loads(result)
+            assert data["success"] is True
+            assert data["total_templates"] == 1
+            assert len(data["templates"]) == 1
+            assert data["templates"][0]["entity_id"] == "sensor.test_template_sensor"
+
+    @pytest.mark.asyncio
+    async def test_get_template_entity_code_found(self):
+        """Should return full code for existing template entity."""
+        with patch("tools.storage.load_registry") as mock_load:
+            mock_load.side_effect = lambda name, path, use_cache=True: self.mock_registry_data.get(
+                name, {}
+            )
+            register_storage_tools(self.mock_mcp, self.config_path, "http://test", "token")
+            result = await self.mock_mcp._tools["get_template_entity_code"](
+                "sensor.test_template_sensor"
+            )
+            data = json.loads(result)
+            assert data["success"] is True
+            assert data["entity_id"] == "sensor.test_template_sensor"
+            assert data["template_type"] == "sensor"
+            assert "{{ states('sun.sun') }}" in data["state_template"]
+            assert data["unit_of_measurement"] == "°C"
+            assert data["entry_id"] == "tmpl_entry_001"
+            assert "custom_attr" in data["attribute_templates"]
+
+    @pytest.mark.asyncio
+    async def test_get_template_entity_code_not_found(self):
+        """Should return error for non-existent template entity."""
+        with patch("tools.storage.load_registry") as mock_load:
+            mock_load.side_effect = lambda name, path, use_cache=True: self.mock_registry_data.get(
+                name, {}
+            )
+            register_storage_tools(self.mock_mcp, self.config_path, "http://test", "token")
+            result = await self.mock_mcp._tools["get_template_entity_code"](
+                "sensor.nonexistent_template"
+            )
+            data = json.loads(result)
+            assert data["success"] is False
+            assert "not found" in data["error"].lower()
+
+    @pytest.mark.asyncio
+    async def test_get_template_entity_code_empty_entity_id(self):
+        """Empty entity_id should return error."""
+        register_storage_tools(self.mock_mcp, self.config_path, "http://test", "token")
+        result = await self.mock_mcp._tools["get_template_entity_code"]("")
+        data = json.loads(result)
+        assert data["success"] is False
+
+    @pytest.mark.asyncio
+    async def test_get_template_entity_code_unicode_name(self):
+        """Template with diacritic characters in name should match via entity registry."""
+        unicode_entries = {
+            "data": {
+                "entities": [
+                    {
+                        "entity_id": "sensor.tracker_test_user_extended",
+                        "config_entry_id": "tmpl_unicode_001",
+                        "platform": "template",
+                    }
+                ],
+                "entries": [
+                    {
+                        "entry_id": "tmpl_unicode_001",
+                        "domain": "template",
+                        "title": "Tracker Test Us\u00f1er Extended",
+                        "options": {
+                            "template_type": "sensor",
+                            "state": "{{ states('sun.sun') }}",
+                        },
+                    },
+                ],
+            }
+        }
+
+        mock_data = dict(self.mock_registry_data)
+        mock_data["core.config_entries"] = unicode_entries
+        mock_data["core.entity_registry"] = unicode_entries
+
+        with patch("tools.storage.load_registry") as mock_load:
+            mock_load.side_effect = lambda name, path, use_cache=True: mock_data.get(name, {})
+            register_storage_tools(self.mock_mcp, self.config_path, "http://test", "token")
+
+            # Should find via entity registry lookup even with diacritic name
+            result = await self.mock_mcp._tools["get_template_entity_code"](
+                "sensor.tracker_test_user_extended"
+            )
+            data = json.loads(result)
+            assert data["success"] is True
+            assert data["entity_id"] == "sensor.tracker_test_user_extended"

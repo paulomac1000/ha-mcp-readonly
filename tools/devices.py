@@ -206,7 +206,7 @@ def register_device_tools(mcp, config_path: str, ha_url: str, ha_token: str):
         Fetches list of entities belonging to a device.
 
         Args:
-            device_id: id devices
+            device_id: Device id
             include_disabled: Whether to include disabled entities (default: False)
             include_states: Whether to include current states (default: True)
 
@@ -305,7 +305,7 @@ def register_device_tools(mcp, config_path: str, ha_url: str, ha_token: str):
 
         Examples:
             search_devices(search_term="sonoff")
-            search_devices(manufacturer="SONOFF", area_id="salon")
+            search_devices(manufacturer="acme_sensors", area_id="living_room")
             search_devices(domain="mqtt", with_entities_count=True)
         """
         devices = get_registry_devices(config_path)
@@ -406,7 +406,7 @@ def register_device_tools(mcp, config_path: str, ha_url: str, ha_token: str):
         Fetches all devices in a given area.
 
         Args:
-            area_id: Area id (e.g. "salon", "biuro")
+            area_id: Area id (e.g. "living_room", "office")
 
         Returns:
             JSON with list of devices in area

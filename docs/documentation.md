@@ -205,13 +205,26 @@ Call `GET /api/tools` on the REST API for the full, up-to-date list.
 
 | Tool | Description |
 |------|-------------|
-| `read_config_file` | Read and validate YAML file |
+| `read_file` | Read file with offset/limit support |
+| `read_config_file` | Read config file with offset/limit |
 | `search_in_config` | Search configuration files |
 | `search_in_config_batch` | Batch search in config files |
 | `search_config_by_params` | Parameterized config search |
 | `validate_yaml_syntax` | Validate YAML syntax |
 | `get_main_configuration` | Main HA configuration |
 | `get_config_structure` | Config directory structure |
+
+### Lovelace / Dashboard Tools
+
+| Tool | Description |
+|------|-------------|
+| `get_lovelace_dashboards` | List all dashboards |
+| `get_lovelace_config` | Full dashboard configuration |
+| `get_lovelace_resources` | List custom resources (JS/CSS modules) |
+| `get_lovelace_entity_usage` | Locate entity in dashboards |
+| `search_lovelace_config` | Search cards by entity, type, or term |
+| `get_lovelace_config_summary` | Token-efficient dashboard structure summary |
+| `diagnose_lovelace_setup` | Full dashboard diagnostics (missing entities, resources, modes) |
 
 ### Diagnostic & Log Tools
 
@@ -239,6 +252,7 @@ Call `GET /api/tools` on the REST API for the full, up-to-date list.
 | `investigate_entity` | Super function: entity + device + area + automations + history |
 | `get_entity_with_automations` | Entity context + related automations + conflicts |
 | `get_area_diagnostic` | Full area/room diagnostic |
+| `diagnose_person_tracking` | Person tracking: trackers, zones, automations, staleness |
 | `entity_get_context_tree` | Entity context tree |
 | `get_entity_dependencies` | What an entity depends on |
 | `get_entity_consumers` | What depends on an entity |
@@ -256,7 +270,7 @@ Call `GET /api/tools` on the REST API for the full, up-to-date list.
 | `check_entities_batch` | Batch entity existence check |
 | `test_service_call` | Test service call format |
 | `diagnose_entity` | Entity diagnostics |
-| `diagnose_template` | Template diagnostics |
+| `diagnose_template` | Template diagnostics (UI + YAML helpers) |
 | `diagnose_energy_setup` | Energy setup diagnostics |
 
 ---
@@ -301,11 +315,14 @@ curl -o ha-context.md http://localhost:9093/api/context/download
 
 ## Context Generator
 
-The context generator creates an AI-friendly markdown file from your Home Assistant configuration. This is useful for:
+The context generator creates an AI-friendly markdown file from your Home Assistant configuration — a static snapshot of your entire smart home that can be used independently of the live MCP server.
 
-- Offline AI assistants without API access
-- Creating documentation snapshots
-- Sharing configuration context with LLMs
+**Use cases:**
+
+- **RAG systems** — use the generated file as a knowledge base for retrieval-augmented generation (e.g., with LangChain, LlamaIndex, or custom RAG pipelines)
+- **ChatGPT Projects / Qwen / Claude Projects** — upload the file as custom knowledge to give the AI full awareness of your smart home without any network access to HA
+- **Static context for AI coding tools** — provide the file alongside your codebase so AI assistants understand your automations, devices, and entity relationships
+- **Documentation snapshots** — freeze configuration state for auditing, debugging, or sharing with other users
 
 ### Modes
 

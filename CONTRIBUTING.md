@@ -79,15 +79,21 @@ async def my_new_tool(entity_id: str) -> str:
 
 ## Testing
 
-### Unit Tests
+### Unit Tests (no credentials needed)
 
 ```bash
 pytest tests/unit/ -v --tb=short
 ```
 
-### Integration Tests
+### Smoke Tests (requires REST API + HA_TOKEN)
 
-Requires `HA_URL` and `HA_TOKEN`:
+```bash
+cp .env.example .env
+# Edit .env with your HA_URL and HA_TOKEN
+pytest tests/smoke/ -v
+```
+
+### Integration Tests (requires real HA)
 
 ```bash
 export HA_URL=http://your-ha:8123
@@ -95,10 +101,22 @@ export HA_TOKEN=your_token
 pytest tests/integration/ -v
 ```
 
+### E2E Tests (requires real HA + REST API)
+
+```bash
+pytest tests/e2e/ -v
+```
+
+### All Tests
+
+```bash
+pytest tests/unit/ tests/smoke/ tests/e2e/ -v
+```
+
 ### Coverage
 
 ```bash
-pytest tests/unit/ --cov=. --cov-report=html
+pytest tests/unit/ --cov=tools --cov-report=html
 ```
 
 ## Release Checklist

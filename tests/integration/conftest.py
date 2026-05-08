@@ -278,13 +278,17 @@ def real_mcp():
     if ha_configured:
         from tools.areas import register_area_tools
         from tools.automations import register_automation_tools
+        from tools.batch_operations import register_batch_operations_tools
         from tools.blueprints import register_blueprint_tools
+        from tools.composite import register_composite_tools
         from tools.config import register_config_tools
         from tools.config_entries import register_config_entry_tools
         from tools.dev_tools import register_dev_tools
         from tools.devices import register_device_tools
         from tools.diagnostics import register_diagnostics_tools
+        from tools.entity_context import register_entity_context_tools
         from tools.entity_dependencies import register_entity_dependency_tools
+        from tools.filesystem_explorer import register_filesystem_tools
         from tools.health_reporter import register_health_reporter_tools
         from tools.history import register_history_tools
         from tools.integrations import register_integration_tools
@@ -308,9 +312,13 @@ def real_mcp():
         register_config_tools(mcp, HA_CONFIG_PATH, HA_URL, HA_TOKEN)
         register_device_tools(mcp, HA_CONFIG_PATH, HA_URL, HA_TOKEN)
         register_entity_dependency_tools(mcp, HA_CONFIG_PATH, HA_URL, HA_TOKEN)
+        register_entity_context_tools(mcp, HA_CONFIG_PATH, HA_URL, HA_TOKEN)
         register_history_tools(mcp, HA_URL, HA_TOKEN)
         register_area_tools(mcp, HA_CONFIG_PATH, HA_URL, HA_TOKEN)
         register_integration_tools(mcp, HA_CONFIG_PATH, HA_URL, HA_TOKEN)
+        register_composite_tools(mcp, HA_CONFIG_PATH, HA_URL, HA_TOKEN)
+        register_batch_operations_tools(mcp, HA_CONFIG_PATH, HA_URL, HA_TOKEN)
+        register_filesystem_tools(mcp)
 
         print(f"✅ Registered Home Assistant tools (url: {HA_URL})", file=sys.stderr)
 

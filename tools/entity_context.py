@@ -22,22 +22,22 @@ def register_entity_context_tools(mcp, config_path: str, ha_url: str, ha_token: 
     @mcp.tool()
     async def entity_get_context_tree(entity_id: str, hours_back: int = 24) -> str:
         """
-                Trace the sources of changes for an entity.
+        Trace the sources of changes for an entity.
 
-                Analyzes automation traces, logbook entries, and history
+        Analyzes automation traces, logbook entries, and history
         to determine what triggered recent state changes.
 
-                Args:
-                    entity_id: The entity to analyze (e.g., "light.living_room")
-                    hours_back: How many hours of history to analyze (default 24)
+        Args:
+            entity_id: The entity to analyze (e.g., "light.living_room")
+            hours_back: How many hours of history to analyze (default 24)
 
-                Returns:
-                    JSON with context tree showing:
-                    - current_state: current entity state
-                    - recent_changes: list of recent state changes with sources
-                    - sources: breakdown by source typeee (automation/user/device/script)
-                    - automation_triggers: which automations affect this entity
-                    - potential_sources: inferred sources from configuration
+        Returns:
+            JSON with context tree showing:
+            - current_state: current entity state
+            - recent_changes: list of recent state changes with sources
+            - sources: breakdown by source type (automation/user/device/script)
+            - automation_triggers: which automations affect this entity
+            - potential_sources: inferred sources from configuration
         """
         if not entity_id or "." not in entity_id:
             return json.dumps(
@@ -70,17 +70,10 @@ def register_entity_context_tools(mcp, config_path: str, ha_url: str, ha_token: 
         end_time = datetime.now()
         start_time = end_time - timedelta(hours=hours_back)
 
-        {
-            "filter_entity_id": entity_id,
-            "start_time": start_time.isoformat(),
-            "end_time": end_time.isoformat(),
-            "minimal_response": True,
-        }
-
         history_response = make_ha_request(
             ha_url,
             ha_token,
-            f"/api/history/period/{start_time.isoformat()}",
+            f"/api/history/period/{start_time.isoformat()}?filter_entity_id={entity_id}&minimal_response=True",
         )
 
         history_entries = []
@@ -148,7 +141,7 @@ def register_entity_context_tools(mcp, config_path: str, ha_url: str, ha_token: 
         sources = defaultdict(lambda: {"count": 0, "events": []})
 
         for entry in entity_logbook[:20]:  # Last 20 events
-            message = entry.get("message", "").lower()
+            message = (entry.get("message") or "").lower()
             domain = entry.get("domain", "unknown")
 
             # Categorize source

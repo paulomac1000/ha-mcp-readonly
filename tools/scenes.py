@@ -45,11 +45,13 @@ def register_scene_tools(mcp, config_path):
 
     @mcp.tool()
     def get_scene_code(scene_id: str) -> str:
-        """
-        Fetches full code of a specific scene.
+        """Fetches full code of a specific scene.
 
         Args:
             scene_id: Scene id (e.g. "evening_lights") or scene name
+
+        Returns:
+            YAML string with scene configuration including entities and settings.
         """
         try:
             scene_file = os.path.join(config_path, "scenes.yaml")

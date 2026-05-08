@@ -59,7 +59,7 @@ def load_registry(name: str, use_cache: bool = True) -> Dict:
                 _registry_cache_timestamps[cache_key] = now
                 return data
     except Exception as e:
-        print(f"   ⚠️ Error loading registry {name}: {e}")
+        print(f"   Error loading registry {name}: {e}")
 
     return {}
 
@@ -116,7 +116,7 @@ def load_yaml_file(filepath: str) -> Any:
         with open(path, "r", encoding="utf-8") as f:
             return yaml.load(f, Loader=HomeAssistantLoader)
     except Exception as e:
-        print(f"   ⚠️ YAML error {filepath}: {e}")
+        print(f"   YAML error {filepath}: {e}")
         return None
 
 

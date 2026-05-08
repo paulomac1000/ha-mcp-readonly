@@ -163,6 +163,66 @@ class TestTemplateTesting:
         # Complexity score should be high due to 'states' usage
         assert data["analysis"]["complexity_score"] >= 10
 
+    def test_get_template_performance_error(self, mock_mcp, ha_url, ha_token, config_path):
+        """Error during benchmark stops and returns error."""
+        with patch("tools.dev_tools.make_ha_request") as mock_req:
+            mock_req.return_value = {"success": False, "error": "Render failed"}
+
+            register_dev_tools(mock_mcp, ha_url, ha_token, config_path)
+
+            data = json.loads(
+                mock_mcp._tools["get_template_performance"]("{{ fail }}", iterations=5)
+            )
+
+        assert data["success"] is False
+        assert "Render failed" in data["error"]
+
+    def test_get_template_performance_complex_expand(self, mock_mcp, ha_url, ha_token, config_path):
+        """'expand' keyword adds +5 complexity."""
+        with patch("tools.dev_tools.make_ha_request") as mock_req:
+            mock_req.return_value = {"success": True, "data": "OK"}
+            register_dev_tools(mock_mcp, ha_url, ha_token, config_path)
+
+            data = json.loads(
+                mock_mcp._tools["get_template_performance"](
+                    "{{ expand('group.lights') }}", iterations=2
+                )
+            )
+
+        assert data["success"] is True
+        assert data["analysis"]["complexity_score"] >= 5
+
+    def test_get_template_performance_complex_states_call(
+        self, mock_mcp, ha_url, ha_token, config_path
+    ):
+        """states() call without states.attr adds +10 complexity."""
+        with patch("tools.dev_tools.make_ha_request") as mock_req:
+            mock_req.return_value = {"success": True, "data": "OK"}
+            register_dev_tools(mock_mcp, ha_url, ha_token, config_path)
+
+            data = json.loads(
+                mock_mcp._tools["get_template_performance"](
+                    "{{ states('sensor.temp') | float }}", iterations=2
+                )
+            )
+
+        assert data["success"] is True
+        assert data["analysis"]["complexity_score"] >= 10
+
+    def test_get_template_performance_long_template(self, mock_mcp, ha_url, ha_token, config_path):
+        """Template > 500 chars adds +3 complexity."""
+        with patch("tools.dev_tools.make_ha_request") as mock_req:
+            mock_req.return_value = {"success": True, "data": "OK"}
+            register_dev_tools(mock_mcp, ha_url, ha_token, config_path)
+
+            long_template = "A" * 501
+            data = json.loads(
+                mock_mcp._tools["get_template_performance"](long_template, iterations=2)
+            )
+
+        assert data["success"] is True
+        assert data["analysis"]["complexity_score"] >= 3
+
 
 class TestValidation:
     """Tests for validation tools."""
@@ -205,6 +265,219 @@ class TestValidation:
         assert data["success"] is False
         assert "YAML" in data.get("error", "")
 
+    def test_validate_time_trigger_valid(self, mock_mcp, ha_url, ha_token, config_path):
+        register_dev_tools(mock_mcp, ha_url, ha_token, config_path)
+        data = json.loads(
+            mock_mcp._tools["validate_automation_trigger"]("""
+        - platform: time
+          at: "07:00:00"
+        """)
+        )
+        assert data["success"] is True
+        assert data["valid"] is True
+
+    def test_validate_time_trigger_missing_at(self, mock_mcp, ha_url, ha_token, config_path):
+        register_dev_tools(mock_mcp, ha_url, ha_token, config_path)
+        data = json.loads(mock_mcp._tools["validate_automation_trigger"]("- platform: time"))
+        assert data["success"] is False
+        assert any("'at'" in i for i in data["issues"])
+
+    def test_validate_numeric_state_trigger(self, mock_mcp, ha_url, ha_token, config_path):
+        register_dev_tools(mock_mcp, ha_url, ha_token, config_path)
+        data = json.loads(
+            mock_mcp._tools["validate_automation_trigger"]("""
+        - platform: numeric_state
+          entity_id: sensor.temp
+          above: 25
+        """)
+        )
+        assert data["success"] is True
+        assert data["valid"] is True
+
+    def test_validate_numeric_state_missing_fields(self, mock_mcp, ha_url, ha_token, config_path):
+        register_dev_tools(mock_mcp, ha_url, ha_token, config_path)
+        data = json.loads(
+            mock_mcp._tools["validate_automation_trigger"]("- platform: numeric_state")
+        )
+        assert data["success"] is False
+        assert any("entity_id" in i for i in data["issues"])
+        assert any("above" in i.lower() or "below" in i.lower() for i in data["issues"])
+
+    def test_validate_template_trigger_valid(self, mock_mcp, ha_url, ha_token, config_path):
+        register_dev_tools(mock_mcp, ha_url, ha_token, config_path)
+        data = json.loads(
+            mock_mcp._tools["validate_automation_trigger"]("""
+        - platform: template
+          value_template: "{{ now().hour > 7 }}"
+        """)
+        )
+        assert data["success"] is True
+        assert data["valid"] is True
+
+    def test_validate_template_trigger_no_jinja(self, mock_mcp, ha_url, ha_token, config_path):
+        register_dev_tools(mock_mcp, ha_url, ha_token, config_path)
+        data = json.loads(
+            mock_mcp._tools["validate_automation_trigger"]("""
+        - platform: template
+          value_template: "no jinja here"
+        """)
+        )
+        assert data["success"] is True
+        assert any("Jinja2" in w for w in (data.get("warnings") or []))
+
+    def test_validate_event_trigger(self, mock_mcp, ha_url, ha_token, config_path):
+        register_dev_tools(mock_mcp, ha_url, ha_token, config_path)
+        data = json.loads(
+            mock_mcp._tools["validate_automation_trigger"]("""
+        - platform: event
+          event_type: my_event
+        """)
+        )
+        assert data["success"] is True
+
+    def test_validate_event_trigger_missing_type(self, mock_mcp, ha_url, ha_token, config_path):
+        register_dev_tools(mock_mcp, ha_url, ha_token, config_path)
+        data = json.loads(mock_mcp._tools["validate_automation_trigger"]("- platform: event"))
+        assert data["success"] is False
+        assert any("event_type" in i for i in data["issues"])
+
+    def test_validate_homeassistant_trigger(self, mock_mcp, ha_url, ha_token, config_path):
+        register_dev_tools(mock_mcp, ha_url, ha_token, config_path)
+        data = json.loads(
+            mock_mcp._tools["validate_automation_trigger"]("""
+        - platform: homeassistant
+          event: start
+        """)
+        )
+        assert data["success"] is True
+        assert data["valid"] is True
+
+    def test_validate_homeassistant_bad_event(self, mock_mcp, ha_url, ha_token, config_path):
+        register_dev_tools(mock_mcp, ha_url, ha_token, config_path)
+        data = json.loads(
+            mock_mcp._tools["validate_automation_trigger"]("""
+        - platform: homeassistant
+          event: reboot
+        """)
+        )
+        assert data["success"] is True
+        assert any(
+            "start" in w.lower() or "shutdown" in w.lower() for w in (data.get("warnings") or [])
+        )
+
+    def test_validate_time_pattern_trigger(self, mock_mcp, ha_url, ha_token, config_path):
+        register_dev_tools(mock_mcp, ha_url, ha_token, config_path)
+        data = json.loads(
+            mock_mcp._tools["validate_automation_trigger"]("""
+        - platform: time_pattern
+          minutes: "/5"
+        """)
+        )
+        assert data["success"] is True
+        assert data["valid"] is True
+
+    def test_validate_time_pattern_missing(self, mock_mcp, ha_url, ha_token, config_path):
+        register_dev_tools(mock_mcp, ha_url, ha_token, config_path)
+        data = json.loads(
+            mock_mcp._tools["validate_automation_trigger"]("- platform: time_pattern")
+        )
+        assert data["success"] is False
+        assert any(
+            "hours" in i.lower() or "minutes" in i.lower() or "seconds" in i.lower()
+            for i in data["issues"]
+        )
+
+    def test_validate_webhook_trigger_missing_id(self, mock_mcp, ha_url, ha_token, config_path):
+        register_dev_tools(mock_mcp, ha_url, ha_token, config_path)
+        data = json.loads(mock_mcp._tools["validate_automation_trigger"]("- platform: webhook"))
+        assert data["success"] is False
+        assert any("webhook_id" in i for i in data["issues"])
+
+    def test_validate_zone_trigger(self, mock_mcp, ha_url, ha_token, config_path):
+        register_dev_tools(mock_mcp, ha_url, ha_token, config_path)
+        data = json.loads(
+            mock_mcp._tools["validate_automation_trigger"]("""
+        - platform: zone
+          entity_id: person.test_person
+          zone: zone.home
+          event: enter
+        """)
+        )
+        assert data["success"] is True
+        assert data["valid"] is True
+
+    def test_validate_zone_missing_event(self, mock_mcp, ha_url, ha_token, config_path):
+        register_dev_tools(mock_mcp, ha_url, ha_token, config_path)
+        data = json.loads(
+            mock_mcp._tools["validate_automation_trigger"]("""
+        - platform: zone
+          entity_id: person.test_person
+          zone: zone.home
+        """)
+        )
+        assert data["success"] is True
+        assert any("event" in w.lower() for w in (data.get("warnings") or []))
+
+    def test_validate_sun_trigger_bad_event(self, mock_mcp, ha_url, ha_token, config_path):
+        register_dev_tools(mock_mcp, ha_url, ha_token, config_path)
+        data = json.loads(
+            mock_mcp._tools["validate_automation_trigger"]("""
+        - platform: sun
+          event: midnight
+        """)
+        )
+        assert data["success"] is True
+        assert any(
+            "sunrise" in w.lower() or "sunset" in w.lower() for w in (data.get("warnings") or [])
+        )
+
+    def test_validate_mqtt_trigger_missing_topic(self, mock_mcp, ha_url, ha_token, config_path):
+        register_dev_tools(mock_mcp, ha_url, ha_token, config_path)
+        data = json.loads(mock_mcp._tools["validate_automation_trigger"]("- platform: mqtt"))
+        assert data["success"] is False
+        assert any("topic" in i for i in data["issues"])
+
+    def test_validate_device_trigger_missing_id(self, mock_mcp, ha_url, ha_token, config_path):
+        register_dev_tools(mock_mcp, ha_url, ha_token, config_path)
+        data = json.loads(mock_mcp._tools["validate_automation_trigger"]("- platform: device"))
+        assert data["success"] is False
+        assert any("device_id" in i for i in data["issues"])
+
+    def test_validate_unknown_platform(self, mock_mcp, ha_url, ha_token, config_path):
+        register_dev_tools(mock_mcp, ha_url, ha_token, config_path)
+        data = json.loads(
+            mock_mcp._tools["validate_automation_trigger"]("""
+        - platform: imaginary_thing
+        """)
+        )
+        assert data["success"] is True
+        assert data["valid"] is True
+        assert any("unknown platform" in w.lower() for w in (data.get("warnings") or []))
+
+    def test_validate_dict_not_list(self, mock_mcp, ha_url, ha_token, config_path):
+        """Single dict trigger should be wrapped into list."""
+        register_dev_tools(mock_mcp, ha_url, ha_token, config_path)
+        data = json.loads(
+            mock_mcp._tools["validate_automation_trigger"]("""
+        platform: state
+        entity_id: sensor.temp
+        to: "25"
+        """)
+        )
+        assert data["success"] is True
+        assert data["valid"] is True
+
+    def test_validate_non_dict_triggers(self, mock_mcp, ha_url, ha_token, config_path):
+        """Non-dict item in trigger list → issue."""
+        register_dev_tools(mock_mcp, ha_url, ha_token, config_path)
+        data = json.loads(
+            mock_mcp._tools["validate_automation_trigger"](
+                "- just_a_string\n- 42\n- platform: time\n  at: '07:00'"
+            )
+        )
+        assert data["success"] is False
+        assert any("dictionary" in i.lower() for i in data["issues"])
+
     def test_test_condition(self, mock_mcp, ha_url, ha_token, config_path):
         with patch("tools.dev_tools.make_ha_request") as mock_req:
             mock_req.return_value = {"success": True, "data": True}
@@ -218,6 +491,60 @@ class TestValidation:
         assert data["success"] is True
         assert data["result"] is True
         assert data["evaluates_to"] is True
+
+    def test_test_condition_error(self, mock_mcp, ha_url, ha_token, config_path):
+        """Template render error in test_condition."""
+        with patch("tools.dev_tools.make_ha_request") as mock_req:
+            mock_req.return_value = {"success": False, "error": "TemplateSyntaxError"}
+
+            register_dev_tools(mock_mcp, ha_url, ha_token, config_path)
+
+            data = json.loads(mock_mcp._tools["test_condition"]("{{ invalid }}"))
+
+        assert data["success"] is False
+        assert "TemplateSyntaxError" in data["error"]
+
+    def test_test_condition_with_context(self, mock_mcp, ha_url, ha_token, config_path):
+        """test_condition with context variable parameter."""
+        with patch("tools.dev_tools.make_ha_request") as mock_req:
+            mock_req.return_value = {"success": True, "data": True}
+
+            register_dev_tools(mock_mcp, ha_url, ha_token, config_path)
+
+            data = json.loads(
+                mock_mcp._tools["test_condition"](
+                    "{{ trigger.to_state.state == 'on' }}",
+                    "trigger.to_state.state = 'on'",
+                )
+            )
+
+        assert data["success"] is True
+        assert data["result"] is True
+        assert data["context"] == "trigger.to_state.state = 'on'"
+
+    def test_test_condition_string_true(self, mock_mcp, ha_url, ha_token, config_path):
+        """String 'True' parsed as boolean True."""
+        with patch("tools.dev_tools.make_ha_request") as mock_req:
+            mock_req.return_value = {"success": True, "data": "True"}
+
+            register_dev_tools(mock_mcp, ha_url, ha_token, config_path)
+
+            data = json.loads(mock_mcp._tools["test_condition"]("{{ 1 == 1 }}"))
+
+        assert data["success"] is True
+        assert data["evaluates_to"] is True
+
+    def test_test_condition_string_off(self, mock_mcp, ha_url, ha_token, config_path):
+        """String 'off' parsed as boolean False."""
+        with patch("tools.dev_tools.make_ha_request") as mock_req:
+            mock_req.return_value = {"success": True, "data": "off"}
+
+            register_dev_tools(mock_mcp, ha_url, ha_token, config_path)
+
+            data = json.loads(mock_mcp._tools["test_condition"]("{{ 'off' }}"))
+
+        assert data["success"] is True
+        assert data["evaluates_to"] is False
 
 
 class TestEntityChecking:
@@ -261,8 +588,8 @@ class TestEntityChecking:
         assert data["summary"]["missing"] == 1
 
         results = {r["entity_id"]: r["status"] for r in data["results"]}
-        assert "✅ OK" in results["sensor.temp"]
-        assert "❌ NOT FOUND" in results["sensor.missing"]
+        assert "OK" in results["sensor.temp"]
+        assert "NOT FOUND" in results["sensor.missing"]
 
 
 class TestServiceCall:
@@ -442,6 +769,183 @@ class TestDiagnoseEntity:
         assert data["success"] is True
         assert any("UNAVAILABLE" in i["message"] for i in data["issues"])
 
+    def test_diagnose_entity_state_unknown(self, mock_mcp, ha_url, ha_token, config_path):
+        """Entity state 'unknown' gets warning."""
+        state_obj = {
+            "entity_id": "sensor.unknown",
+            "state": "unknown",
+            "attributes": {},
+            "last_changed": "2026-01-01T00:00:00+00:00",
+            "last_updated": "2026-01-01T00:00:00+00:00",
+        }
+        with patch("tools.dev_tools.make_ha_request") as mock_req:
+            mock_req.return_value = {"success": True, "data": state_obj}
+            register_dev_tools(mock_mcp, ha_url, ha_token, config_path)
+            data = json.loads(mock_mcp._tools["diagnose_entity"]("sensor.unknown"))
+
+        assert data["success"] is True
+        assert any("UNKNOWN" in i["message"] for i in data["issues"])
+
+    def test_diagnose_entity_disabled(self, mock_mcp, ha_url, ha_token, tmp_path):
+        """Disabled entity → warning issue."""
+        storage = tmp_path / ".storage"
+        storage.mkdir()
+        (storage / "core.entity_registry").write_text(
+            json.dumps(
+                {
+                    "data": {
+                        "entities": [
+                            {
+                                "entity_id": "sensor.disabled",
+                                "platform": "mqtt",
+                                "device_id": None,
+                                "area_id": None,
+                                "disabled_by": "user",
+                                "hidden_by": None,
+                                "unique_id": "u1",
+                                "config_entry_id": None,
+                            }
+                        ]
+                    }
+                }
+            )
+        )
+        (storage / "core.device_registry").write_text(json.dumps({"data": {"devices": []}}))
+        (storage / "core.area_registry").write_text(json.dumps({"data": {"areas": []}}))
+
+        state_obj = {
+            "entity_id": "sensor.disabled",
+            "state": "22",
+            "attributes": {},
+            "last_changed": "2026-01-01T00:00:00+00:00",
+            "last_updated": "2026-01-01T00:00:00+00:00",
+        }
+        with patch("tools.dev_tools.make_ha_request") as mock_req:
+            mock_req.return_value = {"success": True, "data": state_obj}
+            register_dev_tools(mock_mcp, ha_url, ha_token, str(tmp_path))
+            data = json.loads(mock_mcp._tools["diagnose_entity"]("sensor.disabled"))
+
+        assert data["success"] is True
+        assert any("disabled" in i["message"].lower() for i in data["issues"])
+        assert data["entity_info"]["disabled"] is True
+
+    def test_diagnose_entity_hidden(self, mock_mcp, ha_url, ha_token, tmp_path):
+        """Hidden entity reported in entity_info."""
+        storage = tmp_path / ".storage"
+        storage.mkdir()
+        (storage / "core.entity_registry").write_text(
+            json.dumps(
+                {
+                    "data": {
+                        "entities": [
+                            {
+                                "entity_id": "sensor.hidden",
+                                "platform": "mqtt",
+                                "device_id": None,
+                                "area_id": None,
+                                "disabled_by": None,
+                                "hidden_by": "user",
+                                "unique_id": "u1",
+                                "config_entry_id": None,
+                            }
+                        ]
+                    }
+                }
+            )
+        )
+        (storage / "core.device_registry").write_text(json.dumps({"data": {"devices": []}}))
+        (storage / "core.area_registry").write_text(json.dumps({"data": {"areas": []}}))
+
+        state_obj = {
+            "entity_id": "sensor.hidden",
+            "state": "22",
+            "attributes": {},
+            "last_changed": "2026-01-01T00:00:00+00:00",
+            "last_updated": "2026-01-01T00:00:00+00:00",
+        }
+        with patch("tools.dev_tools.make_ha_request") as mock_req:
+            mock_req.return_value = {"success": True, "data": state_obj}
+            register_dev_tools(mock_mcp, ha_url, ha_token, str(tmp_path))
+            data = json.loads(mock_mcp._tools["diagnose_entity"]("sensor.hidden"))
+
+        assert data["success"] is True
+        assert data["entity_info"]["hidden"] is True
+        assert data["entity_info"]["hidden_by"] == "user"
+
+    def test_diagnose_entity_stale(self, mock_mcp, ha_url, ha_token, config_path):
+        """Entity not changed in >24h → stale warning."""
+        state_obj = {
+            "entity_id": "sensor.old",
+            "state": "20",
+            "attributes": {},
+            "last_changed": "2023-01-01T00:00:00+00:00",
+            "last_updated": "2023-01-01T00:00:00+00:00",
+        }
+        with patch("tools.dev_tools.make_ha_request") as mock_req:
+            mock_req.return_value = {"success": True, "data": state_obj}
+            register_dev_tools(mock_mcp, ha_url, ha_token, config_path)
+            data = json.loads(mock_mcp._tools["diagnose_entity"]("sensor.old"))
+
+        assert data["success"] is True
+        assert any("hasn't changed" in i["message"].lower() for i in data["issues"])
+
+    def test_diagnose_entity_with_area(self, mock_mcp, ha_url, ha_token, tmp_path):
+        """Entity with area → area_info populated."""
+        storage = tmp_path / ".storage"
+        storage.mkdir()
+        (storage / "core.entity_registry").write_text(
+            json.dumps(
+                {
+                    "data": {
+                        "entities": [
+                            {
+                                "entity_id": "sensor.kitchen_temp",
+                                "platform": "mqtt",
+                                "device_id": None,
+                                "area_id": "area_kitchen",
+                                "disabled_by": None,
+                                "hidden_by": None,
+                                "unique_id": "u1",
+                                "config_entry_id": None,
+                            }
+                        ]
+                    }
+                }
+            )
+        )
+        (storage / "core.device_registry").write_text(json.dumps({"data": {"devices": []}}))
+        (storage / "core.area_registry").write_text(
+            json.dumps(
+                {
+                    "data": {
+                        "areas": [
+                            {
+                                "id": "area_kitchen",
+                                "name": "Kitchen",
+                                "aliases": ["cooking"],
+                            }
+                        ]
+                    }
+                }
+            )
+        )
+
+        state_obj = {
+            "entity_id": "sensor.kitchen_temp",
+            "state": "24",
+            "attributes": {},
+            "last_changed": "2026-01-01T00:00:00+00:00",
+            "last_updated": "2026-01-01T00:00:00+00:00",
+        }
+        with patch("tools.dev_tools.make_ha_request") as mock_req:
+            mock_req.return_value = {"success": True, "data": state_obj}
+            register_dev_tools(mock_mcp, ha_url, ha_token, str(tmp_path))
+            data = json.loads(mock_mcp._tools["diagnose_entity"]("sensor.kitchen_temp"))
+
+        assert data["success"] is True
+        assert data["area_info"]["name"] == "Kitchen"
+        assert "cooking" in data["area_info"]["aliases"]
+
 
 class TestDiagnoseTemplate:
     """Tests for diagnose_template()."""
@@ -496,6 +1000,187 @@ class TestDiagnoseTemplate:
         assert data["success"] is False
         assert any("not found" in i["message"].lower() for i in data["issues"])
 
+    def test_diagnose_template_fuzzy_match(self, mock_mcp, ha_url, ha_token, tmp_path):
+        """Template found via Strategy B: fuzzy name match."""
+        storage = tmp_path / ".storage"
+        storage.mkdir()
+        # Entity NOT in registry → Strategy A fails → falls back to B
+        (storage / "core.entity_registry").write_text(json.dumps({"data": {"entities": []}}))
+        (storage / "core.config_entries").write_text(
+            json.dumps(
+                {
+                    "data": {
+                        "entries": [
+                            {
+                                "domain": "template",
+                                "title": "My Template",
+                                "options": {
+                                    "template_type": "sensor",
+                                    "state": "{{ states('sensor.temp') }}",
+                                },
+                            }
+                        ]
+                    }
+                }
+            )
+        )
+
+        with patch("tools.dev_tools.make_ha_request") as mock_req:
+            mock_req.side_effect = [
+                {"success": True, "data": {"state": "22", "attributes": {}}},
+                {"success": True, "data": "22"},
+            ]
+            register_dev_tools(mock_mcp, ha_url, ha_token, str(tmp_path))
+            data = json.loads(mock_mcp._tools["diagnose_template"]("sensor.my_template"))
+
+        assert data["success"] is True
+        assert data["syntax_validation"] == "ok"
+        assert data["test_render"] == "22"
+
+    def test_diagnose_template_render_error(self, mock_mcp, ha_url, ha_token, tmp_path):
+        """Template rendering fails → syntax_validation == 'error'."""
+        storage = tmp_path / ".storage"
+        storage.mkdir()
+        (storage / "core.entity_registry").write_text(json.dumps({"data": {"entities": []}}))
+        (storage / "core.config_entries").write_text(
+            json.dumps(
+                {
+                    "data": {
+                        "entries": [
+                            {
+                                "domain": "template",
+                                "title": "Bad Template",
+                                "options": {
+                                    "template_type": "sensor",
+                                    "state": "{{ bad syntax }}",
+                                },
+                            }
+                        ]
+                    }
+                }
+            )
+        )
+
+        with patch("tools.dev_tools.make_ha_request") as mock_req:
+            mock_req.return_value = {"success": False, "error": "TemplateSyntaxError"}
+            register_dev_tools(mock_mcp, ha_url, ha_token, str(tmp_path))
+            data = json.loads(mock_mcp._tools["diagnose_template"]("sensor.bad_template"))
+
+        assert data["success"] is True
+        assert data["syntax_validation"] == "error"
+        assert any("syntax error" in i["message"].lower() for i in data["issues"])
+
+    def test_diagnose_template_unavailable_reference(self, mock_mcp, ha_url, ha_token, tmp_path):
+        """Referenced entity unavailable → warning."""
+        storage = tmp_path / ".storage"
+        storage.mkdir()
+        (storage / "core.entity_registry").write_text(json.dumps({"data": {"entities": []}}))
+        (storage / "core.config_entries").write_text(
+            json.dumps(
+                {
+                    "data": {
+                        "entries": [
+                            {
+                                "domain": "template",
+                                "title": "Ref Template",
+                                "options": {
+                                    "template_type": "sensor",
+                                    "state": "{{ states('sensor.dead') }}",
+                                },
+                            }
+                        ]
+                    }
+                }
+            )
+        )
+
+        with patch("tools.dev_tools.make_ha_request") as mock_req:
+            mock_req.side_effect = [
+                {"success": True, "data": {"state": "unavailable", "attributes": {}}},
+                {"success": True, "data": "unavailable"},
+            ]
+            register_dev_tools(mock_mcp, ha_url, ha_token, str(tmp_path))
+            data = json.loads(mock_mcp._tools["diagnose_template"]("sensor.ref_template"))
+
+        assert data["success"] is True
+        assert any("unavailable" in i["message"].lower() for i in data["issues"])
+
+    def test_diagnose_template_missing_reference(self, mock_mcp, ha_url, ha_token, tmp_path):
+        """Referenced entity not found → error."""
+        storage = tmp_path / ".storage"
+        storage.mkdir()
+        (storage / "core.entity_registry").write_text(json.dumps({"data": {"entities": []}}))
+        (storage / "core.config_entries").write_text(
+            json.dumps(
+                {
+                    "data": {
+                        "entries": [
+                            {
+                                "domain": "template",
+                                "title": "Ref Template",
+                                "options": {
+                                    "template_type": "sensor",
+                                    "state": "{{ states('sensor.ghost') }}",
+                                },
+                            }
+                        ]
+                    }
+                }
+            )
+        )
+
+        with patch("tools.dev_tools.make_ha_request") as mock_req:
+            mock_req.side_effect = [
+                {"success": False, "error": "not found"},
+                {"success": True, "data": "unknown"},
+            ]
+            register_dev_tools(mock_mcp, ha_url, ha_token, str(tmp_path))
+            data = json.loads(mock_mcp._tools["diagnose_template"]("sensor.ref_template"))
+
+        assert data["success"] is True
+        assert any("not found" in i["message"].lower() for i in data["issues"])
+        assert data["entity_status"]["sensor.ghost"]["exists"] is False
+
+    def test_diagnose_template_many_references(self, mock_mcp, ha_url, ha_token, tmp_path):
+        """Template referencing >10 entities → simplification recommendation."""
+        storage = tmp_path / ".storage"
+        storage.mkdir()
+        (storage / "core.entity_registry").write_text(json.dumps({"data": {"entities": []}}))
+
+        entities = [f"sensor.e{i}" for i in range(15)]
+        template_parts = [f"{{{{ states('{e}') }}}}" for e in entities]
+        big_template = " ".join(template_parts)
+
+        (storage / "core.config_entries").write_text(
+            json.dumps(
+                {
+                    "data": {
+                        "entries": [
+                            {
+                                "domain": "template",
+                                "title": "Big Template",
+                                "options": {
+                                    "template_type": "sensor",
+                                    "state": big_template,
+                                },
+                            }
+                        ]
+                    }
+                }
+            )
+        )
+
+        with patch("tools.dev_tools.make_ha_request") as mock_req:
+            mock_req.side_effect = [
+                {"success": True, "data": {"state": "10", "attributes": {}}}
+            ] * 16
+            register_dev_tools(mock_mcp, ha_url, ha_token, str(tmp_path))
+            data = json.loads(mock_mcp._tools["diagnose_template"]("sensor.big_template"))
+
+        assert data["success"] is True
+        assert len(data["referenced_entities"]) == 15
+        assert any("simplif" in r.lower() for r in data["recommendations"])
+
 
 class TestDiagnoseEnergySetup:
     """Tests for diagnose_energy_setup()."""
@@ -531,7 +1216,7 @@ class TestDiagnoseEnergySetup:
             {
                 "entity_id": "binary_sensor.g12w_peak",
                 "state": "on",
-                "attributes": {"friendly_name": "Godzina szczytu G12w"},
+                "attributes": {"friendly_name": "G12w Peak Hour"},
             },
         ]
 

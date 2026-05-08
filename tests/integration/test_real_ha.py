@@ -626,3 +626,357 @@ class TestSummary:
         print(f"Health: {health.get('summary', {}).get('health_score', 'N/A')}/100")
         print(f"Status: {health.get('summary', {}).get('status', 'N/A')}")
         print("=" * 50)
+
+
+class TestNewToolsV10:
+    """Integration tests for tools added in v1.0+."""
+
+    def test_get_lovelace_dashboards(self, real_mcp):
+        result = real_mcp.call_tool("get_lovelace_dashboards")
+        data = json.loads(result)
+        assert data["success"] is True
+
+    def test_get_lovelace_resources(self, real_mcp):
+        result = real_mcp.call_tool("get_lovelace_resources")
+        data = json.loads(result)
+        assert data["success"] is True
+
+    def test_search_lovelace_config(self, real_mcp):
+        result = real_mcp.call_tool("search_lovelace_config", entity_id="sun.sun")
+        data = json.loads(result)
+        assert data["success"] is True
+
+    def test_get_lovelace_config_summary(self, real_mcp):
+        result = real_mcp.call_tool("get_lovelace_config_summary")
+        data = json.loads(result)
+        assert data["success"] is True
+
+    def test_get_persons(self, real_mcp):
+        result = real_mcp.call_tool("get_persons")
+        data = json.loads(result)
+        assert data["success"] is True
+
+    def test_get_zones(self, real_mcp):
+        result = real_mcp.call_tool("get_zones")
+        data = json.loads(result)
+        assert data["success"] is True
+
+    def test_diagnose_person_tracking(self, real_mcp):
+        """Person tracking diagnostics should return success for existing person."""
+        # Find person entities via entity registry
+        registry_result = real_mcp.call_tool("get_entity_registry")
+        registry_data = json.loads(registry_result)
+        entities = registry_data.get("entities", [])
+        persons = [e for e in entities if e.get("entity_id", "").startswith("person.")]
+        if persons:
+            person_entity = persons[0]["entity_id"]
+            result = real_mcp.call_tool("diagnose_person_tracking", person_entity=person_entity)
+            data = json.loads(result)
+            assert data["success"] is True
+
+    def test_get_area_diagnostic(self, real_mcp):
+        """Area diagnostic should work for first available area."""
+        areas_result = real_mcp.call_tool("get_area_registry")
+        areas_data = json.loads(areas_result)
+        areas = areas_data.get("areas", [])
+        if areas:
+            area_name = areas[0].get("name") or areas[0].get("id")
+            result = real_mcp.call_tool("get_area_diagnostic", area_name=area_name)
+            data = json.loads(result)
+            assert data["success"] is True
+
+    def test_get_energy_dashboard_data(self, real_mcp):
+        result = real_mcp.call_tool("get_energy_dashboard_data")
+        data = json.loads(result)
+        assert data["success"] is True
+
+    def test_get_hacs_data(self, real_mcp):
+        result = real_mcp.call_tool("get_hacs_data")
+        data = json.loads(result)
+        assert data["success"] is True
+
+
+class TestAutomationExtra:
+    """Integration tests for remaining automation tools."""
+
+    def test_search_automations_by_entity(self, real_mcp):
+        result = real_mcp.call_tool("search_automations_by_entity", entity_id="sun.sun")
+        data = json.loads(result)
+        assert data["success"] is True
+
+    def test_get_automation_conflicts(self, real_mcp):
+        result = real_mcp.call_tool("get_automation_conflicts", entity_id="sun.sun")
+        data = json.loads(result)
+        assert data["success"] is True
+
+    def test_get_automation_usage_stats(self, real_mcp):
+        list_data = real_mcp.call_tool("list_automations")
+        autos = json.loads(list_data)["automations"]
+        if autos:
+            alias = autos[0].get("alias")
+            result = real_mcp.call_tool("get_automation_usage_stats", automation_id=alias)
+            data = json.loads(result)
+            assert data["success"] is True
+
+    def test_automation_validate_triggers(self, real_mcp):
+        list_data = real_mcp.call_tool("list_automations")
+        autos = json.loads(list_data)["automations"]
+        if autos:
+            alias = autos[0].get("alias")
+            result = real_mcp.call_tool("automation_validate_triggers", automation_alias=alias)
+            data = json.loads(result)
+            assert data["success"] is True
+
+
+class TestConfigEntryDiagnostics:
+    """Integration tests for config entry diagnostics."""
+
+    def test_search_config_entries(self, real_mcp):
+        result = real_mcp.call_tool("search_config_entries")
+        data = json.loads(result)
+        assert data["success"] is True
+
+    def test_get_config_entry_details(self, real_mcp):
+        entries_result = real_mcp.call_tool("search_config_entries", domain="sun")
+        entries_data = json.loads(entries_result)
+        entries = entries_data.get("entries", [])
+        if entries:
+            entry_id = entries[0].get("entry_id")
+            result = real_mcp.call_tool("get_config_entry_details", entry_id=entry_id)
+            data = json.loads(result)
+            assert data["success"] is True
+
+    def test_diagnose_config_entry(self, real_mcp):
+        entries_result = real_mcp.call_tool("search_config_entries", domain="sun")
+        entries_data = json.loads(entries_result)
+        entries = entries_data.get("entries", [])
+        if entries:
+            entry_id = entries[0].get("entry_id")
+            result = real_mcp.call_tool("diagnose_config_entry", entry_id=entry_id)
+            data = json.loads(result)
+            assert data["success"] is True
+
+
+class TestEntityDepsExtra:
+    """Integration tests for entity dependency tools."""
+
+    def test_get_entity_consumers(self, real_mcp):
+        result = real_mcp.call_tool("get_entity_consumers", entity_id="sun.sun")
+        data = json.loads(result)
+        assert data["success"] is True
+
+    def test_entity_get_context_tree(self, real_mcp):
+        result = real_mcp.call_tool("entity_get_context_tree", entity_id="sun.sun")
+        data = json.loads(result)
+        assert data["success"] in (True, False)
+
+
+class TestHistoryExtra:
+    """Integration tests for remaining history tools."""
+
+    def test_get_history_batch(self, real_mcp):
+        result = real_mcp.call_tool(
+            "get_history_batch", entity_ids="sun.sun", hours_back=1, limit=3
+        )
+        data = json.loads(result)
+        assert data["success"] is True
+
+    def test_get_history_stats(self, real_mcp):
+        result = real_mcp.call_tool("get_history_stats", entity_id="sun.sun")
+        data = json.loads(result)
+        assert isinstance(data, dict)
+
+
+class TestBatchOperations:
+    """Integration tests for batch operation tools."""
+
+    def test_validate_yaml_batch(self, real_mcp):
+        result = real_mcp.call_tool("validate_yaml_batch", file_paths="configuration.yaml")
+        data = json.loads(result)
+        assert data["success"] in (True, False)
+
+    def test_bulk_search_entities(self, real_mcp):
+        result = real_mcp.call_tool("bulk_search_entities", search_terms="sun,temperature")
+        data = json.loads(result)
+        assert data["success"] is True
+
+    def test_get_template_dependencies(self, real_mcp):
+        registry = real_mcp.call_tool("get_template_entities")
+        reg_data = json.loads(registry)
+        templates = reg_data.get("template_entities", [])
+        if templates:
+            entity_id = templates[0].get("entity_id") or "sensor.template_test"
+            result = real_mcp.call_tool("get_template_dependencies", entity_id=entity_id)
+            data = json.loads(result)
+            assert data["success"] in (True, False)
+
+
+class TestCompositeExtra:
+    """Integration tests for composite tools."""
+
+    def test_investigate_entity(self, real_mcp):
+        result = real_mcp.call_tool("investigate_entity", search_term="sun")
+        data = json.loads(result)
+        assert data["success"] is True
+
+    def test_get_entity_with_automations(self, real_mcp):
+        result = real_mcp.call_tool("get_entity_with_automations", entity_id="sun.sun")
+        data = json.loads(result)
+        assert data["success"] in (True, False)
+
+
+class TestDevToolsExtraIntegration:
+    """Integration tests for remaining dev tools."""
+
+    def test_test_service_call(self, real_mcp):
+        result = real_mcp.call_tool(
+            "test_service_call",
+            domain="light",
+            service="turn_on",
+            entity_id="sun.sun",
+        )
+        data = json.loads(result)
+        assert data["success"] in (True, False)
+
+
+class TestHealthReporterIntegration:
+    """Integration test for health reporter."""
+
+    def test_trigger_health_report_integration(self, real_mcp):
+        result = real_mcp.call_tool("trigger_health_report")
+        data = json.loads(result)
+        assert data["success"] is True
+
+
+class TestFilesystemExplorerIntegration:
+    """Integration tests for filesystem explorer tools.
+
+    Note: filesystem tools validate paths against an allowlist (default: /config).
+    Outside Docker, the config path may differ, so some tests may return errors.
+    """
+
+    def test_list_directory_integration(self, real_mcp):
+        result = real_mcp.call_tool("list_directory", path="/config")
+        data = json.loads(result)
+        assert "success" in data or "error" in data
+
+    def test_read_file_integration(self, real_mcp):
+        result = real_mcp.call_tool(
+            "read_file", file_path="/config/configuration.yaml", max_lines=5
+        )
+        data = json.loads(result)
+        assert "success" in data or "error" in data
+
+    def test_search_files_integration(self, real_mcp):
+        result = real_mcp.call_tool(
+            "search_files", pattern="homeassistant", path="/config", max_results=3
+        )
+        data = json.loads(result)
+        assert "success" in data or "error" in data
+
+
+class TestDynamicLookup:
+    """Integration tests that dynamically find test data from existing entities."""
+
+    def test_diagnose_automation_with_first(self, real_mcp):
+        """Diagnose first available automation by looking it up dynamically."""
+        list_data = real_mcp.call_tool("list_automations")
+        list_result = json.loads(list_data)
+        autos = list_result.get("automations", [])
+        if autos:
+            alias = autos[0].get("alias")
+            result = real_mcp.call_tool("diagnose_automation", automation_id=alias)
+            data = json.loads(result)
+            assert data["success"] is True
+
+    def test_get_automation_dependencies_with_first(self, real_mcp):
+        """Get dependencies for first available automation."""
+        list_data = real_mcp.call_tool("list_automations")
+        list_result = json.loads(list_data)
+        autos = list_result.get("automations", [])
+        if autos:
+            alias = autos[0].get("alias")
+            result = real_mcp.call_tool("get_automation_dependencies", automation_id=alias)
+            data = json.loads(result)
+            assert data["success"] is True
+
+    def test_get_entity_with_automations(self, real_mcp):
+        """Get entity with automations for sun.sun."""
+        result = real_mcp.call_tool("get_entity_with_automations", entity_id="sun.sun")
+        data = json.loads(result)
+        assert data["success"] in (True, False)
+
+    def test_get_entity_dependencies(self, real_mcp):
+        """Entity dependencies for sun.sun."""
+        result = real_mcp.call_tool("get_entity_dependencies", entity_id="sun.sun")
+        data = json.loads(result)
+        assert data["success"] is True
+
+    def test_get_area_devices_summary(self, real_mcp):
+        """Area devices summary for first available area."""
+        areas_data = real_mcp.call_tool("get_area_registry")
+        areas = json.loads(areas_data).get("areas", [])
+        if areas:
+            area_id = areas[0].get("id")
+            result = real_mcp.call_tool("get_area_devices_summary", area_id=area_id)
+            data = json.loads(result)
+            assert data["success"] is True
+
+    def test_get_devices_by_area(self, real_mcp):
+        """Devices by area for first available area."""
+        areas_data = real_mcp.call_tool("get_area_registry")
+        areas = json.loads(areas_data).get("areas", [])
+        if areas:
+            area_id = areas[0].get("id")
+            result = real_mcp.call_tool("get_devices_by_area", area_id=area_id)
+            data = json.loads(result)
+            assert data["success"] is True
+
+    def test_get_blueprint_instances(self, real_mcp):
+        """Blueprint instances for first available blueprint."""
+        bp_data = real_mcp.call_tool("list_blueprints")
+        bp_result = json.loads(bp_data)
+        blueprints = bp_result.get("blueprints", [])
+        if blueprints:
+            bp_path = blueprints[0].get("path")
+            result = real_mcp.call_tool("get_blueprint_instances", blueprint_path=bp_path)
+            data = json.loads(result)
+            assert data["success"] is True
+
+    def test_diagnose_template(self, real_mcp):
+        """Diagnose first available template entity."""
+        tmpl_data = real_mcp.call_tool("get_template_entities")
+        tmpl_result = json.loads(tmpl_data)
+        templates = tmpl_result.get("template_entities", [])
+        if templates:
+            eid = templates[0].get("entity_id")
+            if eid:
+                result = real_mcp.call_tool("diagnose_template", entity_id=eid)
+                data = json.loads(result)
+                assert data["success"] in (True, False)
+
+    def test_automation_validate_triggers(self, real_mcp):
+        """Validate triggers for first available automation."""
+        list_data = real_mcp.call_tool("list_automations")
+        list_result = json.loads(list_data)
+        autos = list_result.get("automations", [])
+        if autos:
+            alias = autos[0].get("alias")
+            result = real_mcp.call_tool("automation_validate_triggers", automation_alias=alias)
+            data = json.loads(result)
+            assert data["success"] in (True, False)
+
+
+class TestTemplateEntityCode:
+    """Integration tests for get_template_entity_code."""
+
+    def test_get_template_entity_code_integration(self, real_mcp):
+        list_data = real_mcp.call_tool("get_template_entities", entity_id=None)
+        list_result = json.loads(list_data)
+        templates = list_result.get("templates", [])
+        if templates:
+            eid = templates[0].get("entity_id")
+            result = real_mcp.call_tool("get_template_entity_code", entity_id=eid)
+            data = json.loads(result)
+            assert data["success"] is True
+            assert "state_template" in data

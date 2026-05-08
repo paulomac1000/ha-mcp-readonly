@@ -177,13 +177,13 @@ def register_log_tools(mcp, config_path: str):
         max_patterns: int = 10,
     ) -> str:
         """
-        🚀 INTELLIGENT LOG ANALYSIS - Processed insights instead of raw logs.
+        Intelligent log analysis: grouped error patterns, affected entities, problem categories, timeline, and fix recommendations. ~85% token savings.
 
-        ~85% token savings! Returns:
-        - Pogrupowane errors z affected_entities i affected_automations
+        Returns:
+        - Grouped errors with affected entities and affected automations
         - Problem categorization
         - Timeline summary
-        - Recommendations naprawy
+        - Fix recommendations
 
         Args:
             hours: Number of hours back (1-24, default: 1)

@@ -7,6 +7,7 @@ READ-ONLY: Returns JSON reports. Does NOT write to Home Assistant.
 """
 
 import json
+import logging
 import os
 import re
 import traceback
@@ -15,6 +16,8 @@ from datetime import datetime, timedelta
 from typing import Any, Dict, Optional
 
 from tools.utils import make_ha_request, tail_log_file
+
+logger = logging.getLogger(__name__)
 
 
 def collect_system_metrics(
@@ -377,7 +380,7 @@ def prepare_report(data: Dict[str, Any]) -> Dict[str, Any]:
 
 def run_once(ha_url: str, ha_token: Optional[str], config_path: str) -> Dict[str, Any]:
     """Main entry point - collect and return health report as JSON (read-only)."""
-    print(f"[health_reporter] Starting health report generation at {datetime.now().isoformat()}")
+    logger.info("Starting health report generation")
 
     try:
         data = {
@@ -388,11 +391,11 @@ def run_once(ha_url: str, ha_token: Optional[str], config_path: str) -> Dict[str
         }
 
         report = prepare_report(data)
-        print("[health_reporter] Report generated successfully")
+        logger.info("Report generated successfully")
         return report
 
     except Exception as e:
-        print(f"[health_reporter] Fatal error: {e}")
+        logger.error(f"Fatal error: {e}")
         traceback.print_exc()
 
         return {
@@ -416,4 +419,4 @@ def register_health_reporter_tools(mcp, ha_url: str, ha_token: Optional[str], co
     def trigger_health_report() -> str:
         """Generate system health report (read-only). Returns JSON with metrics, logs, entity and automation health."""
         report = run_once(ha_url, ha_token, config_path)
-        return json.dumps(report, indent=2, ensure_ascii=False)
+        return json.dumps({"success": True, **report}, indent=2, ensure_ascii=False)

@@ -190,6 +190,9 @@ def register_config_tools(
     def list_themes() -> str:
         """
         Fetches list of installed themes (themes/).
+
+        Returns:
+            JSON with list of installed themes, their paths, and metadata.
         """
         try:
             themes_dir = Path(config_path) / "themes"
@@ -223,6 +226,9 @@ def register_config_tools(
     def get_config_structure() -> str:
         """
         Returns structure of directories and files in the Home Assistant configuration directory.
+
+        Returns:
+            JSON with directory tree structure of the HA config directory.
         """
         try:
             structure = {}
@@ -254,9 +260,17 @@ def register_config_tools(
             return json.dumps({"success": False, "error": str(e)}, indent=2)
 
     @mcp.tool()
-    def read_config_file(file_path: str) -> str:
+    def read_config_file(file_path: str, max_lines: int = 200, offset: int = 1) -> str:
         """
-        Odczytuje zavalue konkretnego fileu konfiguracyjnego.
+        Read a configuration file with optional line offset and limit.
+
+        Args:
+            file_path: Path relative to the HA config directory (e.g. "automations.yaml").
+            max_lines: Maximum number of lines to return (default 200).
+            offset: Line number to start reading from, 1-indexed (default 1).
+
+        Returns:
+            File content as text, or JSON error.
         """
         try:
             full_path = Path(config_path) / file_path
@@ -283,14 +297,35 @@ def register_config_tools(
             file_size = os.path.getsize(full_path)
             max_size = 200 * 1024  # 200KB limit for reading raw content (AI token limit)
 
+            if offset < 1:
+                offset = 1
+
             with open(full_path, "r", encoding="utf-8") as f:
                 if file_size > max_size:
-                    content = f.read(max_size)
-                    return f"File too large ({file_size} bytes). Showing first {max_size // 1024}KB:\n\n{content}"
+                    # For large files, use line-based offset reading
+                    lines = []
+                    for i, line in enumerate(f):
+                        if i < offset - 1:
+                            continue
+                        if i >= offset - 1 + max_lines:
+                            lines.append("...")
+                            break
+                        lines.append(line.rstrip("\n"))
+                    return "\n".join(lines)
                 else:
-                    content = f.read()
-
-            return content
+                    if offset == 1 and max_lines >= 200:
+                        # Fast path: read entire small file
+                        return f.read()
+                    # Line-based offset reading for small files
+                    lines = []
+                    for i, line in enumerate(f):
+                        if i < offset - 1:
+                            continue
+                        if i >= offset - 1 + max_lines:
+                            lines.append("...")
+                            break
+                        lines.append(line.rstrip("\n"))
+                    return "\n".join(lines)
         except FileNotFoundError:
             return json.dumps(
                 {"success": False, "error": f"File '{file_path}' not found"}, indent=2
@@ -307,7 +342,15 @@ def register_config_tools(
         search_terms: str, file_types: str = "yaml", match_mode: str = "any"
     ) -> str:
         """
-        🚀 OPTIMIZED - searches wiele fraz tekstowych w wielu fileach konfiguracyjnych.
+        Search for multiple text phrases across many config files simultaneously.
+
+        Args:
+            search_terms: Space or comma-separated search phrases.
+            file_types: File extension filter (default "yaml").
+            match_mode: "any" to match any term, "all" to match all (default "any").
+
+        Returns:
+            JSON with matched files, line numbers, and context snippets.
         """
         try:
             terms = [term.strip() for term in search_terms.split(",") if term.strip()]
@@ -411,6 +454,13 @@ def register_config_tools(
     def search_in_config(search_term: str, file_types: str = "yaml") -> str:
         """
         Searches for a specific phrase in all configuration files.
+
+        Args:
+            search_term: Phrase to search for in config files.
+            file_types: File extension filter (default "yaml").
+
+        Returns:
+            JSON with list of matching files and line numbers.
         """
         return search_in_config_batch(
             search_terms=search_term, file_types=file_types, match_mode="any"
@@ -425,7 +475,17 @@ def register_config_tools(
         file_pattern: Optional[str] = None,
     ) -> str:
         """
-        🚀 OPTIMIZED - searches w konfiguracji po parameterach YAML.
+        Search YAML configuration files by structured parameters (entity_id, service, platform, device_class).
+
+        Args:
+            entity_id: Optional entity id to search for.
+            service: Optional service name to search for.
+            platform: Optional platform name to filter by.
+            device_class: Optional device class to filter by.
+            file_pattern: Optional file name pattern to limit search scope.
+
+        Returns:
+            JSON with matched config entries and their locations.
         """
         try:
             if not any([entity_id, service, platform, device_class]):
@@ -550,7 +610,16 @@ def register_config_tools(
         check_templates: bool = False,
     ) -> str:
         """
-        🚀 PRE-DEPLOYMENT CHECK - validates YAML and checks references to entities/services/templates.
+        Pre-deployment check: validates YAML syntax and checks references to entities/services/templates.
+
+        Args:
+            file_path: Path to YAML file to validate.
+            yaml_content: Raw YAML string to validate (alternative to file_path).
+            check_entities_services: Whether to validate referenced entities and services.
+            check_templates: Whether to test Jinja2 templates.
+
+        Returns:
+            JSON with validation result, errors, warnings, and entity/service checks.
         """
         issues = []
         parsed_data = None
@@ -670,7 +739,13 @@ def register_config_tools(
     @mcp.tool()
     def get_lovelace_entity_usage(entity_id: str) -> str:
         """
-        🚀 LOVELACE ENTITY USAGE - Locates entity in Lovelace dashboards.
+        Locate an entity across all Lovelace dashboards.
+
+        Args:
+            entity_id: Entity id to locate in Lovelace dashboards.
+
+        Returns:
+            JSON with dashboard locations, card types, and view positions where entity is used.
         """
         try:
             usage_results = []

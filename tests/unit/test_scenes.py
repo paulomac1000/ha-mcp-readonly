@@ -112,3 +112,29 @@ class TestGetSceneCode:
 
         result = tools["get_scene_code"]("My Scene")
         assert "My Scene" in result
+
+    def test_get_scene_code_no_file(self, tools, config_path):
+        """Test scenario where scenes.yaml does not exist at all."""
+        result = tools["get_scene_code"]("anything")
+        assert "not found" in result.lower()
+
+    def test_list_scenes_corrupt_file(self, tools, config_path):
+        """Test exception handler when YAML is corrupt/invalid."""
+        scene_file = os.path.join(config_path, "scenes.yaml")
+        scene_file_path = scene_file
+        os.makedirs(os.path.dirname(scene_file_path), exist_ok=True)
+        # Write invalid YAML that will cause safe_load to fail
+        with open(scene_file, "wb") as f:
+            f.write(b"\xff\xfe\x00\x00")
+
+        result = tools["list_scenes"]()
+        assert result.startswith("Error:")
+
+    def test_get_scene_code_corrupt_file(self, tools, config_path):
+        """Test exception handler for get_scene_code with corrupt file."""
+        scene_file = os.path.join(config_path, "scenes.yaml")
+        with open(scene_file, "wb") as f:
+            f.write(b"\xff\xfe\x00\x00")
+
+        result = tools["get_scene_code"]("anything")
+        assert result.startswith("Error:")

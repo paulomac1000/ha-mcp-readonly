@@ -659,3 +659,48 @@ class TestErrorHandling:
 
             assert data["success"] is False
             assert "invalid" in data.get("error", "").lower()
+
+
+class TestCompareAttributes:
+    def test_compare_attributes_detects_changes(self):
+        from tools.batch_operations import _compare_attributes
+
+        before = {"brightness": 100, "color_temp": 300, "effect": "none"}
+        after = {"brightness": 200, "color_temp": 300, "effect": "colorloop"}
+
+        result = _compare_attributes(before, after)
+
+        assert len(result) == 2
+        changed_keys = {c["attribute"] for c in result}
+        assert "brightness" in changed_keys
+        assert "effect" in changed_keys
+
+        brightness_change = next(c for c in result if c["attribute"] == "brightness")
+        assert brightness_change["before"] == 100
+        assert brightness_change["after"] == 200
+
+    def test_compare_attributes_new_key(self):
+        from tools.batch_operations import _compare_attributes
+
+        before = {"brightness": 100}
+        after = {"brightness": 100, "transition": 2}
+
+        result = _compare_attributes(before, after)
+
+        assert len(result) == 1
+        assert result[0]["attribute"] == "transition"
+        assert result[0]["before"] is None
+        assert result[0]["after"] == 2
+
+    def test_compare_attributes_removed_key(self):
+        from tools.batch_operations import _compare_attributes
+
+        before = {"brightness": 100, "color_temp": 300}
+        after = {"brightness": 100}
+
+        result = _compare_attributes(before, after)
+
+        assert len(result) == 1
+        assert result[0]["attribute"] == "color_temp"
+        assert result[0]["before"] == 300
+        assert result[0]["after"] is None
