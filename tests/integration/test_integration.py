@@ -15,7 +15,6 @@ import json
 import os
 import time
 from pathlib import Path
-from typing import Dict, List
 
 import pytest
 
@@ -118,7 +117,7 @@ def real_mcp() -> MockMCP:
 
 
 @pytest.fixture(scope="module")
-def sample_entities(real_mcp) -> Dict[str, List[str]]:
+def sample_entities(real_mcp) -> dict[str, list[str]]:
     """Get sample entities from real system for testing."""
     result = real_mcp.call_tool("get_domains_summary")
     data = json.loads(result)
@@ -161,7 +160,7 @@ class TestConnectivity:
         result = make_ha_request(HA_URL, HA_TOKEN, "/api/")
         assert result["success"], f"API check failed: {result.get('error')}"
         assert "message" in result["data"]
-        print(f"\n✅ Connected to HA: {result['data']['message']}")
+        print(f"\n[OK] Connected to HA: {result['data']['message']}")
 
     def test_config_dir_accessible(self):
         """Verify /config directory is mounted and readable."""
@@ -170,7 +169,7 @@ class TestConnectivity:
         assert config_path.is_dir(), f"{HA_CONFIG_PATH} is not a directory"
         assert (config_path / "configuration.yaml").exists(), "configuration.yaml missing"
         assert (config_path / ".storage").exists(), ".storage directory missing"
-        print(f"\n✅ Config directory verified: {HA_CONFIG_PATH}")
+        print(f"\n[OK] Config directory verified: {HA_CONFIG_PATH}")
 
     def test_log_file_accessible(self):
         """Verify home-assistatet.log is readable."""
@@ -178,10 +177,10 @@ class TestConnectivity:
         assert log_path.exists(), "home-assistant.log missing"
 
         # Read last line to verify access
-        with open(log_path, "r", encoding="utf-8", errors="ignore") as f:
+        with open(log_path, encoding="utf-8", errors="ignore") as f:
             lines = f.readlines()
             assert len(lines) > 0, "Log file is empty"
-        print(f"\n✅ Log file accessible: {len(lines)} lines")
+        print(f"\n[OK] Log file accessible: {len(lines)} lines")
 
     def test_storage_files_accessible(self):
         """Verify core .storage files exist."""
@@ -197,7 +196,7 @@ class TestConnectivity:
             filepath = storage_path / filename
             assert filepath.exists(), f"Missing: {filename}"
 
-        print("\n✅ All core storage files present")
+        print("\n[OK] All core storage files present")
 
     def test_automations_file_accessible(self):
         """Verify automations.yaml exists and is valid YAML."""
@@ -206,16 +205,16 @@ class TestConnectivity:
         auto_path = Path(HA_CONFIG_PATH) / "automations.yaml"
 
         if auto_path.exists():
-            with open(auto_path, "r", encoding="utf-8") as f:
+            with open(auto_path, encoding="utf-8") as f:
                 data = yaml.safe_load(f)
             assert isinstance(data, list), "automations.yaml should be a list"
-            print(f"\n✅ automations.yaml: {len(data)} automations")
+            print(f"\n[OK] automations.yaml: {len(data)} automations")
         else:
             pytest.skip("automations.yaml not found")
 
 
 # ============================================================
-# 📊 STATE TOOLS TESTS
+# [STATS] STATE TOOLS TESTS
 # ============================================================
 
 
@@ -230,11 +229,11 @@ class TestStateTools:
         # get_all_states returns success=False when >500 entities (by design)
         if data["success"]:
             assert data.get("count", 0) >= 0
-            print(f"\n✅ get_all_states: {data.get('count', 0)} sensor entities")
+            print(f"\n[OK] get_all_states: {data.get('count', 0)} sensor entities")
         else:
             # Expected when too many entities
             assert "Too many" in data.get("error", "") or "suggestion" in data
-            print("\n⚠️ get_all_states: Too many entities (expected behavior)")
+            print("\n[WARN] get_all_states: Too many entities (expected behavior)")
 
     def test_get_entity_state(self, real_mcp, sample_entities):
         """Test get_entity_state for specific entity."""
@@ -247,7 +246,7 @@ class TestStateTools:
 
         assert data["success"] is True
         assert data["entity"]["entity_id"] == entity_id
-        print(f"\n✅ get_entity_state: {entity_id} = {data['entity']['state']}")
+        print(f"\n[OK] get_entity_state: {entity_id} = {data['entity']['state']}")
 
     def test_get_entity_state_batch(self, real_mcp, sample_entities):
         """Test batch entity state retrieval."""
@@ -261,7 +260,7 @@ class TestStateTools:
         assert data["success"] is True
         assert data["found_count"] > 0
         print(
-            f"\n✅ get_entity_state_batch: {data['found_count']}/{data['found_count'] + data['missing_count']} found"
+            f"\n[OK] get_entity_state_batch: {data['found_count']}/{data['found_count'] + data['missing_count']} found"
         )
 
     def test_get_states_grouped(self, real_mcp):
@@ -272,7 +271,7 @@ class TestStateTools:
         assert data["success"] is True
         assert len(data["groups"]) > 0
         print(
-            f"\n✅ get_states_grouped: {len(data['groups'])} domains, {data['total_entities']} entities"
+            f"\n[OK] get_states_grouped: {len(data['groups'])} domains, {data['total_entities']} entities"
         )
 
     def test_get_states_filtered(self, real_mcp):
@@ -283,7 +282,7 @@ class TestStateTools:
         data = json.loads(result)
 
         assert data["success"] is True
-        print(f"\n✅ get_states_filtered (unavailable): {data['count']} entities")
+        print(f"\n[OK] get_states_filtered (unavailable): {data['count']} entities")
 
     def test_search_entities(self, real_mcp):
         """Test entity search by name."""
@@ -291,7 +290,7 @@ class TestStateTools:
         data = json.loads(result)
 
         assert data["success"] is True
-        print(f"\n✅ search_entities('temperature'): {data['count']} results")
+        print(f"\n[OK] search_entities('temperature'): {data['count']} results")
 
     def test_get_domains_summary(self, real_mcp):
         """Test domains summary."""
@@ -301,7 +300,7 @@ class TestStateTools:
         assert data["success"] is True
         assert data["total_entities"] > 0
         print(
-            f"\n✅ get_domains_summary: {data['total_entities']} entities in {data['total_domains']} domains"
+            f"\n[OK] get_domains_summary: {data['total_entities']} entities in {data['total_domains']} domains"
         )
 
     def test_get_system_overview(self, real_mcp):
@@ -316,7 +315,7 @@ class TestStateTools:
 
         assert data["success"] is True
         assert "summary" in data
-        print(f"\n✅ get_system_overview: {data['summary']['unavailable_count']} unavailable")
+        print(f"\n[OK] get_system_overview: {data['summary']['unavailable_count']} unavailable")
 
     def test_get_entity_changes(self, real_mcp):
         """Test recent entity changes detection."""
@@ -324,7 +323,7 @@ class TestStateTools:
         data = json.loads(result)
 
         assert data["success"] is True
-        print(f"\n✅ get_entity_changes: {data['total_changed']} entities changed in last hour")
+        print(f"\n[OK] get_entity_changes: {data['total_changed']} entities changed in last hour")
 
     def test_verify_recent_implementation(self, real_mcp):
         """Test recent implementation verification."""
@@ -335,7 +334,7 @@ class TestStateTools:
         assert "recent_entities" in data
         assert "automations" in data
         print(
-            f"\n✅ verify_recent_implementation: {data['summary']['recent_entities_count']} recent"
+            f"\n[OK] verify_recent_implementation: {data['summary']['recent_entities_count']} recent"
         )
 
 
@@ -361,7 +360,7 @@ class TestLogTools:
         assert data["success"] is True
         assert "summary" in data
         print(
-            f"\n✅ get_log_insights: {data['summary']['total_errors']} errors, {data['summary']['total_warnings']} warnings"
+            f"\n[OK] get_log_insights: {data['summary']['total_errors']} errors, {data['summary']['total_warnings']} warnings"
         )
 
     def test_get_log_insights_with_patterns(self, real_mcp):
@@ -381,7 +380,7 @@ class TestLogTools:
                 assert "affected_automations" in details
 
         print(
-            f"\n✅ get_log_insights patterns: {len(data.get('grouped_errors', {}))} unique patterns"
+            f"\n[OK] get_log_insights patterns: {len(data.get('grouped_errors', {}))} unique patterns"
         )
 
     def test_analyze_log_errors(self, real_mcp):
@@ -391,7 +390,7 @@ class TestLogTools:
 
         assert data["success"] is True
         print(
-            f"\n✅ analyze_log_errors: {data['total_errors']} errors, {data['total_tracebacks']} tracebacks"
+            f"\n[OK] analyze_log_errors: {data['total_errors']} errors, {data['total_tracebacks']} tracebacks"
         )
 
     def test_get_recent_logs(self, real_mcp):
@@ -400,7 +399,7 @@ class TestLogTools:
 
         # This returns raw text, not JSON
         assert isinstance(result, str)
-        print(f"\n✅ get_recent_logs: {len(result)} chars")
+        print(f"\n[OK] get_recent_logs: {len(result)} chars")
 
     def test_search_logs(self, real_mcp):
         """Test log search."""
@@ -410,7 +409,7 @@ class TestLogTools:
         data = json.loads(result)
 
         assert data["success"] is True
-        print(f"\n✅ search_logs('ERROR'): {data['total_found']} results")
+        print(f"\n[OK] search_logs('ERROR'): {data['total_found']} results")
 
     def test_get_component_logs(self, real_mcp):
         """Test component-specific logs."""
@@ -420,7 +419,7 @@ class TestLogTools:
         data = json.loads(result)
 
         assert data["success"] is True
-        print(f"\n✅ get_component_logs: {data['total_found']} entries for homeassistant.core")
+        print(f"\n[OK] get_component_logs: {data['total_found']} entries for homeassistant.core")
 
     def test_get_startup_errors(self, real_mcp):
         """Test startup errors analysis."""
@@ -429,7 +428,7 @@ class TestLogTools:
 
         assert data["success"] is True
         print(
-            f"\n✅ get_startup_errors: {data['total_errors']} errors, {data['total_warnings']} warnings at startup"
+            f"\n[OK] get_startup_errors: {data['total_errors']} errors, {data['total_warnings']} warnings at startup"
         )
 
     def test_get_log_timeline(self, real_mcp):
@@ -438,7 +437,7 @@ class TestLogTools:
         data = json.loads(result)
 
         assert data["success"] is True
-        print(f"\n✅ get_log_timeline: {data['total_events_found']} events in 2h")
+        print(f"\n[OK] get_log_timeline: {data['total_events_found']} events in 2h")
 
 
 # ============================================================
@@ -474,7 +473,7 @@ class TestDiagnosticsTools:
         if data.get("api_errors"):
             print(f"  API errors: {len(data['api_errors'])}")
 
-        print(f"\n✅ diagnose_system_health: Score={data['summary']['health_score']}/100")
+        print(f"\n[OK] diagnose_system_health: Score={data['summary']['health_score']}/100")
 
     def test_diagnose_system_health_minimal(self, real_mcp):
         """Test minimal system health diagnosis."""
@@ -488,7 +487,9 @@ class TestDiagnosticsTools:
 
         assert data["success"] is True
         assert "health_score" in data["summary"]
-        print(f"\n✅ diagnose_system_health (minimal): Score={data['summary']['health_score']}/100")
+        print(
+            f"\n[OK] diagnose_system_health (minimal): Score={data['summary']['health_score']}/100"
+        )
 
     def test_get_unavailable_entities_grouped(self, real_mcp):
         """Test grouped unavailable entities."""
@@ -501,7 +502,7 @@ class TestDiagnosticsTools:
 
         assert data["success"] is True
         assert "total_unavailable" in data
-        print(f"\n✅ get_unavailable_entities_grouped: {data['total_unavailable']} unavailable")
+        print(f"\n[OK] get_unavailable_entities_grouped: {data['total_unavailable']} unavailable")
 
     def test_get_integration_health(self, real_mcp):
         """Test integration health check."""
@@ -511,7 +512,7 @@ class TestDiagnosticsTools:
 
         assert data["success"] is True
         assert data["domain"] == "sun"
-        print(f"\n✅ get_integration_health(sun): {data['status']}")
+        print(f"\n[OK] get_integration_health(sun): {data['status']}")
 
     def test_get_area_automation_summary(self, real_mcp):
         """Test area automation summary."""
@@ -526,7 +527,7 @@ class TestDiagnosticsTools:
 
         assert data["success"] is True
         print(
-            f"\n✅ get_area_automation_summary({area_id}): {data['intelligence']['total_entities']} entities"
+            f"\n[OK] get_area_automation_summary({area_id}): {data['intelligence']['total_entities']} entities"
         )
 
     def test_get_energy_dashboard_data(self, real_mcp):
@@ -536,7 +537,7 @@ class TestDiagnosticsTools:
 
         assert data["success"] is True
         assert "tariff_status" in data
-        print(f"\n✅ get_energy_dashboard_data: Tariff={data['tariff_status']['current_tariff']}")
+        print(f"\n[OK] get_energy_dashboard_data: Tariff={data['tariff_status']['current_tariff']}")
 
 
 # ============================================================
@@ -555,7 +556,7 @@ class TestAutomationTools:
         data = json.loads(result)
 
         assert data["success"] is True
-        print(f"\n✅ list_automations: {data['total_count']} automations")
+        print(f"\n[OK] list_automations: {data['total_count']} automations")
 
         # Save for later tests
         if data.get("automations"):
@@ -567,7 +568,7 @@ class TestAutomationTools:
         data = json.loads(result)
 
         assert data["success"] is True
-        print(f"\n✅ search_automations('light'): {data['matched_count']} matches")
+        print(f"\n[OK] search_automations('light'): {data['matched_count']} matches")
 
     def test_search_automations_with_code(self, real_mcp):
         """Test automation search with code output."""
@@ -577,7 +578,7 @@ class TestAutomationTools:
         assert data["success"] is True
         if data.get("results"):
             assert "code" in data["results"][0]
-        print(f"\n✅ search_automations with code: {data['matched_count']} matches")
+        print(f"\n[OK] search_automations with code: {data['matched_count']} matches")
 
     def test_get_automation_code(self, real_mcp):
         """Test getting automation code."""
@@ -608,7 +609,7 @@ class TestAutomationTools:
         # Note: root_id_found being True is acceptable for some automations
         # The main assertion is that we have code
         assert len(code) > 0
-        print(f"\n✅ get_automation_code: Retrieved code for '{data.get('alias')}'")
+        print(f"\n[OK] get_automation_code: Retrieved code for '{data.get('alias')}'")
 
     def test_get_automation_dependencies(self, real_mcp):
         """Test automation dependencies analysis."""
@@ -624,7 +625,7 @@ class TestAutomationTools:
         assert data["success"] is True
         assert "dependencies" in data
         print(
-            f"\n✅ get_automation_dependencies: {len(data['dependencies'].get('entities', []))} entities used"
+            f"\n[OK] get_automation_dependencies: {len(data['dependencies'].get('entities', []))} entities used"
         )
 
     def test_search_automations_by_entity(self, real_mcp, sample_entities):
@@ -638,7 +639,7 @@ class TestAutomationTools:
 
         assert data["success"] is True
         print(
-            f"\n✅ search_automations_by_entity({entity_id}): {data['found_in_count']} automations"
+            f"\n[OK] search_automations_by_entity({entity_id}): {data['found_in_count']} automations"
         )
 
     def test_get_automation_conflicts(self, real_mcp, sample_entities):
@@ -654,7 +655,7 @@ class TestAutomationTools:
         assert data["success"] is True
         assert "conflict_analysis" in data
         print(
-            f"\n✅ get_automation_conflicts: race={data['conflict_analysis']['race_condition_risk']}, loop={data['conflict_analysis']['feedback_loop_risk']}"
+            f"\n[OK] get_automation_conflicts: race={data['conflict_analysis']['race_condition_risk']}, loop={data['conflict_analysis']['feedback_loop_risk']}"
         )
 
     def test_diagnose_automation(self, real_mcp):
@@ -674,7 +675,7 @@ class TestAutomationTools:
         assert "issues" in data
         assert "recommendations" in data
         print(
-            f"\n✅ diagnose_automation: {len(data['issues'])} issues, {len(data['recommendations'])} recommendations"
+            f"\n[OK] diagnose_automation: {len(data['issues'])} issues, {len(data['recommendations'])} recommendations"
         )
 
     def test_get_automation_usage_stats(self, real_mcp):
@@ -692,7 +693,7 @@ class TestAutomationTools:
         assert data["success"] is True
         assert "stats" in data
         print(
-            f"\n✅ get_automation_usage_stats: runs={data['stats'].get('run_count', 0)}, working={data['stats'].get('is_working')}"
+            f"\n[OK] get_automation_usage_stats: runs={data['stats'].get('run_count', 0)}, working={data['stats'].get('is_working')}"
         )
 
 
@@ -712,7 +713,7 @@ class TestBlueprintTools:
         data = json.loads(result)
 
         assert data["success"] is True
-        print(f"\n✅ list_blueprints: {data['total_blueprints']} blueprints")
+        print(f"\n[OK] list_blueprints: {data['total_blueprints']} blueprints")
 
         if data.get("blueprints"):
             TestBlueprintTools.sample_path = data["blueprints"][0].get("path")
@@ -729,7 +730,7 @@ class TestBlueprintTools:
 
         assert data["success"] is True
         assert "code" in data
-        print(f"\n✅ get_blueprint_code: {len(data['code'])} chars")
+        print(f"\n[OK] get_blueprint_code: {len(data['code'])} chars")
 
     def test_get_blueprint_instances(self, real_mcp):
         """Test finding blueprint instateces."""
@@ -742,7 +743,7 @@ class TestBlueprintTools:
         data = json.loads(result)
 
         assert data["success"] is True
-        print(f"\n✅ get_blueprint_instances: {data['usage_count']} instances")
+        print(f"\n[OK] get_blueprint_instances: {data['usage_count']} instances")
 
     def test_get_blueprint_usage_summary(self, real_mcp):
         """Test blueprint usage summary."""
@@ -752,16 +753,16 @@ class TestBlueprintTools:
         # May return success=False if no blueprints or parsing issues
         if data.get("success", True) is False:
             # Check it's a valid error response
-            print(f"\n⚠️ get_blueprint_usage_summary: {data.get('error', 'No error message')}")
+            print(f"\n[WARN] get_blueprint_usage_summary: {data.get('error', 'No error message')}")
         else:
             assert "total_blueprints" in data or "total_instances" in data
             print(
-                f"\n✅ get_blueprint_usage_summary: {data.get('total_blueprints', 0)} blueprints, {data.get('total_instances', 0)} instances"
+                f"\n[OK] get_blueprint_usage_summary: {data.get('total_blueprints', 0)} blueprints, {data.get('total_instances', 0)} instances"
             )
 
 
 # ============================================================
-# 🗄️ STORAGE TOOLS TESTS
+# STORAGE TOOLS TESTS
 # ============================================================
 
 
@@ -776,7 +777,7 @@ class TestStorageTools:
         data = json.loads(result)
 
         assert data["success"] is True
-        print(f"\n✅ search_registries_batch: {data['summary']['matched_entities']} entities")
+        print(f"\n[OK] search_registries_batch: {data['summary']['matched_entities']} entities")
 
     def test_search_registries_by_platform(self, real_mcp):
         """Test registry search by platform."""
@@ -785,7 +786,7 @@ class TestStorageTools:
 
         assert data["success"] is True
         print(
-            f"\n✅ search_registries_batch(platform=sun): {data['summary']['matched_entities']} entities"
+            f"\n[OK] search_registries_batch(platform=sun): {data['summary']['matched_entities']} entities"
         )
 
     def test_get_entity_context(self, real_mcp, sample_entities):
@@ -801,7 +802,7 @@ class TestStorageTools:
         assert "entity_info" in data
         assert "current_state" in data
         print(
-            f"\n✅ get_entity_context: {entity_id} with {len(data.get('related_entities', []))} related"
+            f"\n[OK] get_entity_context: {entity_id} with {len(data.get('related_entities', []))} related"
         )
 
     def test_get_area_overview(self, real_mcp):
@@ -821,16 +822,18 @@ class TestStorageTools:
             if data["success"] is False:
                 # Valid error response
                 assert "error" in data
-                print(f"\n⚠️ get_area_overview: {data['error']}")
+                print(f"\n[WARN] get_area_overview: {data['error']}")
             else:
                 assert data["success"] is True
                 print(
-                    f"\n✅ get_area_overview({area_id}): {data.get('devices_count', 'N/A')} devices"
+                    f"\n[OK] get_area_overview({area_id}): {data.get('devices_count', 'N/A')} devices"
                 )
         else:
             # Normal successful response - check for expected fields
             assert "area_info" in data or "devices_count" in data
-            print(f"\n✅ get_area_overview({area_id}): {data.get('devices_count', 'N/A')} devices")
+            print(
+                f"\n[OK] get_area_overview({area_id}): {data.get('devices_count', 'N/A')} devices"
+            )
 
     def test_get_history_stats(self, real_mcp):
         """Test history statistics."""
@@ -840,9 +843,9 @@ class TestStorageTools:
         # Might fail if entity has no history
         if "error" not in data:
             assert "analysis" in data
-            print(f"\n✅ get_history_stats(sun.sun): type={data['analysis']['type']}")
+            print(f"\n[OK] get_history_stats(sun.sun): type={data['analysis']['type']}")
         else:
-            print(f"\n⚠️ get_history_stats: {data.get('error')}")
+            print(f"\n[WARN] get_history_stats: {data.get('error')}")
 
     def test_get_entity_registry(self, real_mcp):
         """Test entity registry dump."""
@@ -851,7 +854,7 @@ class TestStorageTools:
 
         assert "total_entities" in data
         assert data["total_entities"] > 0
-        print(f"\n✅ get_entity_registry: {data['total_entities']} entities")
+        print(f"\n[OK] get_entity_registry: {data['total_entities']} entities")
 
     def test_get_device_registry(self, real_mcp):
         """Test device registry dump."""
@@ -859,7 +862,7 @@ class TestStorageTools:
         data = json.loads(result)
 
         assert "total_devices" in data
-        print(f"\n✅ get_device_registry: {data['total_devices']} devices")
+        print(f"\n[OK] get_device_registry: {data['total_devices']} devices")
 
     def test_get_area_registry(self, real_mcp):
         """Test area registry dump."""
@@ -867,7 +870,7 @@ class TestStorageTools:
         data = json.loads(result)
 
         assert "total_areas" in data
-        print(f"\n✅ get_area_registry: {data['total_areas']} areas")
+        print(f"\n[OK] get_area_registry: {data['total_areas']} areas")
 
     def test_get_config_entries(self, real_mcp):
         """Test config entries dump."""
@@ -875,7 +878,7 @@ class TestStorageTools:
         data = json.loads(result)
 
         assert "total_entries" in data
-        print(f"\n✅ get_config_entries: {data['total_entries']} entries")
+        print(f"\n[OK] get_config_entries: {data['total_entries']} entries")
 
     def test_get_template_entities(self, real_mcp):
         """Test template entities retrieval."""
@@ -883,7 +886,7 @@ class TestStorageTools:
         data = json.loads(result)
 
         assert "total_templates" in data
-        print(f"\n✅ get_template_entities: {data['total_templates']} templates")
+        print(f"\n[OK] get_template_entities: {data['total_templates']} templates")
 
     def test_get_input_helpers(self, real_mcp):
         """Test input helpers retrieval."""
@@ -891,11 +894,11 @@ class TestStorageTools:
         data = json.loads(result)
 
         total = sum(v.get("count", 0) for v in data.values() if isinstance(v, dict))
-        print(f"\n✅ get_input_helpers: {total} helpers")
+        print(f"\n[OK] get_input_helpers: {total} helpers")
 
 
 # ============================================================
-# 🛠️ DEV TOOLS TESTS
+# DEV TOOLS TESTS
 # ============================================================
 
 
@@ -909,7 +912,7 @@ class TestDevTools:
 
         assert data["success"] is True
         assert "result" in data
-        print(f"\n✅ test_template: {{ now().hour }} = {data['result']}")
+        print(f"\n[OK] test_template: {{ now().hour }} = {data['result']}")
 
     def test_test_template_with_entity(self, real_mcp):
         """Test template with entity reference."""
@@ -917,7 +920,7 @@ class TestDevTools:
         data = json.loads(result)
 
         assert data["success"] is True
-        print(f"\n✅ test_template: sun.sun = {data['result']}")
+        print(f"\n[OK] test_template: sun.sun = {data['result']}")
 
     def test_test_templates_batch(self, real_mcp):
         """Test batch template testing."""
@@ -935,7 +938,7 @@ class TestDevTools:
         assert data["success"] is True
         assert data["successful"] == 3
         print(
-            f"\n✅ test_templates_batch: {data['successful']}/{data['total_templates']} successful"
+            f"\n[OK] test_templates_batch: {data['successful']}/{data['total_templates']} successful"
         )
 
     def test_get_template_performance(self, real_mcp):
@@ -949,7 +952,7 @@ class TestDevTools:
 
         assert data["success"] is True
         assert "benchmark" in data
-        print(f"\n✅ get_template_performance: avg={data['benchmark']['avg_ms']}ms")
+        print(f"\n[OK] get_template_performance: avg={data['benchmark']['avg_ms']}ms")
 
     def test_validate_automation_trigger(self, real_mcp):
         """Test trigger validation."""
@@ -963,7 +966,7 @@ class TestDevTools:
 
         assert data["success"] is True
         assert data["valid"] is True
-        print(f"\n✅ validate_automation_trigger: valid={data['valid']}")
+        print(f"\n[OK] validate_automation_trigger: valid={data['valid']}")
 
     def test_test_condition(self, real_mcp):
         """Test condition testing."""
@@ -971,7 +974,7 @@ class TestDevTools:
         data = json.loads(result)
 
         assert data["success"] is True
-        print(f"\n✅ test_condition: evaluates_to={data['evaluates_to']}")
+        print(f"\n[OK] test_condition: evaluates_to={data['evaluates_to']}")
 
     def test_check_entity_exists(self, real_mcp):
         """Test entity existence check."""
@@ -980,7 +983,7 @@ class TestDevTools:
 
         assert data["success"] is True
         assert data["exists"] is True
-        print(f"\n✅ check_entity_exists(sun.sun): exists={data['exists']}")
+        print(f"\n[OK] check_entity_exists(sun.sun): exists={data['exists']}")
 
     def test_check_entities_batch(self, real_mcp):
         """Test batch entity check."""
@@ -990,7 +993,7 @@ class TestDevTools:
         data = json.loads(result)
 
         assert data["success"] is True
-        print(f"\n✅ check_entities_batch: {data['summary']['exists']}")
+        print(f"\n[OK] check_entities_batch: {data['summary']['exists']}")
 
     def test_test_service_call(self, real_mcp):
         """Test service call validation (dry run)."""
@@ -1001,7 +1004,7 @@ class TestDevTools:
 
         assert data["success"] is True
         assert data["valid"] is True
-        print(f"\n✅ test_service_call: valid={data['valid']}")
+        print(f"\n[OK] test_service_call: valid={data['valid']}")
 
     def test_diagnose_entity(self, real_mcp, sample_entities):
         """Test comprehensive entity diagnosis."""
@@ -1014,7 +1017,7 @@ class TestDevTools:
 
         assert data["success"] is True
         assert "issues" in data
-        print(f"\n✅ diagnose_entity({entity_id}): {len(data['issues'])} issues")
+        print(f"\n[OK] diagnose_entity({entity_id}): {len(data['issues'])} issues")
 
     def test_diagnose_template(self, real_mcp):
         """Test template diagnosis."""
@@ -1036,9 +1039,9 @@ class TestDevTools:
 
         # Might fail if entity not found
         if data.get("success"):
-            print(f"\n✅ diagnose_template: {len(data.get('issues', []))} issues")
+            print(f"\n[OK] diagnose_template: {len(data.get('issues', []))} issues")
         else:
-            print(f"\n⚠️ diagnose_template: {data.get('error')}")
+            print(f"\n[WARN] diagnose_template: {data.get('error')}")
 
     def test_diagnose_energy_setup(self, real_mcp):
         """Test energy setup diagnosis."""
@@ -1048,12 +1051,12 @@ class TestDevTools:
         assert data["success"] is True
         assert "statistics" in data
         print(
-            f"\n✅ diagnose_energy_setup: {data['statistics']['total_energy_sensors']} energy sensors"
+            f"\n[OK] diagnose_energy_setup: {data['statistics']['total_energy_sensors']} energy sensors"
         )
 
 
 # ============================================================
-# ⚙️ CONFIG ENTRIES & DEVICES TESTS
+# CONFIG ENTRIES & DEVICES TESTS
 # ============================================================
 
 
@@ -1071,7 +1074,7 @@ class TestConfigEntriesAndDevices:
 
         assert data["success"] is True
         assert data["total_entries"] > 0
-        print(f"\n✅ search_config_entries: {data['total_entries']} entries")
+        print(f"\n[OK] search_config_entries: {data['total_entries']} entries")
 
         if data.get("entries"):
             TestConfigEntriesAndDevices.entry_id = data["entries"][0]["entry_id"]
@@ -1091,7 +1094,7 @@ class TestConfigEntriesAndDevices:
         assert "entities" in data
         assert "devices" in data
         print(
-            f"\n✅ get_config_entry_details: {len(data['entities'])} entities, {len(data['devices'])} devices"
+            f"\n[OK] get_config_entry_details: {len(data['entities'])} entities, {len(data['devices'])} devices"
         )
 
     def test_search_devices(self, real_mcp):
@@ -1100,7 +1103,7 @@ class TestConfigEntriesAndDevices:
         data = json.loads(result)
 
         assert data["success"] is True
-        print(f"\n✅ search_devices: {data['total_devices']} devices")
+        print(f"\n[OK] search_devices: {data['total_devices']} devices")
 
         if data.get("devices"):
             TestConfigEntriesAndDevices.device_id = data["devices"][0]["device_id"]
@@ -1117,7 +1120,7 @@ class TestConfigEntriesAndDevices:
 
         assert data["success"] is True
         assert "entities" in data
-        print(f"\n✅ get_device_details: {len(data['entities'])} entities")
+        print(f"\n[OK] get_device_details: {len(data['entities'])} entities")
 
 
 # ============================================================
@@ -1139,7 +1142,7 @@ class TestDependenciesAndHistory:
 
         assert data["success"] is True
         print(
-            f"\n✅ get_entity_dependencies: used_in={len(data.get('used_in', {}).get('automations', []))}"
+            f"\n[OK] get_entity_dependencies: used_in={len(data.get('used_in', {}).get('automations', []))}"
         )
 
     def test_get_entity_state_history_summary(self, real_mcp):
@@ -1150,7 +1153,7 @@ class TestDependenciesAndHistory:
         data = json.loads(result)
 
         assert data["success"] is True
-        print(f"\n✅ get_entity_state_history_summary: {data.get('total_changes', 0)} changes")
+        print(f"\n[OK] get_entity_state_history_summary: {data.get('total_changes', 0)} changes")
 
 
 # ============================================================
@@ -1173,7 +1176,7 @@ class TestAreasAndIntegrations:
         data = json.loads(result)
 
         assert data["success"] is True
-        print(f"\n✅ get_area_devices_summary({area_id}): {len(data.get('devices', []))} devices")
+        print(f"\n[OK] get_area_devices_summary({area_id}): {len(data.get('devices', []))} devices")
 
     def test_get_integration_summary(self, real_mcp):
         """Test integration summary."""
@@ -1182,7 +1185,7 @@ class TestAreasAndIntegrations:
 
         assert data["success"] is True
         assert data["domain"] == "sun"
-        print(f"\n✅ get_integration_summary(sun): {len(data.get('config_entries', []))} entries")
+        print(f"\n[OK] get_integration_summary(sun): {len(data.get('config_entries', []))} entries")
 
 
 # ============================================================
@@ -1215,7 +1218,7 @@ class TestPerformanceAndTokenSavings:
         batch_time = time.time() - start
         batch_tokens = len(batch_result)
 
-        print("\n📊 Batch vs Individual comparison:")
+        print("\n[STATS] Batch vs Individual comparison:")
         print(f"  Individual: {individual_time:.3f}s, ~{individual_tokens} chars")
         print(f"  Batch:      {batch_time:.3f}s, ~{batch_tokens} chars")
         if individual_tokens > 0:
@@ -1239,7 +1242,7 @@ class TestPerformanceAndTokenSavings:
         raw_time = time.time() - start
         raw_tokens = len(raw_result)
 
-        print("\n📊 Grouped vs Raw comparison:")
+        print("\n[STATS] Grouped vs Raw comparison:")
         if raw_data.get("success"):
             print(
                 f"  Raw:     {raw_time:.3f}s, ~{raw_tokens} chars, {raw_data.get('count', 0)} items"
@@ -1274,7 +1277,7 @@ class TestPerformanceAndTokenSavings:
 
         present = [s for s in expected_sections + optional_sections if s in data]
 
-        print("\n📊 Diagnostics consolidation:")
+        print("\n[STATS] Diagnostics consolidation:")
         print(f"  Sections present: {len(present)}")
         print(f"  Total response size: {len(json.dumps(data))} chars")
         print(f"  Sections: {present}")
@@ -1369,11 +1372,11 @@ class TestYamlAndConfigFiles:
             # JSON error response
             data = json.loads(result)
             assert "error" in data or "success" in data
-            print(f"\n⚠️ read_config_file: {data.get('error', 'Unknown error')}")
+            print(f"\n[WARN] read_config_file: {data.get('error', 'Unknown error')}")
         else:
             # Raw YAML content - success
             assert len(result) > 0
-            print(f"\n✅ configuration.yaml: {len(result)} chars")
+            print(f"\n[OK] configuration.yaml: {len(result)} chars")
 
     def test_validate_yaml_syntax(self, real_mcp):
         """Test YAML validation."""
@@ -1383,7 +1386,7 @@ class TestYamlAndConfigFiles:
 
         assert data["success"] is True
         assert "syntax_valid" in data
-        print(f"\n✅ validate_yaml_syntax: valid={data['syntax_valid']}")
+        print(f"\n[OK] validate_yaml_syntax: valid={data['syntax_valid']}")
 
     def test_get_config_structure(self, real_mcp):
         """Test getting config structure (replacement for non-existent get_config_includes)."""
@@ -1392,7 +1395,7 @@ class TestYamlAndConfigFiles:
 
         assert data["success"] is True
         assert "structure" in data
-        print(f"\n✅ get_config_structure: {len(data['structure'])} entries")
+        print(f"\n[OK] get_config_structure: {len(data['structure'])} entries")
 
 
 # ============================================================
@@ -1419,7 +1422,7 @@ class TestCacheBehavior:
         assert result1 == result2
 
         # Warm should be faster (or at least not slower)
-        print("\n📊 Cache performance:")
+        print("\n[STATS] Cache performance:")
         print(f"  Cold: {cold_time:.3f}s")
         print(f"  Warm: {warm_time:.3f}s")
         if warm_time > 0:
@@ -1445,7 +1448,7 @@ class TestCacheBehavior:
         real_mcp.call_tool("diagnose_system_health")
         second_time = time.time() - start
 
-        print("\n📊 Diagnostics cache:")
+        print("\n[STATS] Diagnostics cache:")
         print(f"  First:  {first_time:.3f}s")
         print(f"  Second: {second_time:.3f}s")
 
@@ -1465,7 +1468,7 @@ class TestSummary:
         health = json.loads(real_mcp.call_tool("diagnose_system_health"))
 
         print("\n" + "=" * 60)
-        print("📊 HOME ASSISTANT INSTANCE SUMMARY")
+        print("[STATS] HOME ASSISTANT INSTANCE SUMMARY")
         print("=" * 60)
         print(f"Total Entities: {domains.get('total_entities', 'N/A')}")
         print(f"Total Domains: {domains.get('total_domains', 'N/A')}")

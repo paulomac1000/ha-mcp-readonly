@@ -3,6 +3,7 @@ Tests for tools/diagnostics.py
 """
 
 import json
+from datetime import UTC
 from pathlib import Path
 from unittest.mock import patch
 
@@ -890,9 +891,9 @@ class TestPersonLocationAnalysis:
 
     @pytest.mark.asyncio
     async def test_tracker_freshness_fresh(self, mock_mcp, config_path, ha_url, ha_token):
-        from datetime import datetime, timedelta, timezone
+        from datetime import datetime, timedelta
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         fresh_ts = (now - timedelta(minutes=2)).isoformat()
 
         person_data = {
@@ -944,9 +945,9 @@ class TestPersonLocationAnalysis:
 
     @pytest.mark.asyncio
     async def test_tracker_freshness_stale_hours(self, mock_mcp, config_path, ha_url, ha_token):
-        from datetime import datetime, timedelta, timezone
+        from datetime import datetime, timedelta
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         stale_ts = (now - timedelta(hours=2)).isoformat()
 
         person_data = {
@@ -1002,9 +1003,9 @@ class TestPersonLocationAnalysis:
 
     @pytest.mark.asyncio
     async def test_tracker_freshness_aging(self, mock_mcp, config_path, ha_url, ha_token):
-        from datetime import datetime, timedelta, timezone
+        from datetime import datetime, timedelta
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         aging_ts = (now - timedelta(minutes=10)).isoformat()
 
         person_data = {

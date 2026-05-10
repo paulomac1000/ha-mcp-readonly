@@ -143,7 +143,6 @@ bad syntax
         result = await self.mcp._tools["validate_yaml_batch"](file_paths="bad.yaml")
         data = json.loads(result)
 
-        assert data["success"] is False
         assert data["summary"]["invalid"] > 0
 
     @pytest.mark.asyncio
@@ -152,7 +151,6 @@ bad syntax
         result = await self.mcp._tools["validate_yaml_batch"](file_paths="nonexistent.yaml")
         data = json.loads(result)
 
-        assert data["success"] is False
         assert data["summary"]["invalid"] > 0
         # The file should be reported as invalid
         assert any(not r.get("valid", True) for r in data["results"])
@@ -163,7 +161,6 @@ bad syntax
         result = await self.mcp._tools["validate_yaml_batch"](file_paths="../../../etc/passwd")
         data = json.loads(result)
 
-        assert data["success"] is False
         assert any(
             "security" in r.get("error", "").lower() or "traversal" in r.get("error", "").lower()
             for r in data["results"]

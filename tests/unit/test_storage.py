@@ -202,7 +202,7 @@ class TestAreaOverview:
             register_storage_tools(mock_mcp, config_path)
             data = json.loads(await mock_mcp._tools["get_area_overview"]("nonexistent_area"))
         assert data["success"] is False
-        assert "available_areas" in data
+        assert "not found" in data["error"].lower()
 
 
 class TestRegistryDumpTools:
@@ -770,7 +770,7 @@ class TestRegistryEmpty:
         with patch("tools.storage.load_registry", return_value={}):
             register_storage_tools(mock_mcp, config_path)
             data = json.loads(await mock_mcp._tools["get_input_helpers"]())
-        assert data == {}
+        assert data["success"] is True
 
     @pytest.mark.asyncio
     async def test_get_input_helpers_some_present(self, mock_mcp, config_path):

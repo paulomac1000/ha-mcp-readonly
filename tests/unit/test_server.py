@@ -440,7 +440,7 @@ class TestRunRestApi:
             run_rest_api()
             mock_uvicorn.run.assert_called_once()
             call_kwargs = mock_uvicorn.run.call_args[1]
-            assert call_kwargs["host"] == "0.0.0.0"
+            assert call_kwargs["host"] == "127.0.0.1"
             assert call_kwargs["port"] == 9093
         finally:
             sys.modules.pop("uvicorn", None)

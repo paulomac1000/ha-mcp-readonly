@@ -1,8 +1,14 @@
 """Smoke tests: verify tools don't crash on invalid inputs."""
 
+import pytest
 import requests
 
-from .conftest import REST_API_URL
+from .conftest import HA_TOKEN, REST_API_URL, _server_running
+
+pytestmark = pytest.mark.skipif(
+    not _server_running() or not HA_TOKEN or HA_TOKEN in ("", "your_long_lived_access_token_here"),
+    reason="MCP server not running or HA_TOKEN not configured",
+)
 
 
 def _call_tool(tool_name, **params):

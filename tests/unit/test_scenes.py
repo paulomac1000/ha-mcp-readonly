@@ -127,8 +127,8 @@ class TestGetSceneCode:
         with open(scene_file, "wb") as f:
             f.write(b"\xff\xfe\x00\x00")
 
-        result = tools["list_scenes"]()
-        assert result.startswith("Error:")
+        result = json.loads(tools["list_scenes"]())
+        assert result["success"] is False
 
     def test_get_scene_code_corrupt_file(self, tools, config_path):
         """Test exception handler for get_scene_code with corrupt file."""
@@ -136,5 +136,5 @@ class TestGetSceneCode:
         with open(scene_file, "wb") as f:
             f.write(b"\xff\xfe\x00\x00")
 
-        result = tools["get_scene_code"]("anything")
-        assert result.startswith("Error:")
+        result = json.loads(tools["get_scene_code"]("anything"))
+        assert result["success"] is False

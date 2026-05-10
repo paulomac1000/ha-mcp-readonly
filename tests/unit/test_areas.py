@@ -102,7 +102,7 @@ class TestGetAreaDevicesSummary:
 
         assert data["success"] is False
         assert "not found" in data["error"]
-        assert "available_areas" in data
+        assert "Available" in data["error"]
 
     @pytest.mark.asyncio
     async def test_orphan_entities(self):

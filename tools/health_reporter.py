@@ -6,28 +6,24 @@ Designed for low-resource systems - no LLM on device, data prepared for external
 READ-ONLY: Returns JSON reports. Does NOT write to Home Assistant.
 """
 
-import json
 import logging
 import os
 import re
 import traceback
 from collections import Counter
 from datetime import datetime, timedelta
-from typing import Any, Dict, Optional
+from typing import Any
 
-from tools.utils import make_ha_request, tail_log_file
+from tools.utils import _error_response, _success_response, make_ha_request, tail_log_file
 
-logger = logging.getLogger(__name__)
+_logger = logging.getLogger(__name__)
 
 
-def collect_system_metrics(
-    ha_url: str, ha_token: Optional[str], config_path: str
-) -> Dict[str, Any]:
+def collect_system_metrics(ha_url: str, ha_token: str | None, config_path: str) -> dict[str, Any]:
     """Collect basic system metrics from HA API (lightweight)"""
     try:
         metrics = {"timestamp": datetime.now().isoformat()}
 
-        # Try Core API (works on all HA installations)
         try:
             response = make_ha_request(ha_url, ha_token, "/api/config")
 
@@ -36,11 +32,9 @@ def collect_system_metrics(
                 metrics["core_version"] = config.get("version", "unknown")
                 metrics["location_name"] = config.get("location_name", "unknown")
 
-                # Integration count from components list
                 components = config.get("components", [])
                 if isinstance(components, list):
                     metrics["integration_count"] = len(components)
-                    # Sort and take top 30 for LLM context
                     metrics["integrations_sample"] = sorted(components)[:30]
                 else:
                     metrics["integration_count"] = 0
@@ -56,7 +50,6 @@ def collect_system_metrics(
             metrics["integration_count"] = 0
             metrics["config_error"] = str(e)[:100]
 
-        # Supervisor API (optional - only HA OS/Supervised)
         try:
             supervisor = make_ha_request(ha_url, ha_token, "/api/hassio/supervisor/info")
             if supervisor["success"] and isinstance(supervisor["data"], dict):
@@ -80,19 +73,14 @@ def collect_system_metrics(
 
 
 def collect_log_summary_optimized(
-    ha_url: str, ha_token: Optional[str], config_path: str, hours: int = 24
-) -> Dict[str, Any]:
-    """
-    Collect and group log errors - OPTIMIZED version
-    Uses manual parsing but with intelligent grouping (similar to get_log_insights)
-    Returns only TOP grouped errors to save tokens
-    """
+    ha_url: str, ha_token: str | None, config_path: str, hours: int = 24
+) -> dict[str, Any]:
+    """Collect and group log errors - OPTIMIZED version"""
     try:
         log_path = os.path.join(config_path, "home-assistant.log")
         if not os.path.exists(log_path):
             return {"error": "log file not found"}
 
-        # Get uptime to filter out pre-restart errors
         uptime_seconds = 0
         try:
             core = make_ha_request(ha_url, ha_token, "/api/hassio/core/info")
@@ -102,8 +90,7 @@ def collect_log_summary_optimized(
             pass
 
         if uptime_seconds > 0:
-            # Filter from last restart
-            cutoff = datetime.now() - timedelta(seconds=uptime_seconds + 60)  # +60s margin
+            cutoff = datetime.now() - timedelta(seconds=uptime_seconds + 60)
             hours = min(hours, int(uptime_seconds / 3600) + 1)
         else:
             cutoff = datetime.now() - timedelta(hours=hours)
@@ -111,7 +98,6 @@ def collect_log_summary_optimized(
         errors_raw = []
         warnings_raw = []
 
-        # Read last 10000 lines using shared util (efficient tail)
         lines = tail_log_file(log_path, lines=10000)
 
         for line in lines:
@@ -119,7 +105,6 @@ def collect_log_summary_optimized(
             if not line:
                 continue
 
-            # Parse timestamp
             match = re.match(r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})", line)
             if match:
                 try:
@@ -134,10 +119,7 @@ def collect_log_summary_optimized(
             elif "WARNING" in line:
                 warnings_raw.append(line)
 
-        # Group similar errors (remove dynamic parts)
         def normalize_message(msg: str) -> str:
-            """Normalize message for grouping"""
-            # Remove timestamps, ids, numbers
             msg = re.sub(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}", "TIMESTAMP", msg)
             msg = re.sub(r"\d+\.\d+\.\d+\.\d+", "IP", msg)
             msg = re.sub(r"[a-f0-9]{8,}", "ID", msg)
@@ -158,14 +140,11 @@ def collect_log_summary_optimized(
             normalized = normalize_message(warn)
             warning_groups[normalized] += 1
 
-        # Component extraction
         component_errors = Counter()
         for err in errors_raw:
-            # Extract component from [component.name]
             match = re.search(r"\[([^\]]+)\]", err)
             if match:
                 comp = match.group(1)
-                # Simplify: homeassistatet.components.mqtt -> mqtt
                 if "components." in comp:
                     comp = comp.split("components.")[1].split(".")[0]
                 component_errors[comp] += 1
@@ -194,8 +173,8 @@ def collect_log_summary_optimized(
         return {"error": str(e)[:200], "traceback": traceback.format_exc()[:300]}
 
 
-def collect_entity_health(ha_url: str, ha_token: Optional[str]) -> Dict[str, Any]:
-    """Analyze entity states - OPTIMIZED version with grouping"""
+def collect_entity_health(ha_url: str, ha_token: str | None) -> dict[str, Any]:
+    """Analyze entity states - OPTIMIZED version"""
     try:
         response = make_ha_request(ha_url, ha_token, "/api/states")
 
@@ -208,7 +187,6 @@ def collect_entity_health(ha_url: str, ha_token: Optional[str]) -> Dict[str, Any
         unavailable = []
         unknown = []
 
-        # Group by domain
         unavailable_by_domain = Counter()
         unknown_by_domain = Counter()
 
@@ -234,14 +212,14 @@ def collect_entity_health(ha_url: str, ha_token: Optional[str]) -> Dict[str, Any
             "unknown_count": len(unknown),
             "unavailable_by_domain": dict(unavailable_by_domain.most_common(10)),
             "unknown_by_domain": dict(unknown_by_domain.most_common(10)),
-            "unavailable_sample": unavailable[:20],  # Only a sample for LLM
+            "unavailable_sample": unavailable[:20],
             "unknown_sample": unknown[:20],
         }
     except Exception as e:
         return {"error": str(e)[:200]}
 
 
-def collect_automation_health(ha_url: str, ha_token: Optional[str]) -> Dict[str, Any]:
+def collect_automation_health(ha_url: str, ha_token: str | None) -> dict[str, Any]:
     """Check automation states - OPTIMIZED version"""
     try:
         response = make_ha_request(ha_url, ha_token, "/api/states")
@@ -277,27 +255,25 @@ def collect_automation_health(ha_url: str, ha_token: Optional[str]) -> Dict[str,
             "total_automations": total,
             "disabled_count": len(disabled),
             "never_triggered_count": len(never_triggered),
-            "disabled_sample": disabled[:10],  # Only a sample
+            "disabled_sample": disabled[:10],
             "never_triggered_sample": never_triggered[:10],
         }
     except Exception as e:
         return {"error": str(e)[:200]}
 
 
-def calculate_health_score(data: Dict[str, Any]) -> Dict[str, Any]:
+def calculate_health_score(data: dict[str, Any]) -> dict[str, Any]:
     """Calculate overall health score (0-100) based on collected metrics"""
     score = 100
     issues = []
 
-    # Entity health scoring
     entity_health = data.get("entity_health", {})
     unavailable = entity_health.get("unavailable_count", 0)
     unknown = entity_health.get("unknown_count", 0)
     total_entities = entity_health.get("total_entities", 1)
 
-    # Penalty based on percentage of entities
     unavailable_pct = (unavailable / total_entities) * 100 if total_entities > 0 else 0
-    if unavailable_pct > 1:  # More than 1% unavailable
+    if unavailable_pct > 1:
         penalty = min(30, int(unavailable_pct * 2))
         if unavailable_pct >= 80:
             penalty = min(40, penalty + 10)
@@ -305,12 +281,11 @@ def calculate_health_score(data: Dict[str, Any]) -> Dict[str, Any]:
         issues.append(f"{unavailable} unavailable entities ({unavailable_pct:.1f}%, -{penalty})")
 
     unknown_pct = (unknown / total_entities) * 100 if total_entities > 0 else 0
-    if unknown_pct > 1:  # More than 1% unknown
+    if unknown_pct > 1:
         penalty = min(15, int(unknown_pct * 1.5))
         score -= penalty
         issues.append(f"{unknown} unknown entities ({unknown_pct:.1f}%, -{penalty})")
 
-    # Log summary scoring
     log_summary = data.get("log_summary", {})
     error_count = log_summary.get("total_error_count", 0)
     unique_patterns = log_summary.get("unique_error_patterns", 0)
@@ -324,10 +299,8 @@ def calculate_health_score(data: Dict[str, Any]) -> Dict[str, Any]:
         score -= penalty
         issues.append(f"{error_count} errors in logs (-{penalty})")
 
-    # Automation health scoring
     auto_health = data.get("automation_health", {})
     disabled = auto_health.get("disabled_count", 0)
-    auto_health.get("never_triggered_count", 0)
 
     if disabled > 5:
         penalty = min(10, disabled)
@@ -336,32 +309,25 @@ def calculate_health_score(data: Dict[str, Any]) -> Dict[str, Any]:
 
     score = max(0, min(100, score))
 
-    # Status mapping
     if score >= 90:
         status = "excellent"
-        emoji = "🟢"
     elif score >= 75:
         status = "good"
-        emoji = "🟢"
     elif score >= 50:
         status = "fair"
-        emoji = "🟡"
     elif score >= 25:
         status = "poor"
-        emoji = "🟠"
     else:
         status = "critical"
-        emoji = "🔴"
 
     return {
         "score": round(score, 1),
         "status": status,
-        "emoji": emoji,
         "issues": issues,
     }
 
 
-def prepare_report(data: Dict[str, Any]) -> Dict[str, Any]:
+def prepare_report(data: dict[str, Any]) -> dict[str, Any]:
     """Prepare final report with cleaned, aggregated data"""
     health_score = calculate_health_score(data)
 
@@ -378,9 +344,9 @@ def prepare_report(data: Dict[str, Any]) -> Dict[str, Any]:
     return report
 
 
-def run_once(ha_url: str, ha_token: Optional[str], config_path: str) -> Dict[str, Any]:
+def run_once(ha_url: str, ha_token: str | None, config_path: str) -> dict[str, Any]:
     """Main entry point - collect and return health report as JSON (read-only)."""
-    logger.info("Starting health report generation")
+    _logger.info("Starting health report generation")
 
     try:
         data = {
@@ -391,11 +357,11 @@ def run_once(ha_url: str, ha_token: Optional[str], config_path: str) -> Dict[str
         }
 
         report = prepare_report(data)
-        logger.info("Report generated successfully")
+        _logger.info("Report generated successfully")
         return report
 
     except Exception as e:
-        logger.error(f"Fatal error: {e}")
+        _logger.error(f"Fatal error: {e}")
         traceback.print_exc()
 
         return {
@@ -404,7 +370,6 @@ def run_once(ha_url: str, ha_token: Optional[str], config_path: str) -> Dict[str
             "health_score": {
                 "score": 0,
                 "status": "error",
-                "emoji": "🔴",
                 "issues": [f"Health reporter failed: {str(e)[:100]}"],
             },
             "error": str(e)[:200],
@@ -412,11 +377,19 @@ def run_once(ha_url: str, ha_token: Optional[str], config_path: str) -> Dict[str
         }
 
 
-def register_health_reporter_tools(mcp, ha_url: str, ha_token: Optional[str], config_path: str):
+def _do_trigger_health_report(ha_url: str, ha_token: str | None, config_path: str) -> str:
+    """Generate system health report."""
+    report = run_once(ha_url, ha_token, config_path)
+    return _success_response(report)
+
+
+def register_health_reporter_tools(mcp, ha_url: str, ha_token: str | None, config_path: str):
     """Register health reporter as MCP tool for manual triggering"""
 
     @mcp.tool()
     def trigger_health_report() -> str:
-        """Generate system health report (read-only). Returns JSON with metrics, logs, entity and automation health."""
-        report = run_once(ha_url, ha_token, config_path)
-        return json.dumps({"success": True, **report}, indent=2, ensure_ascii=False)
+        """[READ] Generate system health report (read-only). Returns JSON with metrics, logs, entity and automation health."""
+        try:
+            return _do_trigger_health_report(ha_url, ha_token, config_path)
+        except Exception as e:
+            return _error_response(str(e))

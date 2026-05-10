@@ -133,7 +133,7 @@ class ReportGenerator:
             deductions.append(f"-{deduction} (conflicts)")
 
         health_score = max(0, health_score)
-        health_emoji = "🟢" if health_score >= 80 else "🟡" if health_score >= 60 else "🔴"
+        health_emoji = "" if health_score >= 80 else "" if health_score >= 60 else ""
 
         f.write(f"### Health Score: {health_emoji} {health_score}%\n")
         if deductions:
@@ -143,7 +143,7 @@ class ReportGenerator:
         # Critical issues
         critical = []
         if unavailable > 10:
-            critical.append(f"⚠️ **{unavailable} unavailable entities**")
+            critical.append(f" **{unavailable} unavailable entities**")
         if len(self.automation.ghost_entities) > 5:
             critical.append(
                 f"👻 **{len(self.automation.ghost_entities)} ghost entities** in automations"
@@ -154,23 +154,23 @@ class ReportGenerator:
             )
         if len(self.dashboard.missing_entities) > 0:
             critical.append(
-                f"📊 **{len(self.dashboard.missing_entities)} non-existent entities** in dashboards"
+                f" **{len(self.dashboard.missing_entities)} non-existent entities** in dashboards"
             )
 
         disabled_autos = sum(1 for a in self.automation.automation_analysis if a.get("is_disabled"))
         if disabled_autos > 5:
-            critical.append(f"🔴 **{disabled_autos} disabled automations**")
+            critical.append(f" **{disabled_autos} disabled automations**")
 
         if len(self.logs.startup_errors) > 5:
-            critical.append(f"🚀 **{len(self.logs.startup_errors)} errors during startup**")
+            critical.append(f" **{len(self.logs.startup_errors)} errors during startup**")
 
         if critical:
-            f.write("### ⚠️ Critical Issues\n")
+            f.write("### Critical Issues\n")
             for issue in critical:
                 f.write(f"- {issue}\n")
             f.write("\n")
         else:
-            f.write("### ✅ No Critical Issues\n\n")
+            f.write("### No Critical Issues\n\n")
 
         f.write("---\n\n")
 
@@ -214,10 +214,10 @@ class ReportGenerator:
                 f.write(f"| `{eid}` | {sources_str} | {', '.join(source_types)} |\n")
             f.write("\n")
         else:
-            f.write("✅ *No ghost entities.*\n\n")
+            f.write(" *No ghost entities.*\n\n")
 
         # Unavailable by integration
-        f.write("### ⚠️ Unavailable Entities by Integration\n\n")
+        f.write("### Unavailable Entities by Integration\n\n")
 
         unavailable_by_integration = defaultdict(
             lambda: {"count": 0, "entities": [], "devices": set()}
@@ -259,12 +259,12 @@ class ReportGenerator:
                 f.write(f"| {integration} | {data['count']} | {entities_str} | {devices_str} |\n")
             f.write("\n")
         else:
-            f.write("✅ *All entities available.*\n\n")
+            f.write(" *All entities available.*\n\n")
 
         # Disabled automations
         disabled = [a for a in self.automation.automation_analysis if a.get("is_disabled")]
         if disabled:
-            f.write("### 🔴 Disabled Automations\n\n")
+            f.write("### Disabled Automations\n\n")
             f.write("| Alias | ID | Trigger Platforms | Last Triggered |\n")
             f.write("|-------|-----|------------------|----------------|\n")
             for auto in disabled[:20]:
@@ -279,7 +279,7 @@ class ReportGenerator:
 
     def _write_integration_status(self, f):
         """Integration status with config entry health."""
-        f.write("## 🔌 2. Integration Status\n\n")
+        f.write("## 2. Integration Status\n\n")
 
         # Config entry health
         f.write("### Config Entry Health\n\n")
@@ -313,7 +313,7 @@ class ReportGenerator:
             else:
                 health_pct = 100
 
-            health_emoji = "🟢" if health_pct >= 95 else "🟡" if health_pct >= 80 else "🔴"
+            health_emoji = "" if health_pct >= 95 else "" if health_pct >= 80 else ""
 
             disabled_count = sum(1 for e in entries if e["disabled_by"])
             status = "OK" if disabled_count == 0 else f"{disabled_count} disabled"
@@ -358,7 +358,7 @@ class ReportGenerator:
             unknown = stats["unknown"]
 
             health_pct = (ok / total) * 100 if total > 0 else 100
-            health = "🟢" if health_pct >= 95 else "🟡" if health_pct >= 80 else "🔴"
+            health = "" if health_pct >= 95 else "" if health_pct >= 80 else ""
 
             f.write(
                 f"| {domain} | {total} | {ok} | {unavail} | {unknown} | {health} {health_pct:.0f}% |\n"
@@ -417,7 +417,7 @@ class ReportGenerator:
             total = data["stats"]["total"]
             unavail = data["stats"]["unavailable"]
             health_pct = ((total - unavail) / total * 100) if total > 0 else 100
-            health = "🟢" if health_pct >= 95 else "🟡" if health_pct >= 80 else "🔴"
+            health = "" if health_pct >= 95 else "" if health_pct >= 80 else ""
 
             f.write(
                 f"| {area_name} | {devices} | {total} | {unavail} | {health} {health_pct:.0f}% |\n"
@@ -441,15 +441,15 @@ class ReportGenerator:
 
                 for device_name, entities in sorted(devices.items()):
                     unavail_count = sum(1 for e in entities if e["state"] == "unavailable")
-                    status = f" ⚠️ {unavail_count} unavailable" if unavail_count > 0 else ""
+                    status = f" {unavail_count} unavailable" if unavail_count > 0 else ""
 
                     f.write(f"**{device_name}** ({len(entities)} entities){status}\n")
 
                     for e in entities[:5]:
                         state_emoji = (
-                            "🔴"
+                            ""
                             if e["state"] == "unavailable"
-                            else "🟡"
+                            else ""
                             if e["state"] == "unknown"
                             else ""
                         )
@@ -500,7 +500,7 @@ class ReportGenerator:
         for auto in self.automation.automation_analysis[:50]:
             triggers = ", ".join(auto.get("trigger_platforms", [])[:2])
             controls = len(auto.get("controlled_entities", []))
-            status = "🔴 OFF" if auto.get("is_disabled") else "🟢 ON"
+            status = " OFF" if auto.get("is_disabled") else " ON"
             alias = auto["alias"][:35] + "..." if len(auto["alias"]) > 35 else auto["alias"]
             last = auto.get("last_triggered", "")
             if last:
@@ -569,7 +569,7 @@ class ReportGenerator:
 
     def _write_entity_dependency_graph(self, f):
         """Entity dependency graph."""
-        f.write("## 🕸️ 5. Entity Dependency Graph\n\n")
+        f.write("## 🕸 5. Entity Dependency Graph\n\n")
         f.write("*Check this section BEFORE modifying an entity, to see what you might break.*\n\n")
 
         # Merge dependencies
@@ -615,7 +615,7 @@ class ReportGenerator:
             if total_usage >= 3:
                 critical[eid] = deps
 
-        f.write(f"### ⚠️ Critical Entities ({len(critical)} entities used in 3+ places)\n\n")
+        f.write(f"### Critical Entities ({len(critical)} entities used in 3+ places)\n\n")
 
         if critical:
             f.write("| Entity | Triggers | Used In | Controlled By | Dashboards | Total |\n")
@@ -642,7 +642,7 @@ class ReportGenerator:
             f.write("*No entities used in multiple places.*\n\n")
 
         # Full map
-        f.write(f"### 📊 Full Dependency Map ({len(all_dependencies)} entities)\n\n")
+        f.write(f"### Full Dependency Map ({len(all_dependencies)} entities)\n\n")
         f.write("<details>\n<summary>Click to expand</summary>\n\n")
         f.write("```json\n")
         f.write(json.dumps(all_dependencies, indent=2, ensure_ascii=False))
@@ -654,7 +654,7 @@ class ReportGenerator:
         f.write("## ⚡ 6. Automation Conflict Analysis\n\n")
 
         if not self.automation.conflicting_entities:
-            f.write("✅ *No automation conflicts detected.*\n\n")
+            f.write(" *No automation conflicts detected.*\n\n")
             return
 
         f.write(
@@ -676,7 +676,7 @@ class ReportGenerator:
             scenes = len(conflict["controlling_scenes"])
             total = conflict["total_controllers"]
 
-            risk = "🔴 HIGH" if conflict["race_condition_risk"] else "🟡 MEDIUM"
+            risk = " HIGH" if conflict["race_condition_risk"] else " MEDIUM"
 
             f.write(f"| `{eid}` | {autos} | {scripts} | {scenes} | {total} | {risk} |\n")
 
@@ -712,7 +712,7 @@ class ReportGenerator:
 
         # Validation errors
         if self.templates.validation_errors:
-            f.write("### ⚠️ Template Validation Errors\n\n")
+            f.write("### Template Validation Errors\n\n")
             for err in self.templates.validation_errors:
                 f.write(f"- **{err['name']}**: {err['error']}\n")
             f.write("\n")
@@ -789,7 +789,7 @@ class ReportGenerator:
                     if source != "unknown":
                         extras.append(f"source: {source}")
                     extra_str = f" ({', '.join(extras)})" if extras else ""
-                    f.write(f"  - `{tracker['entity_id']}`: {state}{extra_str}\n")
+                    f.write(f" - `{tracker['entity_id']}`: {state}{extra_str}\n")
             f.write("\n")
 
     def _write_zones_and_geofencing(self, f):
@@ -1003,7 +1003,7 @@ class ReportGenerator:
 
     def _write_dashboard_usage(self, f):
         """Entity usage in dashboards with source file list."""
-        f.write("## 📊 8. Dashboard Entity Usage\n\n")
+        f.write("## 8. Dashboard Entity Usage\n\n")
 
         if not self.dashboard.dashboards_found:
             f.write("*No dashboards or failed to parse them.*\n\n")
@@ -1021,7 +1021,7 @@ class ReportGenerator:
 
         # Missing entities in dashboards
         if self.dashboard.missing_entities:
-            f.write("### ⚠️ Missing Entities in Dashboards\n\n")
+            f.write("### Missing Entities in Dashboards\n\n")
             f.write("*These entities are used in dashboards, but do not exist in the system.*\n\n")
 
             f.write("| Entity ID | Used In |\n")
@@ -1097,7 +1097,7 @@ class ReportGenerator:
 
         # Top error patterns
         if self.logs.error_patterns:
-            f.write("### 🔴 Top Error Patterns\n\n")
+            f.write("### Top Error Patterns\n\n")
 
             sorted_patterns = sorted(
                 self.logs.error_patterns.items(),
@@ -1144,7 +1144,7 @@ class ReportGenerator:
 
         # Startup errors
         if self.logs.startup_errors:
-            f.write("### 🚀 Startup Errors\n\n")
+            f.write("### Startup Errors\n\n")
             f.write("*Errors occurring during Home Assistant startup.*\n\n")
 
             f.write("<details>\n<summary>Show startup errors</summary>\n\n")
@@ -1176,19 +1176,19 @@ class ReportGenerator:
             f.write("### 💡 Recommendations\n\n")
 
             for rec in recommendations:
-                priority_emoji = "🔴" if rec["priority"] == "high" else "🟡"
+                priority_emoji = "" if rec["priority"] == "high" else ""
                 f.write(f"- {priority_emoji} **{rec['issue']}**: {rec['message']}\n")
 
                 # Add specific fix suggestions based on category
                 if rec.get("category") == "timeout":
-                    f.write("  - *Check: CPU load, network connections, integration timeouts*\n")
+                    f.write(" - *Check: CPU load, network connections, integration timeouts*\n")
                 elif rec.get("category") == "connection":
-                    f.write("  - *Check: device availability, network configuration, firewall*\n")
+                    f.write(" - *Check: device availability, network configuration, firewall*\n")
                 elif rec.get("category") == "template":
-                    f.write("  - *Check: Jinja2 syntax, entity availability in templates*\n")
+                    f.write(" - *Check: Jinja2 syntax, entity availability in templates*\n")
                 elif rec.get("integration"):
                     f.write(
-                        f"  - *Consider: restart integration, check logs for `{rec['integration']}`*\n"
+                        f" - *Consider: restart integration, check logs for `{rec['integration']}`*\n"
                     )
 
             f.write("\n")
@@ -1247,7 +1247,7 @@ class ReportGenerator:
 
     def _write_quick_reference(self, f):
         """Quick reference for AI."""
-        f.write("## 🚀 11. Quick Reference for AI\n\n")
+        f.write("## 11. Quick Reference for AI\n\n")
 
         f.write("### How to Use This Context\n\n")
         f.write("```\n")
@@ -1313,22 +1313,22 @@ class ReportGenerator:
             f.write("**Persons:** ")
             f.write(f"{len(self.persons.persons)} total ")
             f.write(f"({home_count} home, {away_count} away)")
-            f.write("  \n")
+            f.write(" \n")
 
         # Zones
         if self.zones:
-            f.write(f"**Zones:** {len(self.zones.zones)} defined  \n")
+            f.write(f"**Zones:** {len(self.zones.zones)} defined \n")
 
         # Services
         if self.services:
             f.write(
-                f"**Services:** {self.services.total_services} across {len(self.services.services)} domains  \n"
+                f"**Services:** {self.services.total_services} across {len(self.services.services)} domains \n"
             )
 
         # HACS
         if self.hacs:
-            f.write(f"**HACS Repos:** {len(self.hacs.hacs_repos)} installed  \n")
-            f.write(f"**Custom Components:** {len(self.hacs.custom_components)}  \n")
+            f.write(f"**HACS Repos:** {len(self.hacs.hacs_repos)} installed \n")
+            f.write(f"**Custom Components:** {len(self.hacs.custom_components)} \n")
 
         # Areas summary
         f.write("### Available Areas\n\n")

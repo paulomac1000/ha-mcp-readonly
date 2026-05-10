@@ -124,7 +124,7 @@ curl -X POST http://localhost:9093/api/context/generate \
   -d '{"mode": "hybrid"}'
 ```
 
-## Available Tools (117 total)
+## Available Tools (118 total)
 
 Tools are organized by category (51 shown in table below). All are **read-only** — no state changes, no service calls, no modifications.
 
@@ -166,7 +166,7 @@ Add the following to your Claude Desktop config:
 }
 ```
 
-After restarting Claude Desktop, the 117 Home Assistant tools will be available.
+After restarting Claude Desktop, the 118 Home Assistant tools will be available.
 
 ### LibreChat
 

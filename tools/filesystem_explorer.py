@@ -4,11 +4,16 @@ Security patterns are inspired by mcp-filesystem-python without vendor imports.
 All operations are read-only to avoid modifying the host system.
 """
 
-import json
+import logging
 import os
 import re
 from pathlib import Path
-from typing import List, Union
+
+from tools.utils import _error_response, _success_response
+
+_logger = logging.getLogger(__name__)
+
+TOOLS_VERSION = "1.0.0"
 
 BINARY_EXTENSIONS: set[str] = {
     ".db",
@@ -36,7 +41,7 @@ class SecurityContext:
 
     def __init__(
         self,
-        allowed_directories: List[Path],
+        allowed_directories: list[Path],
         max_file_size: int = 10 * 1024 * 1024,
         max_depth: int = 10,
     ):
@@ -50,7 +55,7 @@ class SecurityContext:
         self.max_file_size = max_file_size
         self.max_depth = max_depth
 
-    def validate_path(self, path: Union[str, Path]) -> Path:
+    def validate_path(self, path: str | Path) -> Path:
         """
         Validate the path against the allowlist and guard against traversal.
 
@@ -141,6 +146,202 @@ SECURITY_CONTEXT = SecurityContext(
 
 
 # =============================================================================
+# INTERNAL TOOL LOGIC (_do_ functions)
+# =============================================================================
+
+
+def _do_list_directory(path: str, max_entries: int) -> str:
+    """List directory contents with allowlist validation."""
+    try:
+        target = SECURITY_CONTEXT.validate_path(path)
+
+        if not target.is_dir():
+            return _error_response(f"Not a directory: {target}")
+
+        entries = []
+        for entry in target.iterdir():
+            if len(entries) >= max_entries:
+                break
+
+            try:
+                stat = entry.stat()
+                entries.append(
+                    {
+                        "name": entry.name,
+                        "type": "directory" if entry.is_dir() else "file",
+                        "size_bytes": stat.st_size if entry.is_file() else None,
+                        "modified_timestamp": stat.st_mtime,
+                        "is_binary": SECURITY_CONTEXT.is_binary_file(entry)
+                        if entry.is_file()
+                        else False,
+                    }
+                )
+            except PermissionError:
+                continue
+
+        return _success_response(
+            {
+                "path": str(target),
+                "entries_count": len(entries),
+                "total_entries": len(list(target.iterdir())),
+                "entries": entries,
+                "truncated": len(entries) < len(list(target.iterdir())),
+                "allowed_directories": [str(d) for d in SECURITY_CONTEXT.allowed_directories],
+            }
+        )
+
+    except PermissionError as e:
+        return _error_response(f"Access denied: {e}")
+    except Exception as e:
+        return _error_response(f"Operation failed on {path}: {e}")
+
+
+def _do_read_file(file_path: str, max_lines: int, offset: int) -> str:
+    """Read a text file with allowlist validation and size limits."""
+    try:
+        target = SECURITY_CONTEXT.validate_path(file_path)
+
+        if not target.is_file():
+            return _error_response(f"Not a file: {target}")
+
+        if SECURITY_CONTEXT.is_binary_file(target):
+            return _error_response(
+                f"Binary file type not allowed: {target}. Use list_directory to explore this location"
+            )
+
+        max_bytes = 5 * 1024 * 1024
+        try:
+            if target.stat().st_size > max_bytes:
+                return _error_response(
+                    f"File too large for safe reading ({target.stat().st_size} bytes > {max_bytes} max): {target}"
+                )
+        except FileNotFoundError:
+            return _error_response(f"File not found: {target}")
+
+        if offset < 1:
+            offset = 1
+        lines = []
+        try:
+            with open(target, encoding="utf-8", errors="replace") as f:
+                for i, line in enumerate(f):
+                    if i < offset - 1:
+                        continue
+                    if i >= offset - 1 + max_lines:
+                        break
+                    lines.append(line.rstrip("\n"))
+        except UnicodeDecodeError:
+            try:
+                with open(target, encoding="latin-1", errors="replace") as f:
+                    for i, line in enumerate(f):
+                        if i < offset - 1:
+                            continue
+                        if i >= offset - 1 + max_lines:
+                            break
+                        lines.append(line.rstrip("\n"))
+            except Exception as e:
+                return _error_response(f"File encoding not supported: {e}")
+        except Exception as e:
+            return _error_response(f"Read failed: {e}")
+
+        return _success_response(
+            {
+                "path": str(target),
+                "offset": offset,
+                "lines_count": len(lines),
+                "total_lines_estimate": "unknown",
+                "content": "\n".join(lines),
+                "truncated": len(lines) >= max_lines,
+                "encoding_used": "utf-8"
+                if all(ord(c) < 128 for c in "".join(lines[:10]))
+                else "detected",
+            }
+        )
+
+    except PermissionError as e:
+        return _error_response(f"Access denied: {e}")
+    except Exception as e:
+        return _error_response(f"Operation failed: {e}")
+
+
+def _do_search_files(pattern: str, search_path: str, max_results: int) -> str:
+    """Search for files containing a text pattern (safe grep)."""
+    if not re.match(r"^[a-zA-Z0-9\s\-_\.\/\\:\[\]\(\)\{\}\+\*\?\^\$\|@#%&=!<>~\']+$", pattern):
+        return _error_response(
+            "Invalid search pattern: pattern contains blocked special characters"
+        )
+
+    try:
+        target = SECURITY_CONTEXT.validate_path(search_path)
+
+        if not target.is_dir():
+            return _error_response(f"Search path must be a directory: {target}")
+
+        results = []
+        files_searched = 0
+
+        for root, dirs, files in os.walk(target):
+            if root.count(os.sep) - str(target).count(os.sep) > SECURITY_CONTEXT.max_depth:
+                dirs[:] = []
+                continue
+
+            for filename in files:
+                files_searched += 1
+                if len(results) >= max_results:
+                    break
+
+                filepath = Path(root) / filename
+
+                if SECURITY_CONTEXT.is_binary_file(filepath):
+                    continue
+
+                try:
+                    if filepath.stat().st_size > 2 * 1024 * 1024:
+                        continue
+                except FileNotFoundError:
+                    continue
+
+                try:
+                    with open(filepath, encoding="utf-8", errors="ignore") as f:
+                        content = f.read()
+                        if re.search(re.escape(pattern), content, re.IGNORECASE):
+                            matches = []
+                            for match in re.finditer(re.escape(pattern), content, re.IGNORECASE):
+                                start = max(0, match.start() - 30)
+                                end = min(len(content), match.end() + 30)
+                                context = content[start:end].replace("\n", " ").strip()
+                                matches.append({"position": match.start(), "context": context})
+                                if len(matches) >= 3:
+                                    break
+
+                            results.append(
+                                {
+                                    "path": str(filepath.relative_to(target)),
+                                    "absolute_path": str(filepath),
+                                    "matches_count": len(matches),
+                                    "sample_matches": matches[:3],
+                                }
+                            )
+                except Exception:
+                    continue
+
+        return _success_response(
+            {
+                "pattern": pattern,
+                "search_path": str(target),
+                "files_searched": files_searched,
+                "results_count": len(results),
+                "results": results[:max_results],
+                "truncated": len(results) > max_results,
+            }
+        )
+
+    except PermissionError as e:
+        return _error_response(f"Access denied: {e}")
+    except Exception as e:
+        return _error_response(f"Search failed for '{pattern}' in '{search_path}': {e}")
+
+
+# =============================================================================
 # FILESYSTEM EXPLORER (MCP tools)
 # =============================================================================
 
@@ -150,8 +351,7 @@ def register_filesystem_tools(mcp) -> None:
 
     @mcp.tool()
     def list_directory(path: str = "/config", max_entries: int = 100) -> str:
-        """
-        List directory contents with allowlist validation.
+        """[READ] List directory contents with allowlist validation.
 
         Args:
             path: Directory path (must be within the allowlist).
@@ -160,75 +360,11 @@ def register_filesystem_tools(mcp) -> None:
         Returns:
             JSON string containing the entries or an error message.
         """
-        try:
-            target = SECURITY_CONTEXT.validate_path(path)
-
-            if not target.is_dir():
-                return json.dumps(
-                    {
-                        "error": "Not a directory",
-                        "path": str(target),
-                        "allowed_directories": [
-                            str(d) for d in SECURITY_CONTEXT.allowed_directories
-                        ],
-                    },
-                    indent=2,
-                )
-
-            entries = []
-            for entry in target.iterdir():
-                if len(entries) >= max_entries:
-                    break
-
-                try:
-                    stat = entry.stat()
-                    entries.append(
-                        {
-                            "name": entry.name,
-                            "type": "directory" if entry.is_dir() else "file",
-                            "size_bytes": stat.st_size if entry.is_file() else None,
-                            "modified_timestamp": stat.st_mtime,
-                            "is_binary": SECURITY_CONTEXT.is_binary_file(entry)
-                            if entry.is_file()
-                            else False,
-                        }
-                    )
-                except PermissionError:
-                    continue
-
-            return json.dumps(
-                {
-                    "success": True,
-                    "path": str(target),
-                    "entries_count": len(entries),
-                    "total_entries": len(list(target.iterdir())),
-                    "entries": entries,
-                    "truncated": len(entries) < len(list(target.iterdir())),
-                    "allowed_directories": [str(d) for d in SECURITY_CONTEXT.allowed_directories],
-                },
-                indent=2,
-                default=str,
-            )
-
-        except PermissionError as e:
-            return json.dumps(
-                {
-                    "error": "Access denied",
-                    "message": str(e),
-                    "allowed_directories": [str(d) for d in SECURITY_CONTEXT.allowed_directories],
-                },
-                indent=2,
-            )
-        except Exception as e:
-            return json.dumps(
-                {"error": "Operation failed", "message": str(e), "path": str(path)},
-                indent=2,
-            )
+        return _do_list_directory(path, max_entries)
 
     @mcp.tool()
     def read_file(file_path: str, max_lines: int = 200, offset: int = 1) -> str:
-        """
-        Read a text file with allowlist validation and size limits.
+        """[READ] Read a text file with allowlist validation and size limits.
 
         Args:
             file_path: Path to the file (must be within the allowlist).
@@ -238,226 +374,18 @@ def register_filesystem_tools(mcp) -> None:
         Returns:
             JSON string with file content or error details.
         """
-        try:
-            target = SECURITY_CONTEXT.validate_path(file_path)
-
-            if not target.is_file():
-                return json.dumps({"error": "Not a file", "path": str(target)}, indent=2)
-
-            # Block binary files
-            if SECURITY_CONTEXT.is_binary_file(target):
-                return json.dumps(
-                    {
-                        "error": "Binary file type not allowed",
-                        "path": str(target),
-                        "suggestion": "Use list_directory to explore this location",
-                    },
-                    indent=2,
-                )
-
-            # Limit read size for safety
-            max_bytes = 5 * 1024 * 1024  # 5MB hard limit
-            try:
-                if target.stat().st_size > max_bytes:
-                    return json.dumps(
-                        {
-                            "error": "File too large for safe reading",
-                            "size_bytes": target.stat().st_size,
-                            "max_allowed_bytes": max_bytes,
-                            "path": str(target),
-                        },
-                        indent=2,
-                    )
-            except FileNotFoundError:
-                return json.dumps({"error": "File not found", "path": str(target)}, indent=2)
-
-            # Safe read with line limits and offset support
-            if offset < 1:
-                offset = 1
-            lines = []
-            try:
-                with open(target, "r", encoding="utf-8", errors="replace") as f:
-                    for i, line in enumerate(f):
-                        if i < offset - 1:
-                            continue
-                        if i >= offset - 1 + max_lines:
-                            break
-                        lines.append(line.rstrip("\n"))
-            except UnicodeDecodeError:
-                # Fallback to latin-1 if UTF-8 fails
-                try:
-                    with open(target, "r", encoding="latin-1", errors="replace") as f:
-                        for i, line in enumerate(f):
-                            if i < offset - 1:
-                                continue
-                            if i >= offset - 1 + max_lines:
-                                break
-                            lines.append(line.rstrip("\n"))
-                except Exception as e:
-                    return json.dumps(
-                        {
-                            "error": "File encoding not supported",
-                            "message": str(e),
-                            "path": str(target),
-                        },
-                        indent=2,
-                    )
-            except Exception as e:
-                return json.dumps(
-                    {"error": "Read failed", "message": str(e), "path": str(target)},
-                    indent=2,
-                )
-
-            return json.dumps(
-                {
-                    "success": True,
-                    "path": str(target),
-                    "offset": offset,
-                    "lines_count": len(lines),
-                    "total_lines_estimate": "unknown",  # Do not count all lines to avoid overhead
-                    "content": "\n".join(lines),
-                    "truncated": len(lines) >= max_lines,
-                    "encoding_used": "utf-8"
-                    if all(ord(c) < 128 for c in "".join(lines[:10]))
-                    else "detected",
-                },
-                indent=2,
-                default=str,
-            )
-
-        except PermissionError as e:
-            return json.dumps(
-                {
-                    "error": "Access denied",
-                    "message": str(e),
-                    "allowed_directories": [str(d) for d in SECURITY_CONTEXT.allowed_directories],
-                },
-                indent=2,
-            )
-        except Exception as e:
-            return json.dumps(
-                {"error": "Operation failed", "message": str(e), "path": str(file_path)},
-                indent=2,
-            )
+        return _do_read_file(file_path, max_lines, offset)
 
     @mcp.tool()
-    def search_files(pattern: str, path: str = "/config", max_results: int = 50) -> str:
-        """
-        Search for files containing a text pattern (safe grep).
+    def search_files(pattern: str, search_path: str = "/config", max_results: int = 50) -> str:
+        """[READ] Search for files containing a text pattern (safe grep).
 
         Args:
             pattern: Pattern to search for (only safe characters allowed).
-            path: Directory to search (default /config).
+            search_path: Directory to search (default /config).
             max_results: Maximum number of results (default 50).
 
         Returns:
             JSON string with search results or error information.
         """
-        # Pattern validation prevents regex injection
-        if not re.match(r"^[a-zA-Z0-9\s\-_\.\/\\:\[\]\(\)\{\}\+\*\?\^\$\|@#%&=!<>~\']+$", pattern):
-            return json.dumps(
-                {
-                    "error": "Invalid search pattern",
-                    "message": "Pattern contains blocked special characters",
-                    "allowed_chars": "alphanumeric + basic punctuation",
-                },
-                indent=2,
-            )
-
-        try:
-            target = SECURITY_CONTEXT.validate_path(path)
-
-            if not target.is_dir():
-                return json.dumps(
-                    {"error": "Search path must be a directory", "path": str(target)},
-                    indent=2,
-                )
-
-            results = []
-            files_searched = 0
-
-            # Walk the directory tree with depth limit
-            for root, dirs, files in os.walk(target):
-                if root.count(os.sep) - str(target).count(os.sep) > SECURITY_CONTEXT.max_depth:
-                    dirs[:] = []
-                    continue
-
-                for filename in files:
-                    files_searched += 1
-                    if len(results) >= max_results:
-                        break
-
-                    filepath = Path(root) / filename
-
-                    # Skip binary files
-                    if SECURITY_CONTEXT.is_binary_file(filepath):
-                        continue
-
-                    # Skip overly large files
-                    try:
-                        if filepath.stat().st_size > 2 * 1024 * 1024:  # 2MB limit for searching
-                            continue
-                    except FileNotFoundError:
-                        continue
-
-                    # Safe read and search
-                    try:
-                        with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
-                            content = f.read()
-                            if re.search(re.escape(pattern), content, re.IGNORECASE):
-                                matches = []
-                                for match in re.finditer(
-                                    re.escape(pattern), content, re.IGNORECASE
-                                ):
-                                    start = max(0, match.start() - 30)
-                                    end = min(len(content), match.end() + 30)
-                                    context = content[start:end].replace("\n", " ").strip()
-                                    matches.append({"position": match.start(), "context": context})
-                                    if len(matches) >= 3:
-                                        break
-
-                                results.append(
-                                    {
-                                        "path": str(filepath.relative_to(target)),
-                                        "absolute_path": str(filepath),
-                                        "matches_count": len(matches),
-                                        "sample_matches": matches[:3],
-                                    }
-                                )
-                    except Exception:
-                        # Skip files that cannot be read
-                        continue
-
-            return json.dumps(
-                {
-                    "success": True,
-                    "pattern": pattern,
-                    "search_path": str(target),
-                    "files_searched": files_searched,
-                    "results_count": len(results),
-                    "results": results[:max_results],
-                    "truncated": len(results) > max_results,
-                },
-                indent=2,
-                default=str,
-            )
-
-        except PermissionError as e:
-            return json.dumps(
-                {
-                    "error": "Access denied",
-                    "message": str(e),
-                    "allowed_directories": [str(d) for d in SECURITY_CONTEXT.allowed_directories],
-                },
-                indent=2,
-            )
-        except Exception as e:
-            return json.dumps(
-                {
-                    "error": "Search failed",
-                    "message": str(e),
-                    "pattern": pattern,
-                    "path": path,
-                },
-                indent=2,
-            )
+        return _do_search_files(pattern, search_path, max_results)

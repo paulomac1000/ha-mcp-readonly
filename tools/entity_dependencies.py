@@ -9,10 +9,11 @@ Provides tools for tracking entity usage:
 import json
 import os
 from pathlib import Path
-from typing import Dict, List
 
-from tools.utils import load_registry
+from tools.utils import _error_response, _success_response, load_registry
 from tools.yaml_utils import load_yaml_file
+
+TOOLS_VERSION = "1.0.0"
 
 
 def register_entity_dependency_tools(mcp, config_path: str, ha_url: str, ha_token: str):
@@ -22,7 +23,7 @@ def register_entity_dependency_tools(mcp, config_path: str, ha_url: str, ha_toke
     # HELPERS
     # =========================================================================
 
-    def _find_entity_in_automations(entity_id: str) -> List[Dict]:
+    def _find_entity_in_automations(entity_id: str) -> list[dict]:
         """Find entity usage in automations.yaml."""
         automations_path = os.path.join(config_path, "automations.yaml")
         if not os.path.exists(automations_path):
@@ -72,7 +73,7 @@ def register_entity_dependency_tools(mcp, config_path: str, ha_url: str, ha_toke
 
         return found
 
-    def _find_entity_in_scripts(entity_id: str) -> List[Dict]:
+    def _find_entity_in_scripts(entity_id: str) -> list[dict]:
         """Find entity usage in scripts.yaml."""
         scripts_path = os.path.join(config_path, "scripts.yaml")
         if not os.path.exists(scripts_path):
@@ -98,7 +99,7 @@ def register_entity_dependency_tools(mcp, config_path: str, ha_url: str, ha_toke
 
         return found
 
-    def _find_entity_in_dashboards(entity_id: str) -> List[Dict]:
+    def _find_entity_in_dashboards(entity_id: str) -> list[dict]:
         """Find entity usage in Lovelace dashboards."""
         storage_path = Path(config_path) / ".storage"
         if not storage_path.exists():
@@ -144,7 +145,7 @@ def register_entity_dependency_tools(mcp, config_path: str, ha_url: str, ha_toke
 
         return found
 
-    def _find_template_entities(entity_id: str) -> List[Dict]:
+    def _find_template_entities(entity_id: str) -> list[dict]:
         """Find template entities that reference this entity."""
         # Check config entries for template helpers
         entries = (
@@ -163,7 +164,7 @@ def register_entity_dependency_tools(mcp, config_path: str, ha_url: str, ha_toke
         config_file = os.path.join(config_path, "configuration.yaml")
         if os.path.exists(config_file):
             try:
-                with open(config_file, "r", encoding="utf-8") as f:
+                with open(config_file, encoding="utf-8") as f:
                     content = f.read()
                     if "template:" in content and entity_id in content:
                         found.append(
@@ -201,7 +202,7 @@ def register_entity_dependency_tools(mcp, config_path: str, ha_url: str, ha_toke
                         full_path = os.path.join(config_path, inc_path)
                         if os.path.exists(full_path):
                             try:
-                                with open(full_path, "r", encoding="utf-8") as f:
+                                with open(full_path, encoding="utf-8") as f:
                                     inc_content = f.read()
                                     if entity_id in inc_content:
                                         found.append(
@@ -218,7 +219,7 @@ def register_entity_dependency_tools(mcp, config_path: str, ha_url: str, ha_toke
 
         return found
 
-    def _get_entity_dependencies_info(entity_id: str) -> Dict:
+    def _get_entity_dependencies_info(entity_id: str) -> dict:
         """Get dependencies (device, integration, etc) for an entity."""
         entities = (
             load_registry("core.entity_registry", config_path).get("data", {}).get("entities", [])
@@ -267,8 +268,7 @@ def register_entity_dependency_tools(mcp, config_path: str, ha_url: str, ha_toke
 
     @mcp.tool()
     async def get_entity_dependencies(entity_id: str) -> str:
-        """
-        Finds all places where entity is used (reverse lookup).
+        """[READ] Finds all places where entity is used (reverse lookup).
 
         ~85% token savings vs manually searching files.
 
@@ -289,10 +289,9 @@ def register_entity_dependency_tools(mcp, config_path: str, ha_url: str, ha_toke
                 - via_device
         """
         if not entity_id:
-            return json.dumps({"success": False, "error": "entity_id is required"}, indent=2)
+            return _error_response("entity_id is required")
 
         result = {
-            "success": True,
             "entity_id": entity_id,
             "used_in": {
                 "automations": _find_entity_in_automations(entity_id),
@@ -317,12 +316,11 @@ def register_entity_dependency_tools(mcp, config_path: str, ha_url: str, ha_toke
             ),
         }
 
-        return json.dumps(result, indent=2, ensure_ascii=False)
+        return _success_response(result)
 
     @mcp.tool()
     async def get_entity_consumers(entity_id: str) -> str:
-        """
-        List of automations and scripts using a given entity (simplified version).
+        """[READ] List of automations and scripts using a given entity (simplified version).
 
         Args:
             entity_id: Entity id
@@ -351,13 +349,10 @@ def register_entity_dependency_tools(mcp, config_path: str, ha_url: str, ha_toke
                 {"type": "script", "id": script.get("id"), "name": script.get("alias")}
             )
 
-        return json.dumps(
+        return _success_response(
             {
-                "success": True,
                 "entity_id": entity_id,
                 "consumers_count": len(consumers),
                 "consumers": consumers,
-            },
-            indent=2,
-            ensure_ascii=False,
+            }
         )

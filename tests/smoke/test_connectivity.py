@@ -6,6 +6,8 @@ from pathlib import Path
 import pytest
 import requests
 
+from .conftest import _server_running
+
 _HA_URL = os.getenv("HA_URL") or "http://192.168.0.101:8123"
 _HA_TOKEN = os.getenv("HA_TOKEN") or ""
 _HA_CONFIG_PATH = os.getenv("HA_CONFIG_PATH") or "/var/apps/hassio/data/hassio"
@@ -13,7 +15,12 @@ _HA_CONFIG_PATH = os.getenv("HA_CONFIG_PATH") or "/var/apps/hassio/data/hassio"
 REST_API_PORT = int(os.getenv("REST_API_PORT", "9093"))
 REST_API_URL = f"http://localhost:{REST_API_PORT}"
 
-pytestmark = pytest.mark.skipif(not _HA_TOKEN, reason="HA_TOKEN required for smoke tests")
+pytestmark = pytest.mark.skipif(
+    not _server_running()
+    or not _HA_TOKEN
+    or _HA_TOKEN in ("", "your_long_lived_access_token_here"),
+    reason="MCP server not running or HA_TOKEN not configured",
+)
 
 
 class TestHAConnectivity:

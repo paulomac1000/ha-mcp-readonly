@@ -19,7 +19,7 @@ import threading
 import time
 from fastmcp import FastMCP
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from typing import Any, Dict, Optional
+from typing import Any
 
 from __init__ import __version__
 from tools.areas import register_area_tools  # noqa: E402
@@ -29,6 +29,21 @@ from tools.blueprints import register_blueprint_tools  # noqa: E402
 from tools.composite import register_composite_tools  # noqa: E402
 from tools.config import register_config_tools  # noqa: E402
 from tools.config_entries import register_config_entry_tools  # noqa: E402
+
+# Configuration (from tools.constants — single source of truth)
+from tools.constants import (
+    DEV_TOOLS_ENABLED,
+    HA_CONFIG_PATH,
+    HA_TOKEN,
+    HA_URL,
+    HEALTH_CHECK_PORT,
+    LOG_LEVEL,
+    MCP_BIND_HOST,
+    MCP_SSE_PORT,
+    OUTPUT_PATH,
+    REST_API_PORT,
+    RUN_TESTS_ON_STARTUP,
+)
 from tools.dev_tools import register_dev_tools  # noqa: E402
 from tools.devices import register_device_tools  # noqa: E402
 from tools.diagnostics import register_diagnostics_tools  # noqa: E402
@@ -45,6 +60,14 @@ from tools.scripts import register_script_tools  # noqa: E402
 # Tool imports (placed at top; registration happens after config)
 from tools.states import register_state_tools  # noqa: E402
 from tools.storage import register_storage_tools  # noqa: E402
+
+# Logging: MUST target stderr (stdout corrupts MCP stdio transport)
+logging.basicConfig(
+    level=getattr(logging, LOG_LEVEL.upper(), logging.INFO),
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    stream=sys.stderr,
+)
+_logger = logging.getLogger("ha-mcp")
 
 # =============================================================================
 # HEALTH CHECK SERVER (port 9091)
@@ -70,40 +93,18 @@ class HealthHandler(BaseHTTPRequestHandler):
 
 def start_health_server(port=9091):
     """Start lightweight HTTP server for health checks."""
-    server = HTTPServer(("0.0.0.0", port), HealthHandler)
+    server = HTTPServer((MCP_BIND_HOST, port), HealthHandler)
     threading.Thread(target=server.serve_forever, daemon=True, name="HealthServer").start()
-    print(f"[health] HTTP health endpoint started on port {port}")
+    _logger.info("Health endpoint started on %s:%d", MCP_BIND_HOST, port)
     return server
 
 
 # =============================================================================
-# CONFIGURATION
+# CONFIGURATION (imported from tools.constants above)
 # =============================================================================
 
-HA_URL = os.getenv("HA_URL", "http://homeassistant:8123")
-HA_TOKEN = os.getenv("HA_TOKEN")
-HA_CONFIG_PATH = os.getenv("HA_CONFIG_PATH", "/config")
-DEV_TOOLS_ENABLED = os.getenv("MCP_DEV_TOOLS_ENABLED", "1").lower() in (
-    "1",
-    "true",
-    "yes",
-)
-RUN_TESTS_ON_STARTUP = os.getenv("RUN_TESTS_ON_STARTUP", "0").lower() in (
-    "1",
-    "true",
-    "yes",
-)
-
-# PORTS
-HEALTH_CHECK_PORT = int(os.getenv("HEALTH_CHECK_PORT", "9091"))
-MCP_SSE_PORT = int(os.getenv("MCP_SSE_PORT", "9092"))
-REST_API_PORT = int(os.getenv("REST_API_PORT", "9093"))
-
 if not HA_TOKEN:
-    print(
-        "[server] WARNING: HA_TOKEN not set - some features will be disabled",
-        file=sys.stderr,
-    )
+    _logger.warning("HA_TOKEN not set — some features will be disabled")
 
 # =============================================================================
 # INITIALIZE MCP SERVER
@@ -141,9 +142,9 @@ register_composite_tools(mcp, HA_CONFIG_PATH, HA_URL, HA_TOKEN)
 
 if DEV_TOOLS_ENABLED:
     register_dev_tools(mcp, HA_URL, HA_TOKEN, HA_CONFIG_PATH)
-    print("[server] Dev tools: ENABLED")
+    _logger.info("Dev tools: ENABLED")
 else:
-    print("[server] Dev tools: DISABLED")
+    _logger.info("Dev tools: DISABLED")
 
 register_config_entry_tools(mcp, HA_CONFIG_PATH, HA_URL, HA_TOKEN)
 
@@ -167,7 +168,7 @@ register_batch_operations_tools(mcp, HA_CONFIG_PATH, HA_URL, HA_TOKEN)
 # =============================================================================
 
 
-def get_all_tools() -> Dict[str, Any]:
+def get_all_tools() -> dict[str, Any]:
     """Return a dictionary of all registered tools keyed by tool name."""
     try:
         raw = mcp._local_provider._components
@@ -181,7 +182,7 @@ def get_all_tools() -> Dict[str, Any]:
     return {}
 
 
-def get_tool(name: str) -> Optional[Any]:
+def get_tool(name: str) -> Any | None:
     """Return tool by name if available."""
     return get_all_tools().get(name)
 
@@ -197,8 +198,6 @@ tool_count = get_tool_count()
 # =============================================================================
 # CONTEXT GENERATOR INTEGRATION
 # =============================================================================
-
-OUTPUT_PATH = os.getenv("OUTPUT_PATH", "/app/output/ha-ai-context.md")
 
 _generation_state = {
     "status": "idle",
@@ -226,12 +225,12 @@ def _run_context_generation(config_path: str, output_path: str, mode: str):
         _generation_state["status"] = "completed"
         _generation_state["completed_at"] = time.time()
         _generation_state["stats"] = stats
-        print(f"[generator] Context generation completed: {output_path}")
+        _logger.info("Context generation completed: %s", output_path)
     except Exception as exc:
         _generation_state["status"] = "error"
         _generation_state["error"] = str(exc)
         _generation_state["completed_at"] = time.time()
-        logging.getLogger("server").error(f"Context generation failed: {exc}")
+        _logger.error("Context generation failed: %s", exc)
 
 
 # =============================================================================
@@ -285,9 +284,9 @@ def create_rest_app():
                 "version": __version__,
                 "tools_registered": get_tool_count(),
                 "endpoints": {
-                    "mcp_sse": f"http://0.0.0.0:{MCP_SSE_PORT}/sse",
-                    "mcp_messages": f"http://0.0.0.0:{MCP_SSE_PORT}/messages",
-                    "rest_api": f"http://0.0.0.0:{REST_API_PORT}/api/",
+                    "mcp_sse": f"http://{MCP_BIND_HOST}:{MCP_SSE_PORT}/sse",
+                    "mcp_messages": f"http://{MCP_BIND_HOST}:{MCP_SSE_PORT}/messages",
+                    "rest_api": f"http://{MCP_BIND_HOST}:{REST_API_PORT}/api/",
                 },
             }
         )
@@ -483,7 +482,7 @@ def create_rest_app():
 
         format_param = request.query_params.get("format", "markdown")
         try:
-            with open(output_path, "r", encoding="utf-8") as f:
+            with open(output_path, encoding="utf-8") as f:
                 content = f.read()
             if format_param == "json":
                 return JSONResponse(
@@ -576,7 +575,7 @@ def create_rest_app():
                 "info": {
                     "title": "HA-Observer REST API",
                     "description": "REST bridge for Home Assistant MCP tools",
-                    "version": "1.0.0",
+                    "version": __version__,
                 },
                 "servers": [{"url": "/"}],
                 "paths": paths,
@@ -612,8 +611,8 @@ def run_rest_api():
     import uvicorn
 
     app = create_rest_app()
-    print(f"[rest] REST API started on port {REST_API_PORT}")
-    uvicorn.run(app, host="0.0.0.0", port=REST_API_PORT, log_level="warning")
+    _logger.info("REST API started on port %d", REST_API_PORT)
+    uvicorn.run(app, host=MCP_BIND_HOST, port=REST_API_PORT, log_level="warning")
 
 
 # =============================================================================
@@ -630,25 +629,32 @@ if __name__ == "__main__":
     if RUN_TESTS_ON_STARTUP:
         run_startup_tests()
 
-    print("[server] " + "=" * 50)
-    print("[server] HA-Observer MCP Server")
-    print("[server] " + "=" * 50)
-    print(f"[server] HA_URL: {HA_URL}")
-    print(f"[server] HA_CONFIG_PATH: {HA_CONFIG_PATH}")
-    print(f"[server] Registered tools: {tool_count}")
-    print("[server] " + "-" * 50)
+    _logger.info("=" * 50)
+    _logger.info("HA-Observer MCP Server v%s", __version__)
+    _logger.info("=" * 50)
+    _logger.info("HA_URL: %s", HA_URL)
+    _logger.info("HA_CONFIG_PATH: %s", HA_CONFIG_PATH)
+    _logger.info("Registered tools: %d", tool_count)
+    _logger.info("Bind host: %s", MCP_BIND_HOST)
+    _logger.info("-" * 50)
+
+    if MCP_BIND_HOST == "0.0.0.0":
+        _logger.critical(
+            "All endpoints bound to 0.0.0.0 — public access ENABLED! "
+            "Set MCP_UNSAFE_PUBLIC_ACCESS_CONFIRMED=0 for localhost-only."
+        )
 
     # 3. Start REST API in a separate thread
     rest_thread = threading.Thread(target=run_rest_api, daemon=True, name="RestAPI")
     rest_thread.start()
 
-    print("[server] Endpoints:")
-    print(f"[server]   Health:      http://0.0.0.0:{HEALTH_CHECK_PORT}/health")
-    print(f"[server]   MCP SSE:     http://0.0.0.0:{MCP_SSE_PORT}/sse      <- LibreChat")
-    print(f"[server]   MCP MSG:     http://0.0.0.0:{MCP_SSE_PORT}/messages")
-    print(f"[server]   REST API:    http://0.0.0.0:{REST_API_PORT}/api/")
-    print("[server] " + "=" * 50)
+    _logger.info("Endpoints:")
+    _logger.info("  Health:      http://%s:%d/health", MCP_BIND_HOST, HEALTH_CHECK_PORT)
+    _logger.info("  MCP SSE:     http://%s:%d/sse", MCP_BIND_HOST, MCP_SSE_PORT)
+    _logger.info("  MCP MSG:     http://%s:%d/messages", MCP_BIND_HOST, MCP_SSE_PORT)
+    _logger.info("  REST API:    http://%s:%d/api/", MCP_BIND_HOST, REST_API_PORT)
+    _logger.info("=" * 50)
 
     # 4. Start MCP SSE server - BLOCKING!
-    print(f"[server] Starting MCP SSE transport on port {MCP_SSE_PORT}...")
-    mcp.run(transport="sse", host="0.0.0.0", port=MCP_SSE_PORT)
+    _logger.info("Starting MCP SSE transport on port %d...", MCP_SSE_PORT)
+    mcp.run(transport="sse", host=MCP_BIND_HOST, port=MCP_SSE_PORT)

@@ -1210,13 +1210,13 @@ class TestDiagnoseEnergySetup:
         assert data["statistics"]["total_power_sensors"] >= 1
         assert len(data["recommendations"]) > 0
 
-    def test_diagnose_energy_g12w_detected(self, mock_mcp, ha_url, ha_token, config_path):
-        """G12w tariff entity should be detected."""
+    def test_diagnose_energy_g12w_detected(self, mock_mcp, ha_url, ha_token, config_path):  # noqa: F841
+        """Tariff entity should be detected."""
         states = [
             {
                 "entity_id": "binary_sensor.g12w_peak",
                 "state": "on",
-                "attributes": {"friendly_name": "G12w Peak Hour"},
+                "attributes": {"friendly_name": "Peak Hour"},
             },
         ]
 
@@ -1225,4 +1225,4 @@ class TestDiagnoseEnergySetup:
             register_dev_tools(mock_mcp, ha_url, ha_token, config_path)
             data = json.loads(mock_mcp._tools["diagnose_energy_setup"]())
 
-        assert data["tariff"] == "G12w detected"
+        assert data["tariff"] == "Dual-zone tariff detected"

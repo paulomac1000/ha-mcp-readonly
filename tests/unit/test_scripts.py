@@ -115,8 +115,8 @@ class TestGetScriptCode:
         with open(script_file, "wb") as f:
             f.write(b"\xff\xfe\x00\x00")
 
-        result = tools["list_scripts"]()
-        assert result.startswith("Error:")
+        result = json.loads(tools["list_scripts"]())
+        assert result["success"] is False
 
     def test_get_script_code_corrupt_file(self, tools, config_path):
         """Test exception handler for get_script_code with corrupt file."""
@@ -124,5 +124,5 @@ class TestGetScriptCode:
         with open(script_file, "wb") as f:
             f.write(b"\xff\xfe\x00\x00")
 
-        result = tools["get_script_code"]("anything")
-        assert result.startswith("Error:")
+        result = json.loads(tools["get_script_code"]("anything"))
+        assert result["success"] is False

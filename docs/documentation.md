@@ -135,7 +135,7 @@ volumes:
 
 ## MCP Tools
 
-The server exposes 108 read-only MCP tools organized by domain.  
+The server exposes 118 read-only MCP tools organized by domain.  
 Call `GET /api/tools` on the REST API for the full, up-to-date list.
 
 ### Entity State Tools

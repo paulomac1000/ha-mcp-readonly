@@ -1,6 +1,5 @@
 """
-Integration test fixtures - for tests against real Home Assistant.
-Overrides problematic fixtures from root conftest.py.
+Integration test fixtures — real HA, MCPWrapper, sample entities.
 """
 
 import asyncio
@@ -24,16 +23,16 @@ def load_dotenv():
     for env_path in env_paths:
         if env_path.exists():
             try:
-                with open(env_path, "r") as f:
+                with open(env_path) as f:
                     for line in f:
                         line = line.strip()
                         if line and not line.startswith("#") and "=" in line:
                             key, value = line.split("=", 1)
                             os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
-                print(f"✅ Loaded environment variables from {env_path}", file=sys.stderr)
+                print(f"[OK] Loaded environment variables from {env_path}", file=sys.stderr)
                 return
             except Exception as e:
-                print(f"⚠️ Error loading {env_path}: {e}", file=sys.stderr)
+                print(f"[WARN] Error loading {env_path}: {e}", file=sys.stderr)
 
 
 load_dotenv()
@@ -320,7 +319,7 @@ def real_mcp():
         register_batch_operations_tools(mcp, HA_CONFIG_PATH, HA_URL, HA_TOKEN)
         register_filesystem_tools(mcp)
 
-        print(f"✅ Registered Home Assistant tools (url: {HA_URL})", file=sys.stderr)
+        print(f"[OK] Registered Home Assistant tools (url: {HA_URL})", file=sys.stderr)
 
     return MCPWrapper(mcp)
 
@@ -353,13 +352,13 @@ def sample_entities(real_mcp):
         result = real_mcp.call_tool("get_domains_summary")
         data = json.loads(result)
     except Exception as e:
-        print(f"⚠️ Failed to get domains summary: {e}", file=sys.stderr)
+        print(f"[WARN] Failed to get domains summary: {e}", file=sys.stderr)
         entities["all"] = ["sun.sun", "sensor.time"]
         entities["sensor"] = ["sensor.time"]
         return entities
 
     if not data.get("success"):
-        print("⚠️ get_domains_summary returned failure", file=sys.stderr)
+        print("[WARN] get_domains_summary returned failure", file=sys.stderr)
         entities["all"] = ["sun.sun", "sensor.time"]
         entities["sensor"] = ["sensor.time"]
         return entities
@@ -380,7 +379,7 @@ def sample_entities(real_mcp):
                     entities["all"].extend(found)
             except Exception as e:
                 print(
-                    f"⚠️ Failed to search entities for domain {domain}: {e}",
+                    f"[WARN] Failed to search entities for domain {domain}: {e}",
                     file=sys.stderr,
                 )
 
@@ -393,10 +392,10 @@ def sample_entities(real_mcp):
     entities["all"] = unique_all
 
     if not entities["all"]:
-        print("⚠️ No entities found, using fallback", file=sys.stderr)
+        print("[WARN] No entities found, using fallback", file=sys.stderr)
         entities["all"] = ["sun.sun"]
     else:
-        print(f"✅ Found {len(entities['all'])} sample entities", file=sys.stderr)
+        print(f"[OK] Found {len(entities['all'])} sample entities", file=sys.stderr)
 
     return entities
 

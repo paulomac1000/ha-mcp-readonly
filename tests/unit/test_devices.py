@@ -676,7 +676,7 @@ class TestGetDevicesByArea:
 
         assert data["success"] is False
         assert "not found" in data["error"].lower()
-        assert "available_areas" in data
+        assert "Available" in data["error"]
 
 
 class TestSearchDevicesEdgeCases:

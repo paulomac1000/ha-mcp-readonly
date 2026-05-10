@@ -26,8 +26,6 @@ HA_CONFIG_PATH = os.getenv("HA_CONFIG_PATH", "/config")
 REST_API_PORT = int(os.getenv("REST_API_PORT", "9093"))
 REST_API_URL = f"http://localhost:{REST_API_PORT}"
 
-pytestmark = pytest.mark.skipif(not HA_TOKEN, reason="HA_TOKEN required for e2e tests")
-
 
 @pytest.fixture
 def tmp_output_path():

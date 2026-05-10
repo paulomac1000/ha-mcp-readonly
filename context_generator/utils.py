@@ -5,7 +5,7 @@ import os
 import re
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any
 
 import requests
 import yaml
@@ -23,8 +23,8 @@ from .constants import (
 )
 
 # --- REGISTRY CACHE (based on conftest.py) ---
-_registry_cache: Dict[str, Dict] = {}
-_registry_cache_timestamps: Dict[str, float] = {}
+_registry_cache: dict[str, dict] = {}
+_registry_cache_timestamps: dict[str, float] = {}
 CACHE_TTL = 300  # 5 minutes
 
 
@@ -35,7 +35,7 @@ def invalidate_registry_cache():
     _registry_cache_timestamps.clear()
 
 
-def load_registry(name: str, use_cache: bool = True) -> Dict:
+def load_registry(name: str, use_cache: bool = True) -> dict:
     """
     Loads file from .storage/ with caching.
     Based on test_utils.py load_registry.
@@ -53,7 +53,7 @@ def load_registry(name: str, use_cache: bool = True) -> Dict:
     try:
         path = Path(HA_CONFIG_PATH) / ".storage" / name
         if path.exists():
-            with open(path, "r", encoding="utf-8") as f:
+            with open(path, encoding="utf-8") as f:
                 data = json.load(f)
                 _registry_cache[cache_key] = data
                 _registry_cache_timestamps[cache_key] = now
@@ -66,7 +66,7 @@ def load_registry(name: str, use_cache: bool = True) -> Dict:
 
 def make_ha_request(
     endpoint: str, method: str = "GET", data: Any = None, timeout: int = 15
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Executes request to HA API with retry.
     Based on test_utils.py make_ha_request.
@@ -113,14 +113,14 @@ def load_yaml_file(filepath: str) -> Any:
     if not path.exists():
         return None
     try:
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             return yaml.load(f, Loader=HomeAssistantLoader)
     except Exception as e:
         print(f"   YAML error {filepath}: {e}")
         return None
 
 
-def validate_yaml_syntax(yaml_content: str) -> Dict[str, Any]:
+def validate_yaml_syntax(yaml_content: str) -> dict[str, Any]:
     """
     Validates YAML syntax.
     Based on test_config.py validate_yaml_syntax.
@@ -152,7 +152,7 @@ def slugify(text: str) -> str:
     return slug.strip("_") or "unknown"
 
 
-def get_best_name(item: Dict, item_type: str = "entity") -> str:
+def get_best_name(item: dict, item_type: str = "entity") -> str:
     """
     Fetches best name for entities/devices.
     Based on test_utils.py get_best_name.
@@ -163,7 +163,7 @@ def get_best_name(item: Dict, item_type: str = "entity") -> str:
         return item.get("name") or item.get("original_name") or item.get("entity_id", "Unknown")
 
 
-def resolve_area_id(entity: Dict, device_map: Dict) -> Optional[str]:
+def resolve_area_id(entity: dict, device_map: dict) -> str | None:
     """
     Resolve area for entity - first from entity, then from devices.
     FIXED version based on test_utils.py.
@@ -186,7 +186,7 @@ def resolve_area_id(entity: Dict, device_map: Dict) -> Optional[str]:
     return None
 
 
-def extract_entities_from_template(template_str: str) -> Set[str]:
+def extract_entities_from_template(template_str: str) -> set[str]:
     """
     Extracts entity_id from Jinja2 templates.
     Handles: states('sensor.x'), is_state('sensor.x', 'on'), state_attr(), states.sensor.x
@@ -210,7 +210,7 @@ def extract_entities_from_template(template_str: str) -> Set[str]:
     return found
 
 
-def extract_entities_from_data(data: Any, extract_from_templates: bool = True) -> Set[str]:
+def extract_entities_from_data(data: Any, extract_from_templates: bool = True) -> set[str]:
     """
     Recursively extracts entity_id from structure.
     EXTENDED version with template support.
@@ -263,7 +263,7 @@ def extract_entities_from_data(data: Any, extract_from_templates: bool = True) -
     return found
 
 
-def extract_trigger_info(triggers: Any) -> Tuple[Set[str], List[str]]:
+def extract_trigger_info(triggers: Any) -> tuple[set[str], list[str]]:
     """
     Extracts entities and platforms from triggers.
     EXTENDED version with full template trigger support.
@@ -328,7 +328,7 @@ def extract_trigger_info(triggers: Any) -> Tuple[Set[str], List[str]]:
     return entities, platforms
 
 
-def extract_services(data: Any) -> Set[str]:
+def extract_services(data: Any) -> set[str]:
     """Extracts service calls from actions."""
     services = set()
 
@@ -346,7 +346,7 @@ def extract_services(data: Any) -> Set[str]:
     return services
 
 
-def extract_controlled_entities(actions: Any) -> Set[str]:
+def extract_controlled_entities(actions: Any) -> set[str]:
     """
     Extracts entities controlled by actions (service targets).
     Based on test_entity_dependencies.py.

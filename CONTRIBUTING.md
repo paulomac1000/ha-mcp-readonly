@@ -82,7 +82,7 @@ async def my_new_tool(entity_id: str) -> str:
 ### Unit Tests (no credentials needed)
 
 ```bash
-pytest tests/unit/ -v --tb=short
+pytest tests/unit/ tests/smoke/ -v --tb=short
 ```
 
 ### Smoke Tests (requires REST API + HA_TOKEN)

@@ -51,7 +51,7 @@ jobs:
             type=semver,pattern={{major}}
             type=sha,format=short
             type=raw,value=latest,enable=${{ github.event_name == 'workflow_run' || github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v') }}
-            type=raw,value=1.1.1,enable=${{ github.event_name == 'workflow_run' || github.ref == 'refs/heads/main' }}
+            type=raw,value=1.2.0,enable=${{ github.event_name == 'workflow_run' || github.ref == 'refs/heads/main' }}
 
       - name: Build and push Docker image
         id: push

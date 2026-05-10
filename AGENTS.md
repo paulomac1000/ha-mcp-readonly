@@ -38,14 +38,14 @@
 |-------|----------|---------|----------|----------|
 | **Unit** | `tests/unit/` | <20s | Nothing | `pytest tests/unit/ -q` |
 | **Smoke** | `tests/smoke/` | <5s | REST API (ports 9092/9093) + HA_TOKEN | `pytest tests/smoke/ -q` |
-| **Integration** | `tests/integration/` | ~60s | Real HA + HA_TOKEN | `pytest tests/integration/ -q` |
+| **Integration** | `tests/integration/` | ~2min | Real HA + HA_TOKEN | `pytest tests/integration/ -q` |
 | **E2E** | `tests/e2e/` | ~30s | Real HA + REST API + HA_TOKEN | `pytest tests/e2e/ -q` |
 
 ### Test Rules
 
 1. **Unit tests:** Zero I/O, all dependencies mocked via `unittest.mock.patch`. Run without credentials.
 2. **Smoke tests:** Direct REST API calls (`requests` library), no MCP wrapper needed. Skip if no `HA_TOKEN`.
-3. **Integration tests:** Real HA via MCP wrapper (`MCPWrapper` from `tests/unit/conftest.py`). Skip if no `HA_TOKEN`.
+3. **Integration tests:** Real HA via MCP wrapper (`MCPWrapper` from `tests/integration/conftest.py`). Skip if no `HA_TOKEN`.
 4. **E2E tests:** Full pipeline (context generator) + REST API endpoints. Skip if no `HA_TOKEN`.
 5. **Zero hardcoded names** in any test data — use mock fixture values.
 6. **Test isolation:** Each test must be independent. Post-rely on shared state or test order.
@@ -88,7 +88,6 @@ Before writing any tool that calls the HA REST API:
 
 ```
 tests/
-├── conftest.py              # Root: env loading only (~30 lines)
 ├── fixtures.py              # All mock data constants
 │
 ├── unit/

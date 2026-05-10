@@ -374,7 +374,7 @@ class TestLoadRegistryErrors:
             mock_path_class.return_value = mock_path
             mock_path.__truediv__ = MagicMock(return_value=mock_path)
             mock_path.exists.return_value = True
-            with patch("builtins.open", side_effect=IOError("permission denied")):
+            with patch("builtins.open", side_effect=OSError("permission denied")):
                 result = load_registry("core.entity_registry", "/config", use_cache=False)
 
         assert result == {}

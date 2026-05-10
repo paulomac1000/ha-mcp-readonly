@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ha-mcp-readonly"
-version = "1.0.0"
+version = "1.2.0"
 description = "Read-only MCP server for Home Assistant observation by AI assistants"
 readme = "README.md"
 license = { text = "MIT" }
@@ -34,6 +34,9 @@ dependencies = [
     "pydantic>=2.0.0,<3.0.0",
 ]
 
+[project.scripts]
+ha-mcp-readonly = "server:run_rest_api"
+
 [project.optional-dependencies]
 dev = [
     "pytest>=7.0.0",
@@ -41,6 +44,8 @@ dev = [
     "pytest-mock>=3.10.0",
     "pytest-cov>=4.0.0",
     "ruff>=0.5.0",
+    "mypy>=1.8.0",
+    "bandit>=1.7.0",
 ]
 
 [project.urls]
@@ -57,7 +62,7 @@ line-length = 100
 target-version = "py311"
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I"]
+select = ["E", "F", "I", "W", "UP"]
 extend-ignore = ["E501"]
 
 [tool.ruff.lint.isort]
@@ -69,3 +74,23 @@ testpaths = ["tests"]
 python_files = "test_*.py"
 asyncio_mode = "auto"
 addopts = "-v --tb=short"
+markers = [
+    "unit: Unit tests (fast, mocked, no I/O)",
+    "integration: Integration tests (slow, requires real backend)",
+    "smoke: Smoke tests (quick health check, requires local MCP server)",
+    "e2e: End-to-end tests (full pipeline, requires real backend + local MCP server)",
+]
+
+[tool.mypy]
+strict = true
+python_version = "3.11"
+ignore_missing_imports = true
+warn_unused_ignores = true
+exclude = [
+    "tests/",
+    "build/",
+]
+
+[tool.bandit]
+exclude = ["tests/", "build/"]
+skips = ["B101", "B303", "B311", "B404", "B603"]

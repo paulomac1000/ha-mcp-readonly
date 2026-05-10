@@ -77,9 +77,9 @@ def load_yaml_file(file_path: str) -> Any:
         Parsed YAML data or None on error
     """
     try:
-        with open(file_path, "r", encoding="utf-8") as f:
+        with open(file_path, encoding="utf-8") as f:
             return yaml.load(f, Loader=HomeAssistantLoader)
-    except (yaml.YAMLError, IOError) as e:
+    except (OSError, yaml.YAMLError) as e:
         logger.warning(f"Error loading {file_path}: {e}")
         return None
 
