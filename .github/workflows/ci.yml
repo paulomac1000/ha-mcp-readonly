@@ -96,12 +96,12 @@ jobs:
         if: ${{ !(github.event_name == 'push' && github.ref == 'refs/heads/main') }}
         run: |
           docker run --rm ha-mcp-readonly:test python3 -c "
-from server import get_tool_count
-tc = get_tool_count()
-print(f'Tools registered: {tc}')
-assert tc == 120, f'Expected 120 tools, got {tc}'
-print('Tool count verification OK')
-"
+          from server import get_tool_count
+          tc = get_tool_count()
+          print(f'Tools registered: {tc}')
+          assert tc == 120, f'Expected 120 tools, got {tc}'
+          print('Tool count verification OK')
+          "
 
       - name: Smoke test — REST API (health + tools)
         if: ${{ !(github.event_name == 'push' && github.ref == 'refs/heads/main') }}
@@ -113,6 +113,6 @@ print('Tool count verification OK')
           curl -fsS http://localhost:9099/health && echo "Health OK"
           TOOLS=$(curl -s http://localhost:9100/api/tools | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['total'])")
           echo "Tools via REST API: $TOOLS"
-           [ "$TOOLS" = "120" ] || (echo "FAIL: expected 120, got $TOOLS" && exit 1)
+          [ "$TOOLS" = "120" ] || (echo "FAIL: expected 120, got $TOOLS" && exit 1)
           docker stop ha-mcp-smoke
           echo "REST API smoke test OK"
