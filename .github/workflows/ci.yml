@@ -108,6 +108,7 @@ jobs:
         run: |
           docker run -d --rm -p 9099:9091 -p 9100:9093 \
             -e HA_URL=https://localhost:8123 -e HA_TOKEN=fake \
+            -e MCP_UNSAFE_PUBLIC_ACCESS_CONFIRMED=1 \
             --name ha-mcp-smoke ha-mcp-readonly:test
           sleep 3
           curl -fsS http://localhost:9099/health && echo "Health OK"
