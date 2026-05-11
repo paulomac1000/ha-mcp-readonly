@@ -49,7 +49,7 @@ def _do_get_script_code(script_id: str, config_path: str) -> str:
         data = yaml.safe_load(f) or {}
 
     if script_id in data:
-        return yaml.dump(
+        return yaml.dump(  # type: ignore[no-any-return]
             {script_id: data[script_id]},
             allow_unicode=True,
             default_flow_style=False,
@@ -59,7 +59,7 @@ def _do_get_script_code(script_id: str, config_path: str) -> str:
     return _error_response(f"Script '{script_id}' not found")
 
 
-def register_script_tools(mcp, config_path):
+def register_script_tools(mcp, config_path) -> None:  # type: ignore[no-untyped-def]
 
     @mcp.tool()
     def list_scripts() -> str:

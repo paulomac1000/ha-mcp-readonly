@@ -36,7 +36,7 @@ def _get_entities_for_domain(entities: list[dict[str, Any]], domain: str) -> lis
     return domain_entities
 
 
-def register_integration_tools(mcp, config_path: str, ha_url: str, ha_token: str) -> None:
+def register_integration_tools(mcp, config_path: str, ha_url: str, ha_token: str) -> None:  # type: ignore[no-untyped-def]
     """Register integration analysis tools."""
 
     # =========================================================================
@@ -106,12 +106,12 @@ def register_integration_tools(mcp, config_path: str, ha_url: str, ha_token: str
                     device = devices_map[device_id]
                     by_device[device_id] = {
                         "device_name": get_best_name(device, "device"),
-                        "model": device.get("model"),
+                        "model": device.get("model"),  # type: ignore[dict-item]
                         "entities": [],
                     }
-                by_device[device_id]["entities"].append(entity_info)
+                by_device[device_id]["entities"].append(entity_info)  # type: ignore[attr-defined]
             else:
-                by_device["no_device"]["entities"].append(entity_info)
+                by_device["no_device"]["entities"].append(entity_info)  # type: ignore[attr-defined]
 
         # Remove empty "No Device" category
         if not by_device["no_device"]["entities"]:
@@ -154,9 +154,9 @@ def register_integration_tools(mcp, config_path: str, ha_url: str, ha_token: str
 
         for entry in entries:
             if entry.get("disabled_by"):
-                entries_summary["disabled"] += 1
+                entries_summary["disabled"] += 1  # type: ignore[operator]
             else:
-                entries_summary["loaded"] += 1
+                entries_summary["loaded"] += 1  # type: ignore[operator]
 
         # Analyze entities
         states_map = {}
@@ -173,10 +173,10 @@ def register_integration_tools(mcp, config_path: str, ha_url: str, ha_token: str
             "unavailable": 0,
         }
 
-        entity_platforms = Counter()
+        entity_platforms = Counter()  # type: ignore[var-annotated]
 
         for entity in entities:
-            platform = entity.get("entity_id").split(".")[0]
+            platform = entity.get("entity_id").split(".")[0]  # type: ignore[union-attr]
             entity_platforms[platform] += 1
 
             if entity.get("disabled_by"):

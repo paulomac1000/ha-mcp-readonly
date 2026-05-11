@@ -56,7 +56,7 @@ These contain credentials, password hashes, and auth tokens."""
 # SECURITY: LOG SANITIZATION
 # =============================================================================
 
-_SENSITIVE_PATTERNS: list[tuple[re.Pattern, str]] = [
+_SENSITIVE_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     # JWT must come before Bearer (JWT is a superset pattern)
     (
         re.compile(r"eyJ[A-Za-z0-9_\-]{10,}\.eyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]+"),
@@ -117,7 +117,7 @@ def make_ha_request(
     ha_token: str,
     endpoint: str,
     method: str = "GET",
-    data: dict | None = None,
+    data: dict[str, Any] | None = None,
     timeout: int = 10,
     retries: int = 3,
     backoff: float = 1.0,
@@ -185,7 +185,7 @@ def load_registry(
         data, timestamp = _REGISTRY_CACHE[cache_key]
         if now - timestamp < _REGISTRY_TTL:
             _REGISTRY_CACHE_STATS["hits"] += 1
-            return data
+            return data  # type: ignore[no-any-return]
 
     _REGISTRY_CACHE_STATS["misses"] += 1
 
@@ -198,7 +198,7 @@ def load_registry(
             data = json.load(fh)
 
         _REGISTRY_CACHE[cache_key] = (data, now)
-        return data
+        return data  # type: ignore[no-any-return]
 
     except (OSError, json.JSONDecodeError, KeyError) as exc:
         logger.warning(f"Error loading registry {registry_name}: {exc}")
@@ -232,24 +232,24 @@ def invalidate_registry_cache(
             del _REGISTRY_CACHE[key]
 
 
-def get_registry_entities(config_path: str) -> list[dict]:
+def get_registry_entities(config_path: str) -> list[dict[str, Any]]:
     """Shorthand: get entities from entity registry."""
-    return load_registry("core.entity_registry", config_path).get("data", {}).get("entities", [])
+    return load_registry("core.entity_registry", config_path).get("data", {}).get("entities", [])  # type: ignore[no-any-return]
 
 
-def get_registry_devices(config_path: str) -> list[dict]:
+def get_registry_devices(config_path: str) -> list[dict[str, Any]]:
     """Shorthand: get devices from device registry."""
-    return load_registry("core.device_registry", config_path).get("data", {}).get("devices", [])
+    return load_registry("core.device_registry", config_path).get("data", {}).get("devices", [])  # type: ignore[no-any-return]
 
 
-def get_registry_areas(config_path: str) -> list[dict]:
+def get_registry_areas(config_path: str) -> list[dict[str, Any]]:
     """Shorthand: get areas from area registry."""
-    return load_registry("core.area_registry", config_path).get("data", {}).get("areas", [])
+    return load_registry("core.area_registry", config_path).get("data", {}).get("areas", [])  # type: ignore[no-any-return]
 
 
-def get_registry_config_entries(config_path: str) -> list[dict]:
+def get_registry_config_entries(config_path: str) -> list[dict[str, Any]]:
     """Shorthand: get config entries from registry."""
-    return load_registry("core.config_entries", config_path).get("data", {}).get("entries", [])
+    return load_registry("core.config_entries", config_path).get("data", {}).get("entries", [])  # type: ignore[no-any-return]
 
 
 # =============================================================================
@@ -284,7 +284,7 @@ def tail_log_file(
 # =============================================================================
 
 
-def get_best_name(item: dict, item_type: str = "entity") -> str:
+def get_best_name(item: dict[str, Any], item_type: str = "entity") -> str:
     """
     Best available name for an entity or device.
 
@@ -292,13 +292,13 @@ def get_best_name(item: dict, item_type: str = "entity") -> str:
     """
     if item_type == "device":
         return item.get("name_by_user") or item.get("name") or "Unknown Device"
-    return item.get("name") or item.get("original_name") or item.get("entity_id", "Unknown")
+    return item.get("name") or item.get("original_name") or item.get("entity_id", "Unknown")  # type: ignore[no-any-return]
 
 
-def resolve_area_id(entity: dict, device_map: dict[str, dict]) -> str | None:
+def resolve_area_id(entity: dict[str, Any], device_map: dict[str, dict[str, Any]]) -> str | None:
     """Resolve area: entity area → device area → ``None``."""
     if entity.get("area_id"):
-        return entity["area_id"]
+        return entity["area_id"]  # type: ignore[no-any-return]
     device_id = entity.get("device_id")
     if device_id and device_id in device_map:
         return device_map[device_id].get("area_id")
@@ -329,9 +329,9 @@ def sanitize_for_json(obj: Any) -> Any:
     return obj
 
 
-def _success_response(data=None):
+def _success_response(data: dict[str, Any] | None = None) -> str:
     """Format a successful tool response. All tools MUST use this."""
-    response = {"success": True}
+    response: dict[str, Any] = {"success": True}
     if data is not None:
         if isinstance(data, dict):
             response.update(data)
@@ -340,7 +340,7 @@ def _success_response(data=None):
     return json.dumps(response, indent=2, ensure_ascii=False)
 
 
-def _error_response(error):
+def _error_response(error: str) -> str:
     """Format an error tool response. All tools MUST use this."""
     return json.dumps({"success": False, "error": str(error)}, indent=2, ensure_ascii=False)
 

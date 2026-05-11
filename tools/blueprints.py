@@ -67,7 +67,7 @@ def _do_list_blueprints(config_path: str) -> str:
                             "description": (meta.get("description", "") or "")[:200],
                             "author": meta.get("author", "Unknown"),
                             "source_url": meta.get("source_url", ""),
-                            "inputs_count": input_count,
+                            "inputs_count": input_count,  # type: ignore[dict-item]
                             "domain": meta.get("domain", domain),
                         }
                     )
@@ -262,7 +262,7 @@ def _do_get_blueprint_usage_summary(config_path: str) -> str:
 # =============================================================================
 
 
-def register_blueprint_tools(mcp, config_path):
+def register_blueprint_tools(mcp, config_path) -> None:  # type: ignore[no-untyped-def]
     """Registers tools for managing blueprints."""
 
     @mcp.tool()

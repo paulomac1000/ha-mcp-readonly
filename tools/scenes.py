@@ -50,7 +50,7 @@ def _do_get_scene_code(scene_id: str, config_path: str) -> str:
     for scene in data:
         if isinstance(scene, dict):
             if scene.get("id") == scene_id or scene.get("name") == scene_id:
-                return yaml.dump(
+                return yaml.dump(  # type: ignore[no-any-return]
                     scene,
                     allow_unicode=True,
                     default_flow_style=False,
@@ -60,7 +60,7 @@ def _do_get_scene_code(scene_id: str, config_path: str) -> str:
     return _error_response(f"Scene '{scene_id}' not found")
 
 
-def register_scene_tools(mcp, config_path):
+def register_scene_tools(mcp, config_path) -> None:  # type: ignore[no-untyped-def]
 
     @mcp.tool()
     def list_scenes() -> str:

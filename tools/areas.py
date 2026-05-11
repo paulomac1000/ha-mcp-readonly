@@ -6,6 +6,7 @@ Provides tools for area/room analysis:
 """
 
 import logging
+from typing import Any
 
 from tools.utils import (
     _error_response,
@@ -23,7 +24,7 @@ _logger = logging.getLogger(__name__)
 TOOLS_VERSION = "1.0.0"
 
 
-def _get_area_by_id_or_name(area_id: str, config_path: str) -> dict | None:
+def _get_area_by_id_or_name(area_id: str, config_path: str) -> dict[str, Any] | None:
     """Find area by id or name (case-insensitive)."""
     areas = get_registry_areas(config_path)
     for area in areas:
@@ -39,7 +40,7 @@ def _get_integration_info(entry_id: str, config_path: str) -> str:
     entries = get_registry_config_entries(config_path)
     for entry in entries:
         if entry.get("entry_id") == entry_id:
-            return entry.get("domain", "unknown")
+            return entry.get("domain", "unknown")  # type: ignore[no-any-return]
     return "unknown"
 
 
@@ -138,7 +139,7 @@ def _do_get_area_devices_summary(area_id: str, ha_url: str, ha_token: str, confi
             }
         )
 
-    devices_summary.sort(key=lambda x: x["name"].lower())
+    devices_summary.sort(key=lambda x: str(x.get("name", "")).lower())
 
     return _success_response(
         {
@@ -152,7 +153,7 @@ def _do_get_area_devices_summary(area_id: str, ha_url: str, ha_token: str, confi
     )
 
 
-def register_area_tools(mcp, config_path: str, ha_url: str, ha_token: str):
+def register_area_tools(mcp: Any, config_path: str, ha_url: str, ha_token: str) -> None:
     """Register area analysis tools."""
 
     @mcp.tool()

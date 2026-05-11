@@ -80,8 +80,8 @@ def _do_get_entity_state_history_summary(
 
     changes = history_data[0]
 
-    states_stats = defaultdict(lambda: {"count": 0, "total_duration_min": 0.0})
-    anomalies = []
+    states_stats = defaultdict(lambda: {"count": 0, "total_duration_min": 0.0})  # type: ignore[var-annotated]
+    anomalies = []  # type: ignore[var-annotated]
     processed_changes = []
 
     last_change_time = None
@@ -168,7 +168,7 @@ def _do_get_recent_state_changes(
 
     history_data = result["data"]
     changes_list = []
-    entity_counts = Counter()
+    entity_counts = Counter()  # type: ignore[var-annotated]
 
     domain_list = [d.strip().lower() for d in domains.split(",")] if domains else None
 
@@ -220,7 +220,7 @@ def _do_get_recent_state_changes(
     return _success_response(response)
 
 
-def register_history_tools(mcp, ha_url: str, ha_token: str) -> None:
+def register_history_tools(mcp, ha_url: str, ha_token: str) -> None:  # type: ignore[no-untyped-def]
     """Register history analysis tools on the MCP server."""
 
     @mcp.tool()

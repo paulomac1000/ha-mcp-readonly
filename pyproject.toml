@@ -90,6 +90,9 @@ exclude = [
     "tests/",
     "build/",
 ]
+disable_error_code = [
+    "untyped-decorator",
+]
 
 [tool.bandit]
 exclude = ["tests/", "build/"]

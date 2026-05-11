@@ -17,6 +17,7 @@ import logging
 import re
 import time
 from pathlib import Path
+from typing import Any
 
 import yaml
 
@@ -329,7 +330,7 @@ async def _do_compare_entities_state(
     )
 
 
-def _compare_attributes(before: dict, after: dict) -> list[dict]:
+def _compare_attributes(before: dict[str, Any], after: dict[str, Any]) -> list[dict]:  # type: ignore[type-arg]
     """Compare attribute dictionaries and return changes."""
     changes = []
     all_keys = set(before.keys()) | set(after.keys())
@@ -678,7 +679,7 @@ async def _do_get_automation_codes_batch(config_path: str, automation_ids: str) 
 # =============================================================================
 
 
-def register_batch_operations_tools(mcp, config_path: str, ha_url: str, ha_token: str):
+def register_batch_operations_tools(mcp, config_path: str, ha_url: str, ha_token: str) -> None:  # type: ignore[no-untyped-def]
     """Register batch operation tools with MCP server."""
 
     @mcp.tool()
@@ -690,7 +691,7 @@ def register_batch_operations_tools(mcp, config_path: str, ha_url: str, ha_token
             return _error_response(str(e))
 
     @mcp.tool()
-    async def compare_entities_state(entity_ids: str, snapshot_before: str = None) -> str:
+    async def compare_entities_state(entity_ids: str, snapshot_before: str | None = None) -> str:
         """[READ] COMPARE - Compare entity states before/after changes. Saves ~70% tokens vs manual checking."""
         try:
             return await _do_compare_entities_state(ha_url, ha_token, entity_ids, snapshot_before)

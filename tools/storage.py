@@ -17,6 +17,7 @@ import statistics
 import unicodedata
 from collections import Counter
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from tools.utils import (
     _error_response,
@@ -51,12 +52,12 @@ def _resolve_dashboard_registry(dashboard: str, config_path: str) -> str:
     return f"lovelace.{dashboard}"
 
 
-def _get_dashboards_registry(config_path: str) -> list:
+def _get_dashboards_registry(config_path: str) -> list[Any]:
     """Load dashboards registry and return items list."""
-    return load_registry("lovelace_dashboards", config_path).get("data", {}).get("items", [])
+    return load_registry("lovelace_dashboards", config_path).get("data", {}).get("items", [])  # type: ignore[no-any-return]
 
 
-def _get_lovelace_cards(dashboard_id: str, config_path: str) -> list:
+def _get_lovelace_cards(dashboard_id: str, config_path: str) -> list[Any]:
     """Extract flat list of card dicts from a dashboard config, with position info."""
     registry_name = _resolve_dashboard_registry(dashboard_id, config_path)
     config = load_registry(registry_name, config_path)
@@ -107,7 +108,7 @@ def _do_search_registries_batch(
     config_path: str,
     ha_url: str | None,
     ha_token: str | None,
-) -> dict:
+) -> dict[str, Any]:
     ent_data = (
         load_registry("core.entity_registry", config_path).get("data", {}).get("entities", [])
     )
@@ -240,7 +241,7 @@ def _do_get_entity_context(
     config_path: str,
     ha_url: str | None,
     ha_token: str | None,
-) -> dict:
+) -> dict[str, Any]:
     ent_data = (
         load_registry("core.entity_registry", config_path).get("data", {}).get("entities", [])
     )
@@ -255,7 +256,7 @@ def _do_get_entity_context(
     if not entity:
         return {"error": f"Entity '{entity_id}' not found in registry"}
 
-    result = {
+    result = {  # type: ignore[var-annotated]
         "entity_id": entity_id,
         "entity_info": {
             "name": get_best_name(entity, "entity"),
@@ -305,13 +306,13 @@ def _do_get_entity_context(
 
             state_val = s.get("state")
             if state_val == "unavailable":
-                result["issues"].append("Entity is UNAVAILABLE")
-                result["recommendations"].append("Check device connection and integration status")
+                result["issues"].append("Entity is UNAVAILABLE")  # type: ignore[union-attr]
+                result["recommendations"].append("Check device connection and integration status")  # type: ignore[union-attr]
             elif state_val == "unknown":
-                result["issues"].append("Entity state is UNKNOWN")
-                result["recommendations"].append("Entity may not have reported state yet")
+                result["issues"].append("Entity state is UNKNOWN")  # type: ignore[union-attr]
+                result["recommendations"].append("Entity may not have reported state yet")  # type: ignore[union-attr]
         else:
-            result["issues"].append(f"Could not fetch live state: {state_res.get('error')}")
+            result["issues"].append(f"Could not fetch live state: {state_res.get('error')}")  # type: ignore[union-attr]
 
     did = entity.get("device_id")
     if did:
@@ -329,7 +330,7 @@ def _do_get_entity_context(
 
             for other in ent_data:
                 if other.get("device_id") == did and other.get("entity_id") != entity_id:
-                    result["related_entities"].append(
+                    result["related_entities"].append(  # type: ignore[union-attr]
                         {
                             "entity_id": other.get("entity_id"),
                             "platform": other.get("platform"),
@@ -360,7 +361,7 @@ def _do_get_entity_context(
 
             result["area_entities"] = area_entities_list[:10]
             if len(area_entities_list) > 10:
-                result["area_entities"].append(
+                result["area_entities"].append(  # type: ignore[union-attr]
                     {"note": f"... and {len(area_entities_list) - 10} more entities in this area"}
                 )
 
@@ -380,14 +381,14 @@ def _do_get_entity_context(
             }
 
     if entity.get("disabled_by"):
-        result["issues"].append(f"Entity is DISABLED by: {entity.get('disabled_by')}")
-        result["recommendations"].append("Enable entity in entity registry if needed")
+        result["issues"].append(f"Entity is DISABLED by: {entity.get('disabled_by')}")  # type: ignore[union-attr]
+        result["recommendations"].append("Enable entity in entity registry if needed")  # type: ignore[union-attr]
 
     if entity.get("hidden_by"):
-        result["issues"].append(f"Entity is HIDDEN by: {entity.get('hidden_by')}")
+        result["issues"].append(f"Entity is HIDDEN by: {entity.get('hidden_by')}")  # type: ignore[union-attr]
 
     if not result["issues"]:
-        result["recommendations"].append("Entity appears to be configured correctly")
+        result["recommendations"].append("Entity appears to be configured correctly")  # type: ignore[union-attr]
 
     return result
 
@@ -397,7 +398,7 @@ def _do_get_area_overview(
     config_path: str,
     ha_url: str | None,
     ha_token: str | None,
-) -> dict:
+) -> dict[str, Any]:
     area_data = load_registry("core.area_registry", config_path).get("data", {}).get("areas", [])
     dev_data = load_registry("core.device_registry", config_path).get("data", {}).get("devices", [])
     ent_data = (
@@ -501,7 +502,7 @@ def _do_get_history_stats(
     hours_back: int,
     ha_url: str | None,
     ha_token: str | None,
-) -> dict:
+) -> dict[str, Any]:
     if not ha_url or not ha_token:
         return {"error": "HA API not configured"}
 
@@ -548,7 +549,7 @@ def _do_get_history_stats(
     return {"entity_id": entity_id, "analysis": analysis}
 
 
-def _do_get_entity_registry(config_path: str) -> dict:
+def _do_get_entity_registry(config_path: str) -> dict[str, Any]:
     data = load_registry("core.entity_registry", config_path).get("data", {}).get("entities", [])
     simplified = []
     for e in data:
@@ -568,7 +569,7 @@ def _do_get_entity_registry(config_path: str) -> dict:
     return {"total_entities": len(simplified), "entities": simplified}
 
 
-def _do_get_device_registry(config_path: str) -> dict:
+def _do_get_device_registry(config_path: str) -> dict[str, Any]:
     data = load_registry("core.device_registry", config_path).get("data", {}).get("devices", [])
     simplified = []
     for d in data:
@@ -587,12 +588,12 @@ def _do_get_device_registry(config_path: str) -> dict:
     return {"total_devices": len(simplified), "devices": simplified}
 
 
-def _do_get_area_registry(config_path: str) -> dict:
+def _do_get_area_registry(config_path: str) -> dict[str, Any]:
     data = load_registry("core.area_registry", config_path).get("data", {}).get("areas", [])
     return {"total_areas": len(data), "areas": data}
 
 
-def _do_get_config_entries(config_path: str) -> dict:
+def _do_get_config_entries(config_path: str) -> dict[str, Any]:
     data = load_registry("core.config_entries", config_path).get("data", {}).get("entries", [])
     simplified = []
     for entry in data:
@@ -610,12 +611,12 @@ def _do_get_config_entries(config_path: str) -> dict:
     return {"total_entries": len(simplified), "entries": simplified}
 
 
-def _do_get_lovelace_dashboards(config_path: str) -> dict:
+def _do_get_lovelace_dashboards(config_path: str) -> dict[str, Any]:
     data = load_registry("lovelace_dashboards", config_path).get("data", {}).get("items", [])
     return {"total_dashboards": len(data), "dashboards": data}
 
 
-def _do_get_lovelace_config(dashboard: str, config_path: str) -> dict:
+def _do_get_lovelace_config(dashboard: str, config_path: str) -> dict[str, Any]:
     registry_name = _resolve_dashboard_registry(dashboard, config_path)
     data = load_registry(registry_name, config_path)
     if not data:
@@ -623,9 +624,9 @@ def _do_get_lovelace_config(dashboard: str, config_path: str) -> dict:
     return data
 
 
-def _do_get_lovelace_resources(config_path: str) -> dict:
+def _do_get_lovelace_resources(config_path: str) -> dict[str, Any]:
     data = load_registry("lovelace_resources", config_path).get("data", {}).get("items", [])
-    by_type = {}
+    by_type = {}  # type: ignore[var-annotated]
     for r in data:
         rtype = r.get("type", "unknown")
         by_type[rtype] = by_type.get(rtype, 0) + 1
@@ -643,8 +644,8 @@ def _do_search_lovelace_config(
     dashboard: str | None,
     max_results: int,
     config_path: str,
-) -> dict:
-    matches = []
+) -> dict[str, Any]:
+    matches = []  # type: ignore[var-annotated]
     dashboards_data = _get_dashboards_registry(config_path)
 
     target_ids = []
@@ -742,7 +743,7 @@ def _do_search_lovelace_config(
     }
 
 
-def _do_get_lovelace_config_summary(dashboard: str | None, config_path: str) -> dict:
+def _do_get_lovelace_config_summary(dashboard: str | None, config_path: str) -> dict[str, Any]:
     dashboards_data = _get_dashboards_registry(config_path)
 
     if dashboard:
@@ -790,7 +791,7 @@ def _do_get_lovelace_config_summary(dashboard: str | None, config_path: str) -> 
 
         views_map = {}
         badges_count = 0
-        card_types = {}
+        card_types = {}  # type: ignore[var-annotated]
         for card in cards:
             if card.get("_is_badge"):
                 badges_count += 1
@@ -822,7 +823,7 @@ def _do_get_lovelace_config_summary(dashboard: str | None, config_path: str) -> 
     strategy_dashboards = [s["id"] for s in summaries if s.get("strategy")]
     yaml_dashboards = [s["id"] for s in summaries if s.get("mode") == "yaml"]
 
-    global_ct = {}
+    global_ct = {}  # type: ignore[var-annotated]
     for s in summaries:
         for ct, cnt in s.get("card_types_breakdown", {}).items():
             global_ct[ct] = global_ct.get(ct, 0) + cnt
@@ -840,7 +841,7 @@ def _do_get_lovelace_config_summary(dashboard: str | None, config_path: str) -> 
     }
 
 
-def _do_diagnose_lovelace_setup(config_path: str) -> dict:
+def _do_diagnose_lovelace_setup(config_path: str) -> dict[str, Any]:
     dashboards_data = _get_dashboards_registry(config_path)
     resources_data = (
         load_registry("lovelace_resources", config_path).get("data", {}).get("items", [])
@@ -932,7 +933,7 @@ def _do_diagnose_lovelace_setup(config_path: str) -> dict:
     recommendations = []
 
     if missing_refs:
-        unique_missing = {}
+        unique_missing = {}  # type: ignore[var-annotated]
         for mr in missing_refs:
             eid = mr["entity_id"]
             if eid not in unique_missing:
@@ -985,22 +986,22 @@ def _do_diagnose_lovelace_setup(config_path: str) -> dict:
     }
 
 
-def _do_get_exposed_entities(config_path: str) -> dict:
+def _do_get_exposed_entities(config_path: str) -> dict[str, Any]:
     data = load_registry("cloud.google_assistant", config_path).get("data", {}).get("entities", {})
     return {"total_exposed": len(data), "entities": data}
 
 
-def _do_get_persons(config_path: str) -> dict:
+def _do_get_persons(config_path: str) -> dict[str, Any]:
     data = load_registry("person", config_path).get("data", {}).get("items", [])
     return {"total_persons": len(data), "persons": data}
 
 
-def _do_get_zones(config_path: str) -> dict:
+def _do_get_zones(config_path: str) -> dict[str, Any]:
     data = load_registry("zone", config_path).get("data", {}).get("items", [])
     return {"total_zones": len(data), "zones": data}
 
 
-def _do_get_input_helpers(config_path: str) -> dict:
+def _do_get_input_helpers(config_path: str) -> dict[str, Any]:
     helpers = {}
     types = [
         "input_boolean",
@@ -1019,24 +1020,24 @@ def _do_get_input_helpers(config_path: str) -> dict:
     return helpers
 
 
-def _do_get_hacs_data(config_path: str) -> dict:
+def _do_get_hacs_data(config_path: str) -> dict[str, Any]:
     data = load_registry("hacs.data", config_path)
     if not data:
         return {"info": "HACS not installed or storage file not found"}
     return data
 
 
-def _do_get_timers(config_path: str) -> dict:
+def _do_get_timers(config_path: str) -> dict[str, Any]:
     data = load_registry("timer", config_path).get("data", {}).get("items", [])
     return {"total_timers": len(data), "timers": data}
 
 
-def _do_get_counters(config_path: str) -> dict:
+def _do_get_counters(config_path: str) -> dict[str, Any]:
     data = load_registry("counter", config_path).get("data", {}).get("items", [])
     return {"total_counters": len(data), "counters": data}
 
 
-def _do_get_template_entities(entity_id: str | None, config_path: str) -> dict:
+def _do_get_template_entities(entity_id: str | None, config_path: str) -> dict[str, Any]:
     data = load_registry("core.config_entries", config_path).get("data", {}).get("entries", [])
 
     entity_reg = load_registry("core.entity_registry", config_path)
@@ -1091,7 +1092,7 @@ def _do_get_template_entities(entity_id: str | None, config_path: str) -> dict:
     return {"total_templates": len(templates), "templates": templates}
 
 
-def _do_get_template_entity_code(entity_id: str, config_path: str) -> dict:
+def _do_get_template_entity_code(entity_id: str, config_path: str) -> dict[str, Any]:
     if not entity_id or not isinstance(entity_id, str) or not entity_id.strip():
         return {"error": "entity_id is required and must be a non-empty string"}
 
@@ -1144,7 +1145,7 @@ def _do_search_entity_by_name(
     config_path: str,
     ha_url: str | None,
     ha_token: str | None,
-) -> dict:
+) -> dict[str, Any]:
     return _do_search_registries_batch(
         search_term=search_term,
         entity_ids=None,
@@ -1163,7 +1164,7 @@ def _do_get_entity_details(
     config_path: str,
     ha_url: str | None,
     ha_token: str | None,
-) -> dict:
+) -> dict[str, Any]:
     return _do_get_entity_context(
         entity_id=entity_id,
         config_path=config_path,
@@ -1177,7 +1178,9 @@ def _do_get_entity_details(
 # ========================================
 
 
-def register_storage_tools(mcp, config_path: str, ha_url: str = None, ha_token: str = None):
+def register_storage_tools(  # type: ignore[no-untyped-def]
+    mcp, config_path: str, ha_url: str | None = None, ha_token: str | None = None
+) -> None:
     """
     Registers tools for working with .storage files and hybrid diagnostic tools.
     """
@@ -1421,10 +1424,10 @@ def register_storage_tools(mcp, config_path: str, ha_url: str = None, ha_token: 
 
     @mcp.tool()
     async def search_lovelace_config(
-        search_term: str = None,
-        card_type: str = None,
-        entity_id: str = None,
-        dashboard: str = None,
+        search_term: str | None = None,
+        card_type: str | None = None,
+        entity_id: str | None = None,
+        dashboard: str | None = None,
         max_results: int = 50,
     ) -> str:
         """[READ] Search inside Lovelace dashboard configurations by entity_id, card_type, or free-text.
@@ -1453,7 +1456,7 @@ def register_storage_tools(mcp, config_path: str, ha_url: str = None, ha_token: 
             return _error_response(str(e))
 
     @mcp.tool()
-    async def get_lovelace_config_summary(dashboard: str = None) -> str:
+    async def get_lovelace_config_summary(dashboard: str | None = None) -> str:
         """[READ] Token-efficient Lovelace dashboard structure overview: card type breakdown, view counts, strategy detection. ~95% token savings.
 
         Returns card counts, type breakdown, view info. ~95% token savings
@@ -1553,7 +1556,7 @@ def register_storage_tools(mcp, config_path: str, ha_url: str = None, ha_token: 
             return _error_response(str(e))
 
     @mcp.tool()
-    async def get_template_entities(entity_id: str = None) -> str:
+    async def get_template_entities(entity_id: str | None = None) -> str:
         """[READ] Fetches template sensors and binary_sensors created via UI.
         Template helpers are stored in .storage/core.config_entries.
 

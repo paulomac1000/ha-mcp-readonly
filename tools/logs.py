@@ -59,7 +59,7 @@ _AUTOMATION_PATTERN = re.compile(r"automation\.([a-zA-Z0-9_]+)")
 # ========================================
 
 
-def _parse_log_line(line: str) -> dict:
+def _parse_log_line(line: str) -> dict[str, Any]:
     """Parse a single log line into structured data."""
     result = {"raw": line.strip()}
 
@@ -86,12 +86,14 @@ def _parse_log_line(line: str) -> dict:
         result["message"] = line.strip()
 
     if "timestamp" not in result and "level" not in result:
-        result["unparsed"] = True
+        result["unparsed"] = True  # type: ignore[assignment]
 
     return result
 
 
-def _read_log_file(log_file: str, config_path: str, max_lines: int = None) -> list[str] | None:
+def _read_log_file(
+    log_file: str, config_path: str, max_lines: int | None = None
+) -> list[str] | None:
     """Read log file efficiently, handling encoding errors."""
     log_path = Path(config_path) / log_file
     if not log_path.exists():
@@ -182,13 +184,13 @@ def _do_get_log_insights(
     config_path: str = "",
     ha_url: str = "",
     ha_token: str = "",
-) -> dict:
+) -> dict[str, Any]:
     cache_key = (
         f"insights_{hours}_{severity}_{group_similar}_{include_affected_entities}_{max_patterns}"
     )
     cached = _get_cached_result(cache_key)
     if cached:
-        return cached
+        return cached  # type: ignore[no-any-return]
 
     hours = min(max(int(hours), 1), 24)
     log_lines = _read_log_file("home-assistant.log", config_path)
@@ -199,15 +201,15 @@ def _do_get_log_insights(
     cutoff_time = datetime.now() - timedelta(hours=hours)
 
     # Data structures
-    errors: list[dict] = []
-    warnings: list[dict] = []
+    errors: list[dict] = []  # type: ignore[type-arg]
+    warnings: list[dict] = []  # type: ignore[type-arg]
     all_entities: set[str] = set()
     all_automations: set[str] = set()
-    component_counter: Counter = Counter()
-    category_counter: Counter = Counter()
+    component_counter: Counter = Counter()  # type: ignore[type-arg]
+    category_counter: Counter = Counter()  # type: ignore[type-arg]
 
     # Pattern grouping with affected entities
-    pattern_data: dict[str, dict] = defaultdict(
+    pattern_data: dict[str, dict] = defaultdict(  # type: ignore[type-arg]
         lambda: {
             "count": 0,
             "first_occurrence": None,
@@ -335,7 +337,7 @@ def _do_get_log_insights(
 
     # Generate recommendations
     if category_counter["timeout"] > 5:
-        result["recommendations"].append(
+        result["recommendations"].append(  # type: ignore[attr-defined]
             {
                 "priority": "high",
                 "category": "timeout",
@@ -344,7 +346,7 @@ def _do_get_log_insights(
         )
 
     if category_counter["unavailable"] > 10:
-        result["recommendations"].append(
+        result["recommendations"].append(  # type: ignore[attr-defined]
             {
                 "priority": "high",
                 "category": "unavailable",
@@ -353,7 +355,7 @@ def _do_get_log_insights(
         )
 
     if category_counter["template"] > 3:
-        result["recommendations"].append(
+        result["recommendations"].append(  # type: ignore[attr-defined]
             {
                 "priority": "medium",
                 "category": "template",
@@ -362,7 +364,7 @@ def _do_get_log_insights(
         )
 
     if category_counter["api"] > 5:
-        result["recommendations"].append(
+        result["recommendations"].append(  # type: ignore[attr-defined]
             {
                 "priority": "medium",
                 "category": "api",
@@ -372,7 +374,7 @@ def _do_get_log_insights(
 
     top_component = component_counter.most_common(1)
     if top_component and top_component[0][1] > 10:
-        result["recommendations"].append(
+        result["recommendations"].append(  # type: ignore[attr-defined]
             {
                 "priority": "high",
                 "category": "component",
@@ -382,7 +384,7 @@ def _do_get_log_insights(
 
     # Check for specific automation issues
     if all_automations:
-        result["recommendations"].append(
+        result["recommendations"].append(  # type: ignore[attr-defined]
             {
                 "priority": "medium",
                 "category": "automation",
@@ -391,7 +393,7 @@ def _do_get_log_insights(
         )
 
     if not result["recommendations"]:
-        result["recommendations"].append(
+        result["recommendations"].append(  # type: ignore[attr-defined]
             {
                 "priority": "info",
                 "category": "general",
@@ -409,11 +411,11 @@ def _do_analyze_log_errors(
     config_path: str = "",
     ha_url: str = "",
     ha_token: str = "",
-) -> dict:
+) -> dict[str, Any]:
     cache_key = f"analyze_{log_source}_{max_results}"
     cached = _get_cached_result(cache_key)
     if cached:
-        return cached
+        return cached  # type: ignore[no-any-return]
 
     max_results = int(max_results)
 
@@ -534,7 +536,7 @@ def _do_get_recent_logs(
     config_path: str = "",
     ha_url: str = "",
     ha_token: str = "",
-) -> dict:
+) -> dict[str, Any]:
     lines = min(int(lines), 500)
     log_lines = _read_log_file("home-assistant.log", config_path, lines * 2)
 
@@ -560,7 +562,7 @@ def _do_get_previous_logs(
     config_path: str = "",
     ha_url: str = "",
     ha_token: str = "",
-) -> dict:
+) -> dict[str, Any]:
     lines = min(int(lines), 500)
     log_lines = _read_log_file("home-assistant.log.1", config_path, lines * 2)
 
@@ -593,7 +595,7 @@ def _do_search_logs(
     config_path: str = "",
     ha_url: str = "",
     ha_token: str = "",
-) -> dict:
+) -> dict[str, Any]:
     max_results = int(max_results)
     context_lines = min(int(context_lines), 5)
 
@@ -653,7 +655,7 @@ def _do_get_component_logs(
     config_path: str = "",
     ha_url: str = "",
     ha_token: str = "",
-) -> dict:
+) -> dict[str, Any]:
     max_results = int(max_results)
     results = []
 
@@ -717,7 +719,7 @@ def _do_get_startup_errors(
     config_path: str = "",
     ha_url: str = "",
     ha_token: str = "",
-) -> dict:
+) -> dict[str, Any]:
     log_lines = _read_log_file("home-assistant.log", config_path)
 
     if not log_lines:
@@ -777,7 +779,7 @@ def _do_get_log_timeline(
     config_path: str = "",
     ha_url: str = "",
     ha_token: str = "",
-) -> dict:
+) -> dict[str, Any]:
     try:
         if isinstance(hours, str):
             extracted = re.search(r"(\d+)", hours)
@@ -840,7 +842,7 @@ def _do_get_log_timeline(
 # ========================================
 
 
-def register_log_tools(mcp, config_path: str):
+def register_log_tools(mcp, config_path: str) -> None:  # type: ignore[no-untyped-def]
     """
     Registers tools for analyzing Home Assistant logs.
     """

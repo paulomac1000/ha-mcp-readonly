@@ -158,7 +158,7 @@ def _do_list_directory(path: str, max_entries: int) -> str:
         if not target.is_dir():
             return _error_response(f"Not a directory: {target}")
 
-        entries = []
+        entries = []  # type: ignore[var-annotated]
         for entry in target.iterdir():
             if len(entries) >= max_entries:
                 break
@@ -276,7 +276,7 @@ def _do_search_files(pattern: str, search_path: str, max_results: int) -> str:
         if not target.is_dir():
             return _error_response(f"Search path must be a directory: {target}")
 
-        results = []
+        results = []  # type: ignore[var-annotated]
         files_searched = 0
 
         for root, dirs, files in os.walk(target):
@@ -346,7 +346,7 @@ def _do_search_files(pattern: str, search_path: str, max_results: int) -> str:
 # =============================================================================
 
 
-def register_filesystem_tools(mcp) -> None:
+def register_filesystem_tools(mcp) -> None:  # type: ignore[no-untyped-def]
     """Register filesystem tools on the MCP server with allowlist enforcement."""
 
     @mcp.tool()

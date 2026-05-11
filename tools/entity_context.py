@@ -105,7 +105,7 @@ def _do_entity_get_context_tree(
             }
         )
 
-    sources = defaultdict(lambda: {"count": 0, "events": []})
+    sources = defaultdict(lambda: {"count": 0, "events": []})  # type: ignore[var-annotated]
 
     for entry in entity_logbook[:20]:
         message = (entry.get("message") or "").lower()
@@ -121,8 +121,8 @@ def _do_entity_get_context_tree(
         elif "changed" in message:
             source_type = "device_update"
 
-        sources[source_type]["count"] += 1
-        sources[source_type]["events"].append(
+        sources[source_type]["count"] += 1  # type: ignore[operator]
+        sources[source_type]["events"].append(  # type: ignore[attr-defined]
             {
                 "time": entry.get("when"),
                 "message": entry.get("message"),
@@ -172,18 +172,18 @@ def _do_entity_get_context_tree(
                 "sensor_based"
                 if any("sensor" in str(e.get("message", "")).lower() for e in entity_logbook)
                 else None,
-                "user_triggered" if sources.get("user_action", {}).get("count", 0) > 0 else None,
+                "user_triggered" if sources.get("user_action", {}).get("count", 0) > 0 else None,  # type: ignore[operator]
             ],
         },
         "recommendations": [],
     }
 
-    if sources.get("automation", {}).get("count", 0) > 10:
+    if sources.get("automation", {}).get("count", 0) > 10:  # type: ignore[operator]
         context_tree["recommendations"].append(
             "High automation activity detected - consider reviewing automation logic"
         )
 
-    if sources.get("unknown", {}).get("count", 0) > len(entity_logbook) * 0.5:
+    if sources.get("unknown", {}).get("count", 0) > len(entity_logbook) * 0.5:  # type: ignore[operator]
         context_tree["recommendations"].append(
             "Many events with unknown source - enable debug logging for better tracing"
         )
@@ -196,7 +196,7 @@ def _do_entity_get_context_tree(
     return _success_response({"context_tree": context_tree})
 
 
-def register_entity_context_tools(mcp, config_path: str, ha_url: str, ha_token: str):
+def register_entity_context_tools(mcp, config_path: str, ha_url: str, ha_token: str) -> None:  # type: ignore[no-untyped-def]
     """Register entity context tracing tools."""
 
     @mcp.tool()

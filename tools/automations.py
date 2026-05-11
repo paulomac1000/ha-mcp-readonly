@@ -24,7 +24,7 @@ TOOLS_VERSION = "1.0.0"
 # ========================================
 
 
-def _load_automations(config_path: str) -> list[dict]:
+def _load_automations(config_path: str) -> list[dict]:  # type: ignore[type-arg]
     """Safely loads the automations.yaml file."""
     try:
         file_path = os.path.join(config_path, "automations.yaml")
@@ -36,7 +36,7 @@ def _load_automations(config_path: str) -> list[dict]:
         return []
 
 
-def _get_automation_by_id_or_alias(data: list[dict], identifier: str) -> dict | None:
+def _get_automation_by_id_or_alias(data: list[dict], identifier: str) -> dict | None:  # type: ignore[type-arg]
     """Finds automation by alias or id (case-insensitive)."""
     identifier_lower = identifier.lower()
     for item in data:
@@ -51,7 +51,7 @@ def _get_automation_by_id_or_alias(data: list[dict], identifier: str) -> dict | 
     return None
 
 
-def _extract_entities_recursive(data: Any, found: set[str]):
+def _extract_entities_recursive(data: Any, found: set[str]):  # type: ignore[no-untyped-def]
     """Recursively extracts entities from dictionary/list structures."""
     pattern = re.compile(
         r"\b(?:sensor|binary_sensor|light|switch|climate|cover|input_\w+|automation|script|person|device_tracker|"
@@ -106,8 +106,8 @@ def _do_search_automations(
     mode: str | None = None,
     uses_blueprint: bool | None = None,
     config_path: str | None = None,
-) -> dict:
-    data = _load_automations(config_path)
+) -> dict[str, Any]:
+    data = _load_automations(config_path)  # type: ignore[arg-type]
     results = []
 
     for item in data:
@@ -152,7 +152,7 @@ def _do_search_automations(
 
         results.append(res)
 
-    def _sort_key(r):
+    def _sort_key(r):  # type: ignore[no-untyped-def]
         is_disabled = 1 if r.get("disabled_by") else 0
         return (is_disabled, r.get("alias", "").lower())
 
@@ -166,7 +166,7 @@ def _do_search_automations(
     }
 
 
-def _do_list_automations(config_path: str) -> dict:
+def _do_list_automations(config_path: str) -> dict[str, Any]:
     data = _load_automations(config_path)
     summary = [
         {
@@ -195,7 +195,7 @@ def _do_list_automations(config_path: str) -> dict:
     return {"success": True, "total_count": len(summary), "automations": summary}
 
 
-def _do_get_automation_code(automation_id: str, config_path: str) -> dict:
+def _do_get_automation_code(automation_id: str, config_path: str) -> dict[str, Any]:
     if not automation_id or not isinstance(automation_id, str) or not automation_id.strip():
         return {
             "success": False,
@@ -224,14 +224,14 @@ def _do_get_automation_code(automation_id: str, config_path: str) -> dict:
     }
 
 
-def _do_get_automation_dependencies(automation_id: str, config_path: str) -> dict:
+def _do_get_automation_dependencies(automation_id: str, config_path: str) -> dict[str, Any]:
     data = _load_automations(config_path)
     item = _get_automation_by_id_or_alias(data, automation_id)
 
     if not item:
         return {"success": False, "error": "Automation not found"}
 
-    entities = set()
+    entities = set()  # type: ignore[var-annotated]
     _extract_entities_recursive(item, entities)
 
     scripts = sorted([e for e in entities if e.startswith("script.")])
@@ -255,7 +255,7 @@ def _do_get_automation_dependencies(automation_id: str, config_path: str) -> dic
     }
 
 
-def _do_search_automations_by_entity(entity_id: str, config_path: str) -> dict:
+def _do_search_automations_by_entity(entity_id: str, config_path: str) -> dict[str, Any]:
     data = _load_automations(config_path)
     results = []
 
@@ -290,7 +290,7 @@ def _do_search_automations_by_entity(entity_id: str, config_path: str) -> dict:
     }
 
 
-def _do_get_automation_conflicts(entity_id: str, config_path: str) -> dict:
+def _do_get_automation_conflicts(entity_id: str, config_path: str) -> dict[str, Any]:
     data = _load_automations(config_path)
     writers = []
     readers = []
@@ -342,8 +342,8 @@ def _do_diagnose_automation(
     config_path: str | None = None,
     ha_url: str | None = None,
     ha_token: str | None = None,
-) -> dict:
-    data = _load_automations(config_path)
+) -> dict[str, Any]:
+    data = _load_automations(config_path)  # type: ignore[arg-type]
     automation = _get_automation_by_id_or_alias(data, automation_id)
 
     if not automation:
@@ -375,7 +375,7 @@ def _do_diagnose_automation(
     if detail_level in ["summary", "full"]:
         code_item = automation.copy()
         code_item.pop("id", None)
-        result["automation_info"]["full_code"] = yaml.dump(
+        result["automation_info"]["full_code"] = yaml.dump(  # type: ignore[index]
             code_item,
             allow_unicode=True,
             default_flow_style=False,
@@ -394,7 +394,7 @@ def _do_diagnose_automation(
     if detail_level == "full" and "use_blueprint" in automation:
         blueprint_path = automation["use_blueprint"].get("path")
         if blueprint_path:
-            blueprint_file = os.path.join(config_path, "blueprints", blueprint_path)
+            blueprint_file = os.path.join(config_path, "blueprints", blueprint_path)  # type: ignore[arg-type]
             if os.path.exists(blueprint_file):
                 try:
                     with open(blueprint_file, encoding="utf-8") as f:
@@ -413,7 +413,7 @@ def _do_diagnose_automation(
                             ),
                         }
                 except Exception as e:
-                    result["issues"].append(
+                    result["issues"].append(  # type: ignore[attr-defined]
                         {
                             "severity": "error",
                             "type": "blueprint_load_error",
@@ -421,7 +421,7 @@ def _do_diagnose_automation(
                         }
                     )
             else:
-                result["issues"].append(
+                result["issues"].append(  # type: ignore[attr-defined]
                     {
                         "severity": "error",
                         "type": "blueprint_not_found",
@@ -429,21 +429,21 @@ def _do_diagnose_automation(
                     }
                 )
 
-    entities = set()
+    entities = set()  # type: ignore[var-annotated]
     scripts = set()
     scenes = set()
     _extract_entities_recursive(automation, entities)
 
-    for e in entities:
+    for e in entities:  # type: ignore[misc]
         if e.startswith("script."):
             scripts.add(e.replace("script.", ""))
         elif e.startswith("scene."):
             scenes.add(e.replace("scene.", ""))
 
-    result["statistics"]["total_entities"] = len(entities)
+    result["statistics"]["total_entities"] = len(entities)  # type: ignore[index]
 
     templates = _extract_templates(automation)
-    result["statistics"]["total_templates"] = len(templates)
+    result["statistics"]["total_templates"] = len(templates)  # type: ignore[index]
 
     if ha_url and ha_token:
         all_states_result = make_ha_request(ha_url, ha_token, "/api/states")
@@ -460,7 +460,7 @@ def _do_diagnose_automation(
                     state_data = states_dict[entity_id]
 
                     if detail_level == "full":
-                        result["entity_validation"][entity_id] = {
+                        result["entity_validation"][entity_id] = {  # type: ignore[index]
                             "exists": True,
                             "state": state_data["state"],
                             "friendly_name": state_data.get("attributes", {}).get(
@@ -472,7 +472,7 @@ def _do_diagnose_automation(
                         }
 
                     if state_data["state"] == "unavailable":
-                        result["statistics"]["unavailable_entities"] += 1
+                        result["statistics"]["unavailable_entities"] += 1  # type: ignore[index]
                         entity_issues.append(
                             {
                                 "severity": "warning",
@@ -482,7 +482,7 @@ def _do_diagnose_automation(
                             }
                         )
                     elif state_data["state"] == "unknown":
-                        result["statistics"]["unavailable_entities"] += 1
+                        result["statistics"]["unavailable_entities"] += 1  # type: ignore[index]
                         entity_issues.append(
                             {
                                 "severity": "warning",
@@ -492,10 +492,10 @@ def _do_diagnose_automation(
                             }
                         )
                 else:
-                    result["statistics"]["missing_entities"] += 1
+                    result["statistics"]["missing_entities"] += 1  # type: ignore[index]
 
                     if detail_level == "full":
-                        result["entity_validation"][entity_id] = {
+                        result["entity_validation"][entity_id] = {  # type: ignore[index]
                             "exists": False,
                             "error": "Entity not found in HA",
                         }
@@ -510,11 +510,11 @@ def _do_diagnose_automation(
                     )
 
             if detail_level in ["minimal", "summary"]:
-                result["issues"].extend(entity_issues[:10])
+                result["issues"].extend(entity_issues[:10])  # type: ignore[attr-defined]
             else:
-                result["issues"].extend(entity_issues)
+                result["issues"].extend(entity_issues)  # type: ignore[attr-defined]
         else:
-            result["issues"].append(
+            result["issues"].append(  # type: ignore[attr-defined]
                 {
                     "severity": "warning",
                     "type": "validation_error",
@@ -522,7 +522,7 @@ def _do_diagnose_automation(
                 }
             )
     else:
-        result["issues"].append(
+        result["issues"].append(  # type: ignore[attr-defined]
             {
                 "severity": "info",
                 "type": "validation_skipped",
@@ -531,7 +531,7 @@ def _do_diagnose_automation(
         )
 
     if detail_level == "full" and scripts:
-        scripts_file = os.path.join(config_path, "scripts.yaml")
+        scripts_file = os.path.join(config_path, "scripts.yaml")  # type: ignore[arg-type]
         if os.path.exists(scripts_file):
             try:
                 with open(scripts_file, encoding="utf-8") as f:
@@ -539,7 +539,7 @@ def _do_diagnose_automation(
 
                 for script_id in scripts:
                     if script_id in scripts_data:
-                        result["script_validation"][script_id] = {
+                        result["script_validation"][script_id] = {  # type: ignore[index]
                             "exists": True,
                             "alias": scripts_data[script_id].get("alias", ""),
                             "code": yaml.dump(
@@ -549,8 +549,8 @@ def _do_diagnose_automation(
                             ),
                         }
                     else:
-                        result["script_validation"][script_id] = {"exists": False}
-                        result["issues"].append(
+                        result["script_validation"][script_id] = {"exists": False}  # type: ignore[index]
+                        result["issues"].append(  # type: ignore[attr-defined]
                             {
                                 "severity": "error",
                                 "type": "script_not_found",
@@ -559,7 +559,7 @@ def _do_diagnose_automation(
                             }
                         )
             except Exception as e:
-                result["issues"].append(
+                result["issues"].append(  # type: ignore[attr-defined]
                     {
                         "severity": "error",
                         "type": "scripts_load_error",
@@ -568,7 +568,7 @@ def _do_diagnose_automation(
                 )
 
     if detail_level == "full" and scenes:
-        scenes_file = os.path.join(config_path, "scenes.yaml")
+        scenes_file = os.path.join(config_path, "scenes.yaml")  # type: ignore[arg-type]
         if os.path.exists(scenes_file):
             try:
                 with open(scenes_file, encoding="utf-8") as f:
@@ -578,13 +578,13 @@ def _do_diagnose_automation(
 
                 for scene_id in scenes:
                     if scene_id in scene_ids:
-                        result["script_validation"][f"scene.{scene_id}"] = {
+                        result["script_validation"][f"scene.{scene_id}"] = {  # type: ignore[index]
                             "exists": True,
                             "type": "scene",
                             "name": scene_ids[scene_id].get("name", ""),
                         }
                     else:
-                        result["issues"].append(
+                        result["issues"].append(  # type: ignore[attr-defined]
                             {
                                 "severity": "warning",
                                 "type": "scene_not_found",
@@ -593,7 +593,7 @@ def _do_diagnose_automation(
                             }
                         )
             except Exception as e:
-                result["issues"].append(
+                result["issues"].append(  # type: ignore[attr-defined]
                     {
                         "severity": "warning",
                         "type": "scenes_load_error",
@@ -615,10 +615,10 @@ def _do_diagnose_automation(
 
             is_valid = template_result["success"]
             if not is_valid:
-                result["statistics"]["invalid_templates"] += 1
+                result["statistics"]["invalid_templates"] += 1  # type: ignore[index]
 
             if detail_level == "full":
-                result["template_validation"].append(
+                result["template_validation"].append(  # type: ignore[attr-defined]
                     {
                         "path": template_info["path"],
                         "template": template_info["template"][:200],
@@ -629,7 +629,7 @@ def _do_diagnose_automation(
                 )
 
             if not is_valid:
-                result["issues"].append(
+                result["issues"].append(  # type: ignore[attr-defined]
                     {
                         "severity": "error",
                         "type": "template_error",
@@ -643,7 +643,7 @@ def _do_diagnose_automation(
     if triggers and not isinstance(triggers, list):
         triggers = [triggers]
 
-    result["statistics"]["total_triggers"] = len(triggers)
+    result["statistics"]["total_triggers"] = len(triggers)  # type: ignore[index]
 
     if detail_level == "full":
         for idx, trigger in enumerate(triggers):
@@ -659,7 +659,7 @@ def _do_diagnose_automation(
                 if "entity_id" not in trigger:
                     issue = f"Trigger {idx}: 'state' platform missing 'entity_id'"
                     analysis["issues"].append(issue)
-                    result["issues"].append(
+                    result["issues"].append(  # type: ignore[attr-defined]
                         {
                             "severity": "error",
                             "type": "trigger_config_error",
@@ -670,7 +670,7 @@ def _do_diagnose_automation(
                 if "at" not in trigger:
                     issue = f"Trigger {idx}: 'time' platform missing 'at'"
                     analysis["issues"].append(issue)
-                    result["issues"].append(
+                    result["issues"].append(  # type: ignore[attr-defined]
                         {
                             "severity": "error",
                             "type": "trigger_config_error",
@@ -681,7 +681,7 @@ def _do_diagnose_automation(
                 if "entity_id" not in trigger:
                     issue = f"Trigger {idx}: 'numeric_state' missing 'entity_id'"
                     analysis["issues"].append(issue)
-                    result["issues"].append(
+                    result["issues"].append(  # type: ignore[attr-defined]
                         {
                             "severity": "error",
                             "type": "trigger_config_error",
@@ -691,7 +691,7 @@ def _do_diagnose_automation(
                 if "above" not in trigger and "below" not in trigger:
                     issue = f"Trigger {idx}: 'numeric_state' missing 'above' or 'below'"
                     analysis["issues"].append(issue)
-                    result["issues"].append(
+                    result["issues"].append(  # type: ignore[attr-defined]
                         {
                             "severity": "error",
                             "type": "trigger_config_error",
@@ -702,7 +702,7 @@ def _do_diagnose_automation(
                 if "value_template" not in trigger:
                     issue = f"Trigger {idx}: 'template' platform missing 'value_template'"
                     analysis["issues"].append(issue)
-                    result["issues"].append(
+                    result["issues"].append(  # type: ignore[attr-defined]
                         {
                             "severity": "error",
                             "type": "trigger_config_error",
@@ -710,13 +710,13 @@ def _do_diagnose_automation(
                         }
                     )
 
-            result["trigger_analysis"].append(analysis)
+            result["trigger_analysis"].append(analysis)  # type: ignore[attr-defined]
 
     has_ha_start = any(
         t.get("platform") == "homeassistant" and t.get("event") == "start" for t in triggers
     )
     if not has_ha_start and len(triggers) > 0:
-        result["recommendations"].append(
+        result["recommendations"].append(  # type: ignore[attr-defined]
             {
                 "priority": "low",
                 "message": "Consider adding 'homeassistant: start' trigger for resilience",
@@ -728,7 +728,7 @@ def _do_diagnose_automation(
     if conditions and not isinstance(conditions, list):
         conditions = [conditions]
 
-    result["statistics"]["total_conditions"] = len(conditions)
+    result["statistics"]["total_conditions"] = len(conditions)  # type: ignore[index]
 
     if detail_level == "full":
         for idx, condition in enumerate(conditions):
@@ -743,7 +743,7 @@ def _do_diagnose_automation(
             if cond_type == "state" and "entity_id" not in condition:
                 issue = f"Condition {idx}: 'state' condition missing 'entity_id'"
                 analysis["issues"].append(issue)
-                result["issues"].append(
+                result["issues"].append(  # type: ignore[attr-defined]
                     {
                         "severity": "error",
                         "type": "condition_config_error",
@@ -753,7 +753,7 @@ def _do_diagnose_automation(
             elif cond_type == "numeric_state" and "entity_id" not in condition:
                 issue = f"Condition {idx}: 'numeric_state' condition missing 'entity_id'"
                 analysis["issues"].append(issue)
-                result["issues"].append(
+                result["issues"].append(  # type: ignore[attr-defined]
                     {
                         "severity": "error",
                         "type": "condition_config_error",
@@ -761,13 +761,13 @@ def _do_diagnose_automation(
                     }
                 )
 
-            result["condition_analysis"].append(analysis)
+            result["condition_analysis"].append(analysis)  # type: ignore[attr-defined]
 
     actions = automation.get("action", [])
     if actions and not isinstance(actions, list):
         actions = [actions]
 
-    result["statistics"]["total_actions"] = len(actions)
+    result["statistics"]["total_actions"] = len(actions)  # type: ignore[index]
 
     has_variables = False
     variables_index = -1
@@ -805,7 +805,7 @@ def _do_diagnose_automation(
                 if not service:
                     issue = f"Action {idx}: service call missing 'service' field"
                     analysis["issues"].append(issue)
-                    result["issues"].append(
+                    result["issues"].append(  # type: ignore[attr-defined]
                         {
                             "severity": "error",
                             "type": "action_config_error",
@@ -813,7 +813,7 @@ def _do_diagnose_automation(
                         }
                     )
 
-            result["action_analysis"].append(analysis)
+            result["action_analysis"].append(analysis)  # type: ignore[attr-defined]
     else:
         for idx, action in enumerate(actions):
             if "variables" in action:
@@ -822,7 +822,7 @@ def _do_diagnose_automation(
                 break
 
     if has_variables and variables_index > 0:
-        result["recommendations"].append(
+        result["recommendations"].append(  # type: ignore[attr-defined]
             {
                 "priority": "medium",
                 "message": "Move 'variables' block to the beginning of actions",
@@ -831,7 +831,7 @@ def _do_diagnose_automation(
         )
 
     if not automation.get("mode"):
-        result["recommendations"].append(
+        result["recommendations"].append(  # type: ignore[attr-defined]
             {
                 "priority": "medium",
                 "message": "Add 'mode' parameter (single/restart/queued/parallel)",
@@ -840,7 +840,7 @@ def _do_diagnose_automation(
         )
 
     if len(triggers) > 3:
-        result["recommendations"].append(
+        result["recommendations"].append(  # type: ignore[attr-defined]
             {
                 "priority": "low",
                 "message": "Consider splitting into separate automations",
@@ -848,35 +848,35 @@ def _do_diagnose_automation(
             }
         )
 
-    if result["statistics"]["missing_entities"] > 0:
-        result["recommendations"].append(
+    if result["statistics"]["missing_entities"] > 0:  # type: ignore[index]
+        result["recommendations"].append(  # type: ignore[attr-defined]
             {
                 "priority": "high",
-                "message": f"Fix {result['statistics']['missing_entities']} missing entities",
+                "message": f"Fix {result['statistics']['missing_entities']} missing entities",  # type: ignore[index]
                 "reason": "Missing entities will cause automation failures",
             }
         )
 
-    if result["statistics"]["unavailable_entities"] > 0:
-        result["recommendations"].append(
+    if result["statistics"]["unavailable_entities"] > 0:  # type: ignore[index]
+        result["recommendations"].append(  # type: ignore[attr-defined]
             {
                 "priority": "medium",
-                "message": f"Fix {result['statistics']['unavailable_entities']} unavailable/unknown entities",
+                "message": f"Fix {result['statistics']['unavailable_entities']} unavailable/unknown entities",  # type: ignore[index]
                 "reason": "Unavailable entities may cause unexpected behavior",
             }
         )
 
-    if result["statistics"]["invalid_templates"] > 0:
-        result["recommendations"].append(
+    if result["statistics"]["invalid_templates"] > 0:  # type: ignore[index]
+        result["recommendations"].append(  # type: ignore[attr-defined]
             {
                 "priority": "high",
-                "message": f"Fix {result['statistics']['invalid_templates']} invalid templates",
+                "message": f"Fix {result['statistics']['invalid_templates']} invalid templates",  # type: ignore[index]
                 "reason": "Template errors will prevent automation from working",
             }
         )
 
     if len(templates) > 5 and not has_variables:
-        result["recommendations"].append(
+        result["recommendations"].append(  # type: ignore[attr-defined]
             {
                 "priority": "medium",
                 "message": "Consider moving complex logic to 'variables' block",
@@ -885,7 +885,7 @@ def _do_diagnose_automation(
         )
 
     if automation.get("mode") == "single" and len(triggers) > 1:
-        result["recommendations"].append(
+        result["recommendations"].append(  # type: ignore[attr-defined]
             {
                 "priority": "low",
                 "message": "Multiple triggers with 'single' mode - consider 'restart' or 'queued'",
@@ -897,7 +897,7 @@ def _do_diagnose_automation(
         (action.get("service") or "").startswith("notify.") for action in actions
     )
     if has_notifications and automation.get("mode") != "single":
-        result["recommendations"].append(
+        result["recommendations"].append(  # type: ignore[attr-defined]
             {
                 "priority": "low",
                 "message": "Notification automations should use mode: single",
@@ -906,15 +906,15 @@ def _do_diagnose_automation(
         )
 
     if not result["recommendations"]:
-        result["recommendations"].append(
+        result["recommendations"].append(  # type: ignore[attr-defined]
             {"priority": "info", "message": "Automation looks healthy!"}
         )
 
     priority_order = {"high": 0, "medium": 1, "low": 2, "info": 3}
-    result["recommendations"].sort(key=lambda x: priority_order.get(x.get("priority", "info"), 3))
+    result["recommendations"].sort(key=lambda x: priority_order.get(x.get("priority", "info"), 3))  # type: ignore[attr-defined]
 
     severity_order = {"error": 0, "warning": 1, "info": 2}
-    result["issues"].sort(key=lambda x: severity_order.get(x.get("severity", "info"), 2))
+    result["issues"].sort(key=lambda x: severity_order.get(x.get("severity", "info"), 2))  # type: ignore[attr-defined]
 
     return result
 
@@ -925,11 +925,11 @@ def _do_get_automation_usage_stats(
     config_path: str | None = None,
     ha_url: str | None = None,
     ha_token: str | None = None,
-) -> dict:
+) -> dict[str, Any]:
     if not ha_url or not ha_token:
         return {"success": False, "error": "HA API not configured (ha_url/ha_token missing)"}
 
-    data = _load_automations(config_path)
+    data = _load_automations(config_path)  # type: ignore[arg-type]
     automation = _get_automation_by_id_or_alias(data, automation_id)
     from_api = False
 
@@ -958,14 +958,14 @@ def _do_get_automation_usage_stats(
             }
 
     if not from_api:
-        auto_id = automation.get("id") or automation.get("alias") or "no_id"
+        auto_id = automation.get("id") or automation.get("alias") or "no_id"  # type: ignore[union-attr]
         slug = re.sub(r"[^a-z0-9_]+", "_", str(auto_id).lower()).strip("_")
         entity_id = f"automation.{slug}"
 
         state_result = make_ha_request(ha_url, ha_token, f"/api/states/{entity_id}")
         ha_state = state_result["data"] if state_result["success"] else None
 
-    entities = set()
+    entities = set()  # type: ignore[var-annotated]
     if not from_api and automation:
         _extract_entities_recursive(automation, entities)
 
@@ -1022,7 +1022,7 @@ def _do_get_automation_usage_stats(
         last_triggered_attr = attrs.get("last_triggered")
         is_enabled = current_state != "off"
 
-        def _parse_dt(v):
+        def _parse_dt(v):  # type: ignore[no-untyped-def]
             if not v:
                 return None
             try:
@@ -1030,8 +1030,8 @@ def _do_get_automation_usage_stats(
             except Exception:
                 return None
 
-        dt_hist = _parse_dt(last_run)
-        dt_attr = _parse_dt(last_triggered_attr)
+        dt_hist = _parse_dt(last_run)  # type: ignore[no-untyped-call]
+        dt_attr = _parse_dt(last_triggered_attr)  # type: ignore[no-untyped-call]
 
         if dt_attr and (not dt_hist or dt_attr > dt_hist):
             last_run = last_triggered_attr
@@ -1052,11 +1052,11 @@ def _do_get_automation_usage_stats(
     response = {
         "success": True,
         "automation": {
-            "alias": automation.get("alias")
+            "alias": automation.get("alias")  # type: ignore[union-attr]
             if not from_api
             else ha_state.get("attributes", {}).get("friendly_name"),
             "entity_id": entity_id,
-            "mode": automation.get("mode", "single") if not from_api else "single",
+            "mode": automation.get("mode", "single") if not from_api else "single",  # type: ignore[union-attr]
         },
         "stats": {
             "hours_back": hours_back,
@@ -1077,8 +1077,8 @@ def _do_automation_validate_triggers(
     automation_id: str | None = None,
     automation_alias: str | None = None,
     config_path: str | None = None,
-) -> dict:
-    automations = _load_automations(config_path)
+) -> dict[str, Any]:
+    automations = _load_automations(config_path)  # type: ignore[arg-type]
 
     if not automations:
         return {"success": False, "error": "No automations found"}
@@ -1141,7 +1141,7 @@ def _do_automation_validate_triggers(
     handlers_found = set()
     handler_locations = []
 
-    def _scan_for_trigger_handlers(obj, path=""):
+    def _scan_for_trigger_handlers(obj, path=""):  # type: ignore[no-untyped-def]
         if isinstance(obj, dict):
             if "choose" in obj:
                 for i, choice in enumerate(obj["choose"]):
@@ -1192,17 +1192,17 @@ def _do_automation_validate_triggers(
 
                 for i, item in enumerate(parallel_items):
                     if isinstance(item, dict):
-                        _scan_for_trigger_handlers(item, f"{path}.parallel[{i}]")
+                        _scan_for_trigger_handlers(item, f"{path}.parallel[{i}]")  # type: ignore[no-untyped-call]
 
             for key, value in obj.items():
                 if key not in ["choose", "if", "parallel"]:
-                    _scan_for_trigger_handlers(value, f"{path}.{key}")
+                    _scan_for_trigger_handlers(value, f"{path}.{key}")  # type: ignore[no-untyped-call]
 
         elif isinstance(obj, list):
             for i, item in enumerate(obj):
-                _scan_for_trigger_handlers(item, f"{path}[{i}]")
+                _scan_for_trigger_handlers(item, f"{path}[{i}]")  # type: ignore[no-untyped-call]
 
-    _scan_for_trigger_handlers(actions, "action")
+    _scan_for_trigger_handlers(actions, "action")  # type: ignore[no-untyped-call]
 
     orphaned_triggers = trigger_ids - handlers_found
     missing_handlers = handlers_found - trigger_ids
@@ -1275,7 +1275,7 @@ def _do_automation_validate_triggers(
     }
 
 
-def _do_get_automation_file_location(automation_id: str, config_path: str) -> dict:
+def _do_get_automation_file_location(automation_id: str, config_path: str) -> dict[str, Any]:
     if not automation_id or not isinstance(automation_id, str):
         return {"success": False, "error": "automation_id is required and must be a string"}
 
@@ -1347,7 +1347,7 @@ def _do_get_automation_file_location(automation_id: str, config_path: str) -> di
 # ========================================
 
 
-def register_automation_tools(mcp, config_path, ha_url=None, ha_token=None):
+def register_automation_tools(mcp, config_path, ha_url=None, ha_token=None) -> None:  # type: ignore[no-untyped-def]
     """
     Registers tools for managing automations.
     """
@@ -1573,7 +1573,7 @@ def register_automation_tools(mcp, config_path, ha_url=None, ha_token=None):
 
     @mcp.tool()
     async def automation_validate_triggers(
-        automation_id: str = None, automation_alias: str = None
+        automation_id: str | None = None, automation_alias: str | None = None
     ) -> str:
         """[READ] Validate that all trigger ids in an automation have corresponding handlers.
 

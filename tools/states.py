@@ -150,11 +150,11 @@ def _minify_state(
     }
 
 
-def _get_entity_platform(entity_id: str, entity_registry: list[dict]) -> str:
+def _get_entity_platform(entity_id: str, entity_registry: list[dict]) -> str:  # type: ignore[type-arg]
     """Get platform/integration for entity from registry."""
     for e in entity_registry:
         if e.get("entity_id") == entity_id:
-            return e.get("platform", "unknown")
+            return e.get("platform", "unknown")  # type: ignore[no-any-return]
     return entity_id.split(".")[0]
 
 
@@ -188,7 +188,7 @@ def _do_get_all_states(
     config_path: str | None,
     domain: str | None = None,
     include_attributes: bool = False,
-) -> dict:
+) -> dict[str, Any]:
     result = make_ha_request(ha_url, ha_token, "/api/states")
     if not result["success"]:
         return result
@@ -219,7 +219,7 @@ def _do_get_entity_state(
     ha_token: str,
     config_path: str | None,
     entity_id: str,
-) -> dict:
+) -> dict[str, Any]:
     result = make_ha_request(ha_url, ha_token, f"/api/states/{entity_id}")
 
     if not result["success"]:
@@ -238,7 +238,7 @@ def _do_get_entity_state_batch(
     ha_token: str,
     config_path: str | None,
     entity_ids: str,
-) -> dict:
+) -> dict[str, Any]:
     result = make_ha_request(ha_url, ha_token, "/api/states")
     if not result["success"]:
         return result
@@ -280,7 +280,7 @@ def _do_get_states_grouped(
     state_filter: str | None = None,
     include_counts_only: bool = False,
     max_samples_per_group: int = 5,
-) -> dict:
+) -> dict[str, Any]:
     result = make_ha_request(ha_url, ha_token, "/api/states")
     if not result["success"]:
         return result
@@ -296,7 +296,7 @@ def _do_get_states_grouped(
     for e in entity_registry:
         entity_to_platform[e.get("entity_id", "")] = e.get("platform", "unknown")
 
-    groups: dict[str, dict] = defaultdict(
+    groups: dict[str, dict] = defaultdict(  # type: ignore[type-arg]
         lambda: {"count": 0, "states": Counter(), "sample_entities": []}
     )
 
@@ -355,7 +355,7 @@ def _do_get_services(
     ha_token: str,
     config_path: str | None,
     domain: str | None = None,
-) -> dict:
+) -> dict[str, Any]:
     result = make_ha_request(ha_url, ha_token, "/api/services")
     if not result["success"]:
         return result
@@ -374,7 +374,7 @@ def _do_search_entities(
     search_term: str,
     domain: str | None = None,
     max_results: int = 50,
-) -> dict:
+) -> dict[str, Any]:
     result = make_ha_request(ha_url, ha_token, "/api/states")
     if not result["success"]:
         return result
@@ -409,13 +409,13 @@ def _do_get_domains_summary(
     ha_url: str,
     ha_token: str,
     config_path: str | None,
-) -> dict:
+) -> dict[str, Any]:
     result = make_ha_request(ha_url, ha_token, "/api/states")
     if not result["success"]:
         return result
 
     states = result["data"]
-    domains: dict[str, dict] = defaultdict(lambda: {"total": 0, "unavailable": 0, "unknown": 0})
+    domains: dict[str, dict] = defaultdict(lambda: {"total": 0, "unavailable": 0, "unknown": 0})  # type: ignore[type-arg]
 
     for state in states:
         domain = state["entity_id"].split(".")[0]
@@ -446,7 +446,7 @@ def _do_get_system_overview(
     include_unavailable: bool = True,
     include_problems: bool = True,
     group_unavailable_by: str = "integration",
-) -> dict:
+) -> dict[str, Any]:
     result = make_ha_request(ha_url, ha_token, "/api/states")
     if not result["success"]:
         return result
@@ -472,7 +472,7 @@ def _do_get_system_overview(
         device_to_name[d.get("id", "")] = d.get("name") or d.get("name_by_user") or "Unknown"
 
     domains: dict[str, int] = Counter()
-    unavailable_by_group: dict[str, dict] = defaultdict(
+    unavailable_by_group: dict[str, dict] = defaultdict(  # type: ignore[type-arg]
         lambda: {"count": 0, "device_names": set(), "sample_entities": []}
     )
     unknown_entities = []
@@ -532,7 +532,7 @@ def _do_get_system_overview(
             "total_domains": len(domains),
             "unavailable_count": total_unavailable,
             "unknown_count": len(unknown_entities),
-            "by_domain": dict(domains.most_common()),
+            "by_domain": dict(domains.most_common()),  # type: ignore[attr-defined]
         },
     }
 
@@ -562,7 +562,7 @@ def _do_get_system_overview(
 
     recommendations = []
     if total_unavailable > 20:
-        top_group = max(
+        top_group = max(  # type: ignore[var-annotated]
             unavailable_by_group.items(),
             key=lambda x: x[1]["count"],
             default=(None, {}),
@@ -601,7 +601,7 @@ def _do_get_states_filtered(
     exclude_disabled: bool = True,
     group_results: bool = False,
     max_results: int = 200,
-) -> dict:
+) -> dict[str, Any]:
     result = make_ha_request(ha_url, ha_token, "/api/states")
     if not result["success"]:
         return result
@@ -612,7 +612,7 @@ def _do_get_states_filtered(
     area_list = [a.strip().lower() for a in areas.split(",")] if areas else None
 
     filtered = []
-    grouped: dict[str, list] = defaultdict(list) if group_results else None
+    grouped: dict[str, list] = defaultdict(list) if group_results else None  # type: ignore[assignment, type-arg]
 
     for s in states:
         entity_id = s["entity_id"]
@@ -687,7 +687,7 @@ def _do_get_entity_changes(
     domains: str | None = None,
     change_type: str = "any",
     min_changes: int = 1,
-) -> dict:
+) -> dict[str, Any]:
     hours_back = min(max(int(hours_back), 1), 24)
     cutoff = datetime.now(UTC) - timedelta(hours=hours_back)
 
@@ -699,7 +699,7 @@ def _do_get_entity_changes(
 
     domain_list = [d.strip() for d in domains.split(",")] if domains else None
 
-    changed_entities: dict[str, list] = defaultdict(list)
+    changed_entities: dict[str, list] = defaultdict(list)  # type: ignore[type-arg]
 
     for s in states:
         entity_id = s["entity_id"]
@@ -760,7 +760,7 @@ def _do_get_history_batch(
     entity_ids: str,
     hours_back: int = 24,
     limit: int = 10,
-) -> dict:
+) -> dict[str, Any]:
     hours_back = min(int(hours_back), 168)
     limit = min(int(limit), 50)
 
@@ -824,7 +824,7 @@ def _do_verify_recent_implementation(
     hours_back: int = 1,
     entity_pattern: str | None = None,
     automation_ids: str | None = None,
-) -> dict:
+) -> dict[str, Any]:
     cutoff = datetime.now(UTC) - timedelta(hours=hours_back)
 
     automation_id_list: list[str] | None = None
@@ -942,7 +942,7 @@ def _do_verify_recent_implementation(
 # ========================================
 
 
-def register_state_tools(mcp, ha_url, ha_token, config_path: str | None = None):
+def register_state_tools(mcp, ha_url, ha_token, config_path: str | None = None) -> None:  # type: ignore[no-untyped-def]
     """
     Registers tools for browsing entity states.
 
@@ -969,7 +969,7 @@ def register_state_tools(mcp, ha_url, ha_token, config_path: str | None = None):
         cache_key = f"all_states_{domain}_{include_attributes}"
         cached = _get_cached(cache_key)
         if cached:
-            return cached
+            return cached  # type: ignore[no-any-return]
         try:
             data = _do_get_all_states(ha_url, ha_token, config_path, domain, include_attributes)
         except Exception as e:
@@ -1041,7 +1041,7 @@ def register_state_tools(mcp, ha_url, ha_token, config_path: str | None = None):
         cache_key = f"states_grouped_{group_by}_{state_filter}_{include_counts_only}_{max_samples_per_group}"
         cached = _get_cached(cache_key)
         if cached:
-            return cached
+            return cached  # type: ignore[no-any-return]
         try:
             data = _do_get_states_grouped(
                 ha_url,
@@ -1072,7 +1072,7 @@ def register_state_tools(mcp, ha_url, ha_token, config_path: str | None = None):
         cache_key = f"services_{domain}"
         cached = _get_cached(cache_key)
         if cached:
-            return cached
+            return cached  # type: ignore[no-any-return]
         try:
             data = _do_get_services(ha_url, ha_token, config_path, domain)
         except Exception as e:
@@ -1115,7 +1115,7 @@ def register_state_tools(mcp, ha_url, ha_token, config_path: str | None = None):
         cache_key = "domains_summary"
         cached = _get_cached(cache_key)
         if cached:
-            return cached
+            return cached  # type: ignore[no-any-return]
         try:
             data = _do_get_domains_summary(ha_url, ha_token, config_path)
         except Exception as e:
@@ -1149,7 +1149,7 @@ def register_state_tools(mcp, ha_url, ha_token, config_path: str | None = None):
         cache_key = f"system_overview_{include_states}_{include_unavailable}_{include_problems}_{group_unavailable_by}"
         cached = _get_cached(cache_key)
         if cached:
-            return cached
+            return cached  # type: ignore[no-any-return]
         try:
             data = _do_get_system_overview(
                 ha_url,

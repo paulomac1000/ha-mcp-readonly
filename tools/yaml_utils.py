@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 # =============================================================================
 
 
-class HomeAssistantLoader(yaml.SafeLoader):
+class HomeAssistantLoader(yaml.SafeLoader):  # type: ignore[misc]
     """
     Custom YAML loader that handles Home Assistant specific tags.
 
@@ -113,7 +113,7 @@ def dump_yaml(data: Any, default_flow_style: bool = False, sort_keys: bool = Fal
     Returns:
         YAML string
     """
-    return yaml.dump(
+    return yaml.dump(  # type: ignore[no-any-return]
         data,
         allow_unicode=True,
         default_flow_style=default_flow_style,

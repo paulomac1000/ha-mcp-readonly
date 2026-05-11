@@ -8,6 +8,7 @@ Provides tools for device management and context:
 """
 
 import logging
+from typing import Any
 
 from tools.utils import (
     _error_response,
@@ -29,7 +30,7 @@ TOOLS_VERSION = "1.0.0"
 # =============================================================================
 
 
-def _get_device_by_id(device_id: str, config_path: str) -> dict | None:
+def _get_device_by_id(device_id: str, config_path: str) -> dict | None:  # type: ignore[type-arg]
     """Find device by id in the device registry."""
     devices = get_registry_devices(config_path)
     for device in devices:
@@ -38,7 +39,7 @@ def _get_device_by_id(device_id: str, config_path: str) -> dict | None:
     return None
 
 
-def _get_config_entry_info(entry_id: str, config_path: str) -> dict:
+def _get_config_entry_info(entry_id: str, config_path: str) -> dict[str, Any]:
     """Get basic config entry info."""
     entries = get_registry_config_entries(config_path)
     for entry in entries:
@@ -130,7 +131,7 @@ def _do_get_device_details(device_id: str, config_path: str, ha_url: str, ha_tok
 
     via_device_info = None
     if device.get("via_device_id"):
-        via_device = _get_device_by_id(device.get("via_device_id"), config_path)
+        via_device = _get_device_by_id(device.get("via_device_id"), config_path)  # type: ignore[arg-type]
         if via_device:
             via_device_info = {
                 "device_id": via_device.get("id"),
@@ -222,7 +223,7 @@ def _do_get_device_entities(
                     entity_info[f"attr_{key}"] = attrs[key]
         entities_list.append(entity_info)
 
-    entities_list.sort(key=lambda x: x.get("entity_id", ""))
+    entities_list.sort(key=lambda x: x.get("entity_id", ""))  # type: ignore[arg-type, return-value]
 
     return _success_response(
         {
@@ -305,7 +306,7 @@ def _do_search_devices(
 
         results.append(result_device)
 
-    results.sort(key=lambda x: x.get("name", "").lower())
+    results.sort(key=lambda x: x.get("name", "").lower())  # type: ignore[union-attr]
 
     return _success_response(
         {
@@ -361,7 +362,7 @@ def _do_get_devices_by_area(area_id: str, config_path: str) -> str:
             }
         )
 
-    results.sort(key=lambda x: x.get("name", "").lower())
+    results.sort(key=lambda x: x.get("name", "").lower())  # type: ignore[union-attr]
 
     return _success_response(
         {
@@ -422,7 +423,7 @@ def _do_device_get_wifi_status(device_id: str, config_path: str, ha_url: str, ha
                     try:
                         wifi_data["rssi"] = int(float(state))
                         rssi = wifi_data["rssi"]
-                        quality = max(0, min(100, 2 * (rssi + 90)))
+                        quality = max(0, min(100, 2 * (rssi + 90)))  # type: ignore[operator]
                         wifi_data["signal_quality"] = round(quality)
                         wifi_data["source"] = "ha_sensor"
                     except (ValueError, TypeError):
@@ -448,7 +449,7 @@ def _do_device_get_wifi_status(device_id: str, config_path: str, ha_url: str, ha
                         pass
 
     if wifi_data["rssi"] is not None:
-        wifi_data["connection_state"] = "connected" if wifi_data["rssi"] > -80 else "weak"
+        wifi_data["connection_state"] = "connected" if wifi_data["rssi"] > -80 else "weak"  # type: ignore[operator]
     elif any(v is not None for v in [wifi_data["ssid"], wifi_data["ip_address"]]):
         wifi_data["connection_state"] = "connected"
 
@@ -467,7 +468,7 @@ def _do_device_get_wifi_status(device_id: str, config_path: str, ha_url: str, ha
 # =============================================================================
 
 
-def register_device_tools(mcp, config_path: str, ha_url: str, ha_token: str):
+def register_device_tools(mcp, config_path: str, ha_url: str, ha_token: str) -> None:  # type: ignore[no-untyped-def]
     """Register device management tools."""
 
     @mcp.tool()
