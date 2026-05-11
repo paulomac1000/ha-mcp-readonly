@@ -85,6 +85,10 @@ excluded_dirs:
 exempt_files:
   - README.md
   - CHANGELOG.md
+  - CONTRIBUTING.md
+  - SECURITY.md
+  - INSTRUCTIONS.md
+  - AGENTS.md
 
 normative_sections:
   - RULES

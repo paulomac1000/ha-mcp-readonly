@@ -25,10 +25,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   violation messages, implemented tier-based relaxation (L0 skips all section
   checks, L1 requires only the first 2 sections), unified code block removal
   regex between `check_single_h1` and `_blank_code_blocks`
+- MCP server standards compliance — L1+/L2+ audit fixes: [READ] risk prefix
+  on all 120 tools, exception handler unit tests per [TEST-REG-3], TOOLS_VERSION
+  constant in states.py
+- CI improvements — tool count validation updated to 120 (was 118), added mypy
+  static type checking and bandit security linting to CI pipeline
+- Removed dead code — _error_response_extended function with zero callers
+  across all modules
+- Documentation improvements — added `make docs-check` target, YAML frontmatter
+  to docs/testing-guidelines.md, expanded afds_config.yaml exempt_files,
+  added `[READ]` prefix and exception handler rules to AGENTS.md
+- Updated test counts in README.md (703 unit, 909 total), CHANGELOG.md,
+  and AGENTS.md
 
 ### Tests
-- Unit tests: 689 → 701 (+12). 11 new tests for the two new tools across
-  test_automations.py and test_batch_operations.py.
+- Unit tests: 689 → 703 (+14). 11 new tests for the two new tools plus 2
+  exception handler tests per [TEST-REG-3].
 - Smoke tests: 84 → 86 (+2). Two new tests in test_critical_tools.py.
 - Both tools added to _REQUIRES_PARAMS in test_response_format.py.
 - Code coverage tools/ maintained at >85%.

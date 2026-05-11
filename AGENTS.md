@@ -154,6 +154,28 @@ context_generator/
 - `sanitize_log_line()` redacts JWTs, tokens, passwords, IPs from log output
 - Path traversal blocked in `filesystem_explorer.py` — `..` and `~` rejected
 
+### [READ] Risk Prefix
+
+- Every `@mcp.tool()` docstring MUST begin with `[READ]` as the first text.
+- Tools without the prefix will fail MCP standards compliance checks.
+- Reference: `ref.mcp-server-standards`, Section "Risk Annotations (L1+)".
+- Exception: dev tools gated behind `MCP_DEV_TOOLS_ENABLED` flag.
+
+### Exception Handler Tests [TEST-REG-3]
+
+- Every tool wrapper's `except Exception` block MUST have a corresponding unit test.
+- Pattern: patch the internal `_do_*` function with `side_effect=RuntimeError("msg")`,
+  call the tool, assert `data["success"] is False` and error text matches.
+- Reference: MCP Server Architect standard, Canonical Template 14.
+- Example: see `tests/unit/test_automations.py::TestExceptionHandler`.
+
+### AFDS Documentation Standard
+
+- All documentation files in `docs/` conform to AI-First Documentation Standard.
+- `afds_config.yaml` — project-specific validator configuration in repository root.
+- Validate docs: `python3 /var/apps/ai-skills/skills/afds-doc-writer/docs_validate.py --config afds_config.yaml docs/`
+- Reference: `/var/apps/ai-skills/skills/afds-doc-writer/docs_standards.md`
+
 ---
 
 ## Coverage Requirements

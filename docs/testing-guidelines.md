@@ -1,3 +1,8 @@
+---
+description: Testing guidelines for HA-MCP-Readonly — anti-patterns, VCR cassette tests, and CI configuration
+last_verified: 2026-05-10
+---
+
 # Testing Guidelines — HA-MCP-Readonly
 
 ## Anti-Pattern: Blind Mocks

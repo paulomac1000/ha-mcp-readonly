@@ -242,7 +242,7 @@ pip install -r requirements.txt
 ### Run tests
 
 ```bash
-# Unit tests (no credentials needed, 701 tests, <20s)
+# Unit tests (no credentials needed, 703 tests, <20s)
 pytest tests/unit/ -q
 
 # Smoke tests (requires local MCP server, 84 tests, <5s)
@@ -260,7 +260,7 @@ pytest tests/e2e/ -q
 pytest tests/unit/ tests/smoke/ tests/e2e/ tests/integration/ -q
 ```
 
-All unit tests use mocked dependencies — no real Home Assistant instance required. 907 total tests across 4 suites.
+All unit tests use mocked dependencies — no real Home Assistant instance required. 909 total tests across 4 suites.
 
 ### Lint & format
 
@@ -304,7 +304,7 @@ tools/
 └── yaml_utils.py          # HomeAssistantLoader for HA-specific YAML tags
 
 tests/
-├── unit/                  # 26 test files, 701 tests, fully mocked
+├── unit/                  # 26 test files, 703 tests, fully mocked
 └── integration/           # Real HA tests (requires HA_URL + HA_TOKEN)
 ```
 
