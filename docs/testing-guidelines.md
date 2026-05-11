@@ -1,3 +1,8 @@
+---
+description: Testing guidelines for HA-MCP-Readonly — anti-patterns, VCR cassette tests, and CI configuration
+last_verified: 2026-05-10
+---
+
 # Testing Guidelines — HA-MCP-Readonly
 
 ## Anti-Pattern: Blind Mocks
@@ -15,6 +20,8 @@ with patch("tools.automations.make_ha_request",
 
 The real HA endpoint returned `404`, but the mock returned `success: true`.
 **100% of 6 tests passed while the tool was completely broken in production.**
+
+> **Status:** Planned enhancement. VCR cassette testing is not yet implemented.
 
 ## Required: VCR Cassette Tests
 

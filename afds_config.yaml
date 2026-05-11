@@ -1,0 +1,111 @@
+# AFDS Validator Configuration for ha-mcp-readonly
+
+types:
+  guide:
+    id_prefix: guide
+    default_ttl: 180
+    sections:
+      - PURPOSE
+      - AUDIENCE
+      - CONTEXT
+      - WALKTHROUGH
+      - PITFALLS
+      - RELATED_DOCS
+
+statuses:
+  - active
+  - draft
+  - deprecated
+  - evolving
+  - archived
+
+ai_scope_values:
+  - editable
+  - review_only
+  - restricted
+
+stability_values:
+  - experimental
+  - stable
+  - frozen
+
+rigor_tier_values:
+  - L0
+  - L1
+  - L2
+  - L3
+
+allowed_fields:
+  - description
+  - doc_id
+  - type
+  - status
+  - rigor_tier
+  - ttl_days
+  - ttl_policy
+  - stability
+  - ai_scope
+  - upstream
+  - last_verified
+  - trigger
+  - timeout
+  - scope
+  - supersedes
+  - superseded_by
+  - source_of_truth
+  - domain
+  - tags
+  - owners
+  - verification_status
+  - evidence
+  - verified_against
+  - generated_by
+  - doc_kind
+  - derived_from
+  - glossary_terms
+
+forbidden_fields:
+  - downstream
+  - verified_by
+  - fitness_score
+  - semantic_hash
+
+project_banned_words: []
+
+root_files: {}
+
+default_paths:
+  - docs/
+
+excluded_dirs:
+  - archived
+  - archive
+  - __pycache__
+
+exempt_files:
+  - README.md
+  - CHANGELOG.md
+  - CONTRIBUTING.md
+  - SECURITY.md
+  - INSTRUCTIONS.md
+  - AGENTS.md
+
+normative_sections:
+  - RULES
+  - INTERFACES
+  - VALIDATION
+  - SPECIFICATION
+  - FAILURE_MODES
+
+non_normative_sections:
+  - EXAMPLES
+  - NON_GOALS
+  - PURPOSE
+  - CONTEXT
+  - RATIONALE
+  - TRADEOFFS
+  - WALKTHROUGH
+  - AUDIENCE
+  - PITFALLS
+
+baseline_path: .afds-baseline.json

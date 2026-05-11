@@ -1,5 +1,5 @@
 """
-Tests for tools/filesystem_explorer.py – kompatybilne z Pythonem 3.9
+Tests for tools/filesystem_explorer.py — compatible with Python 3.9
 Safe access to file system with allowlist validation.
 """
 
@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-import tools.filesystem_explorer as fe_module  # Dla bezpiecznej podmiany globalnego kontekstu
+import tools.filesystem_explorer as fe_module  # For safe global context replacement
 from tools.filesystem_explorer import SecurityContext, register_filesystem_tools
 
 # =============================================================================
@@ -169,7 +169,7 @@ class TestFilesystemTools:
         register_filesystem_tools(mock_mcp)
         result = json.loads(mock_mcp.get_tool("list_directory")(path=str(temp_dir / "blocked")))
         assert "error" in result
-        assert result["error"] == "Access denied"
+        assert "Access denied" in result["error"]
 
     def test_list_directory_not_a_directory(
         self, mock_mcp, temp_dir, allow_temp_dir_in_security_context
@@ -180,7 +180,7 @@ class TestFilesystemTools:
             mock_mcp.get_tool("list_directory")(path=str(temp_dir / "allowed" / "file1.txt"))
         )
         assert "error" in result
-        assert result["error"] == "Not a directory"
+        assert "Not a directory" in result["error"]
 
     def test_list_directory_truncation(
         self, mock_mcp, temp_dir, allow_temp_dir_in_security_context
@@ -199,7 +199,7 @@ class TestFilesystemTools:
         register_filesystem_tools(mock_mcp)
         tool = mock_mcp.get_tool("read_file")
 
-        result_str = tool(path=str(temp_dir / "allowed" / "file1.txt"), max_lines=10)
+        result_str = tool(file_path=str(temp_dir / "allowed" / "file1.txt"), max_lines=10)
         result = json.loads(result_str)
 
         assert result["success"] is True
@@ -216,31 +216,31 @@ class TestFilesystemTools:
         register_filesystem_tools(mock_mcp)
         tool = mock_mcp.get_tool("read_file")
 
-        # ✅ Teraz file istnieje i jest poprawnie detectsny jako binarny
-        result_str = tool(path=str(temp_dir / "allowed" / "db.sqlite"), max_lines=10)
+        # File now exists and is correctly detected as binary
+        result_str = tool(file_path=str(temp_dir / "allowed" / "db.sqlite"), max_lines=10)
         result = json.loads(result_str)
 
         assert "error" in result
         assert "binary" in result["error"].lower()
-        assert "db.sqlite" in result.get("path", "")
+        assert "db.sqlite" in result["error"]
 
     def test_read_file_not_a_file(self, mock_mcp, temp_dir, allow_temp_dir_in_security_context):
-        """path do directoryu → Not a file."""
+        """Directory passed as path → Not a file."""
         register_filesystem_tools(mock_mcp)
         result = json.loads(
-            mock_mcp.get_tool("read_file")(path=str(temp_dir / "allowed" / "subdir"))
+            mock_mcp.get_tool("read_file")(file_path=str(temp_dir / "allowed" / "subdir"))
         )
         assert "error" in result
-        assert result["error"] == "Not a file"
+        assert "Not a file" in result["error"]
 
     def test_read_file_blocked_path(self, mock_mcp, temp_dir, allow_temp_dir_in_security_context):
         """Path outside allowlist → Access denied."""
         register_filesystem_tools(mock_mcp)
         result = json.loads(
-            mock_mcp.get_tool("read_file")(path=str(temp_dir / "blocked" / "secret.txt"))
+            mock_mcp.get_tool("read_file")(file_path=str(temp_dir / "blocked" / "secret.txt"))
         )
         assert "error" in result
-        assert result["error"] == "Access denied"
+        assert "Access denied" in result["error"]
 
     def test_read_file_max_lines_truncation(
         self, mock_mcp, temp_dir, allow_temp_dir_in_security_context
@@ -249,7 +249,7 @@ class TestFilesystemTools:
         register_filesystem_tools(mock_mcp)
         result = json.loads(
             mock_mcp.get_tool("read_file")(
-                path=str(temp_dir / "allowed" / "file1.txt"), max_lines=1
+                file_path=str(temp_dir / "allowed" / "file1.txt"), max_lines=1
             )
         )
         assert result["success"] is True
@@ -265,8 +265,8 @@ class TestFilesystemTools:
         register_filesystem_tools(mock_mcp)
         tool = mock_mcp.get_tool("search_files")
 
-        # ✅ Safe search in allowed directory
-        result_str = tool(pattern="secret", path=str(temp_dir / "allowed"), max_results=5)
+        # Safe search in allowed directory
+        result_str = tool(pattern="secret", search_path=str(temp_dir / "allowed"), max_results=5)
         result = json.loads(result_str)
 
         assert result["success"] is True
@@ -280,18 +280,18 @@ class TestFilesystemTools:
         register_filesystem_tools(mock_mcp)
         result = json.loads(
             mock_mcp.get_tool("search_files")(
-                pattern="secret`$(rm -rf /)`", path=str(temp_dir / "allowed")
+                pattern="secret`$(rm -rf /)`", search_path=str(temp_dir / "allowed")
             )
         )
         assert "error" in result
-        assert result["error"] == "Invalid search pattern"
+        assert "Invalid search pattern" in result["error"]
 
     def test_search_files_no_results(self, mock_mcp, temp_dir, allow_temp_dir_in_security_context):
         """Pattern not found → results_count: 0."""
         register_filesystem_tools(mock_mcp)
         result = json.loads(
             mock_mcp.get_tool("search_files")(
-                pattern="xyzzy_not_in_any_file_12345", path=str(temp_dir / "allowed")
+                pattern="xyzzy_not_in_any_file_12345", search_path=str(temp_dir / "allowed")
             )
         )
         assert result["success"] is True

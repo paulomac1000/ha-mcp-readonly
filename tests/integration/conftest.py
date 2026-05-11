@@ -1,6 +1,5 @@
 """
-Integration test fixtures - for tests against real Home Assistant.
-Overrides problematic fixtures from root conftest.py.
+Integration test fixtures — real HA, MCPWrapper, sample entities.
 """
 
 import asyncio
@@ -24,16 +23,16 @@ def load_dotenv():
     for env_path in env_paths:
         if env_path.exists():
             try:
-                with open(env_path, "r") as f:
+                with open(env_path) as f:
                     for line in f:
                         line = line.strip()
                         if line and not line.startswith("#") and "=" in line:
                             key, value = line.split("=", 1)
                             os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
-                print(f"✅ Loaded environment variables from {env_path}", file=sys.stderr)
+                print(f"[OK] Loaded environment variables from {env_path}", file=sys.stderr)
                 return
             except Exception as e:
-                print(f"⚠️ Error loading {env_path}: {e}", file=sys.stderr)
+                print(f"[WARN] Error loading {env_path}: {e}", file=sys.stderr)
 
 
 load_dotenv()
@@ -278,13 +277,17 @@ def real_mcp():
     if ha_configured:
         from tools.areas import register_area_tools
         from tools.automations import register_automation_tools
+        from tools.batch_operations import register_batch_operations_tools
         from tools.blueprints import register_blueprint_tools
+        from tools.composite import register_composite_tools
         from tools.config import register_config_tools
         from tools.config_entries import register_config_entry_tools
         from tools.dev_tools import register_dev_tools
         from tools.devices import register_device_tools
         from tools.diagnostics import register_diagnostics_tools
+        from tools.entity_context import register_entity_context_tools
         from tools.entity_dependencies import register_entity_dependency_tools
+        from tools.filesystem_explorer import register_filesystem_tools
         from tools.health_reporter import register_health_reporter_tools
         from tools.history import register_history_tools
         from tools.integrations import register_integration_tools
@@ -308,11 +311,15 @@ def real_mcp():
         register_config_tools(mcp, HA_CONFIG_PATH, HA_URL, HA_TOKEN)
         register_device_tools(mcp, HA_CONFIG_PATH, HA_URL, HA_TOKEN)
         register_entity_dependency_tools(mcp, HA_CONFIG_PATH, HA_URL, HA_TOKEN)
+        register_entity_context_tools(mcp, HA_CONFIG_PATH, HA_URL, HA_TOKEN)
         register_history_tools(mcp, HA_URL, HA_TOKEN)
         register_area_tools(mcp, HA_CONFIG_PATH, HA_URL, HA_TOKEN)
         register_integration_tools(mcp, HA_CONFIG_PATH, HA_URL, HA_TOKEN)
+        register_composite_tools(mcp, HA_CONFIG_PATH, HA_URL, HA_TOKEN)
+        register_batch_operations_tools(mcp, HA_CONFIG_PATH, HA_URL, HA_TOKEN)
+        register_filesystem_tools(mcp)
 
-        print(f"✅ Registered Home Assistant tools (url: {HA_URL})", file=sys.stderr)
+        print(f"[OK] Registered Home Assistant tools (url: {HA_URL})", file=sys.stderr)
 
     return MCPWrapper(mcp)
 
@@ -345,13 +352,13 @@ def sample_entities(real_mcp):
         result = real_mcp.call_tool("get_domains_summary")
         data = json.loads(result)
     except Exception as e:
-        print(f"⚠️ Failed to get domains summary: {e}", file=sys.stderr)
+        print(f"[WARN] Failed to get domains summary: {e}", file=sys.stderr)
         entities["all"] = ["sun.sun", "sensor.time"]
         entities["sensor"] = ["sensor.time"]
         return entities
 
     if not data.get("success"):
-        print("⚠️ get_domains_summary returned failure", file=sys.stderr)
+        print("[WARN] get_domains_summary returned failure", file=sys.stderr)
         entities["all"] = ["sun.sun", "sensor.time"]
         entities["sensor"] = ["sensor.time"]
         return entities
@@ -372,7 +379,7 @@ def sample_entities(real_mcp):
                     entities["all"].extend(found)
             except Exception as e:
                 print(
-                    f"⚠️ Failed to search entities for domain {domain}: {e}",
+                    f"[WARN] Failed to search entities for domain {domain}: {e}",
                     file=sys.stderr,
                 )
 
@@ -385,10 +392,10 @@ def sample_entities(real_mcp):
     entities["all"] = unique_all
 
     if not entities["all"]:
-        print("⚠️ No entities found, using fallback", file=sys.stderr)
+        print("[WARN] No entities found, using fallback", file=sys.stderr)
         entities["all"] = ["sun.sun"]
     else:
-        print(f"✅ Found {len(entities['all'])} sample entities", file=sys.stderr)
+        print(f"[OK] Found {len(entities['all'])} sample entities", file=sys.stderr)
 
     return entities
 

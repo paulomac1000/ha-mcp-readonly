@@ -13,14 +13,7 @@ from .constants import HA_CONFIG_PATH, HA_URL, LOG_HOURS_BACK
 from .utils import is_ignorable_entity
 
 if TYPE_CHECKING:
-    from .analyzers import (
-        AutomationAnalyzer,
-        DashboardAnalyzer,
-        HistoryAnalyzer,
-        LogAnalyzer,
-        RegistryCollector,
-        TemplateEntityCollector,
-    )
+    pass
 
 
 class ReportGenerator:
@@ -28,12 +21,18 @@ class ReportGenerator:
 
     def __init__(
         self,
-        registry: RegistryCollector,
-        automation: AutomationAnalyzer,
-        dashboard: DashboardAnalyzer,
-        logs: LogAnalyzer,
-        templates: TemplateEntityCollector,
-        history: HistoryAnalyzer,
+        registry,
+        automation,
+        dashboard,
+        logs,
+        templates,
+        history,
+        persons=None,
+        zones=None,
+        energy=None,
+        helpers=None,
+        services=None,
+        hacs=None,
     ):
         self.registry = registry
         self.automation = automation
@@ -41,10 +40,16 @@ class ReportGenerator:
         self.logs = logs
         self.templates = templates
         self.history = history
+        self.persons = persons
+        self.zones = zones
+        self.energy = energy
+        self.helpers = helpers
+        self.services = services
+        self.hacs = hacs
 
     def generate(self, output_file: str):
         """Generates MD file."""
-        print(f"\n📝 Generating {output_file}...")
+        print(f"\nGenerating {output_file}...")
 
         with open(output_file, "w", encoding="utf-8") as f:
             self._write_header(f)
@@ -56,20 +61,26 @@ class ReportGenerator:
             self._write_entity_dependency_graph(f)
             self._write_conflict_analysis(f)
             self._write_template_entities(f)
+            self._write_persons_and_tracking(f)
+            self._write_zones_and_geofencing(f)
+            self._write_energy_dashboard(f)
+            self._write_helper_inventory(f)
+            self._write_services_catalog(f)
+            self._write_hacs_and_components(f)
             self._write_dashboard_usage(f)
             self._write_log_analysis(f)
             self._write_recent_changes(f)
             self._write_quick_reference(f)
 
-        print(f"✅ SUCCESS! File {output_file} ready.")
+        print(f"Success. File {output_file} ready.")
 
     def _write_header(self, f):
         """Document header."""
-        f.write("# 🏠 Home Assistant Context for AI (V3)\n\n")
+        f.write("# Home Assistant Context for AI (v1.0)\n\n")
         f.write(f"> **Generated:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
         f.write(f"> **HA Instance:** {HA_URL}\n")
         f.write(f"> **Config Path:** {HA_CONFIG_PATH}\n")
-        f.write("> **Generator Version:** V7 (MCP Integration)\n\n")
+        f.write("> **Generator Version:** 1.0\n\n")
         f.write("---\n\n")
 
     def _write_executive_summary(self, f):
@@ -122,7 +133,7 @@ class ReportGenerator:
             deductions.append(f"-{deduction} (conflicts)")
 
         health_score = max(0, health_score)
-        health_emoji = "🟢" if health_score >= 80 else "🟡" if health_score >= 60 else "🔴"
+        health_emoji = "" if health_score >= 80 else "" if health_score >= 60 else ""
 
         f.write(f"### Health Score: {health_emoji} {health_score}%\n")
         if deductions:
@@ -132,7 +143,7 @@ class ReportGenerator:
         # Critical issues
         critical = []
         if unavailable > 10:
-            critical.append(f"⚠️ **{unavailable} unavailable entities**")
+            critical.append(f" **{unavailable} unavailable entities**")
         if len(self.automation.ghost_entities) > 5:
             critical.append(
                 f"👻 **{len(self.automation.ghost_entities)} ghost entities** in automations"
@@ -143,23 +154,23 @@ class ReportGenerator:
             )
         if len(self.dashboard.missing_entities) > 0:
             critical.append(
-                f"📊 **{len(self.dashboard.missing_entities)} non-existent entities** in dashboards"
+                f" **{len(self.dashboard.missing_entities)} non-existent entities** in dashboards"
             )
 
         disabled_autos = sum(1 for a in self.automation.automation_analysis if a.get("is_disabled"))
         if disabled_autos > 5:
-            critical.append(f"🔴 **{disabled_autos} disabled automations**")
+            critical.append(f" **{disabled_autos} disabled automations**")
 
         if len(self.logs.startup_errors) > 5:
-            critical.append(f"🚀 **{len(self.logs.startup_errors)} errors during startup**")
+            critical.append(f" **{len(self.logs.startup_errors)} errors during startup**")
 
         if critical:
-            f.write("### ⚠️ Critical Issues\n")
+            f.write("### Critical Issues\n")
             for issue in critical:
                 f.write(f"- {issue}\n")
             f.write("\n")
         else:
-            f.write("### ✅ No Critical Issues\n\n")
+            f.write("### No Critical Issues\n\n")
 
         f.write("---\n\n")
 
@@ -203,10 +214,10 @@ class ReportGenerator:
                 f.write(f"| `{eid}` | {sources_str} | {', '.join(source_types)} |\n")
             f.write("\n")
         else:
-            f.write("✅ *No ghost entities.*\n\n")
+            f.write(" *No ghost entities.*\n\n")
 
         # Unavailable by integration
-        f.write("### ⚠️ Unavailable Entities by Integration\n\n")
+        f.write("### Unavailable Entities by Integration\n\n")
 
         unavailable_by_integration = defaultdict(
             lambda: {"count": 0, "entities": [], "devices": set()}
@@ -248,12 +259,12 @@ class ReportGenerator:
                 f.write(f"| {integration} | {data['count']} | {entities_str} | {devices_str} |\n")
             f.write("\n")
         else:
-            f.write("✅ *All entities available.*\n\n")
+            f.write(" *All entities available.*\n\n")
 
         # Disabled automations
         disabled = [a for a in self.automation.automation_analysis if a.get("is_disabled")]
         if disabled:
-            f.write("### 🔴 Disabled Automations\n\n")
+            f.write("### Disabled Automations\n\n")
             f.write("| Alias | ID | Trigger Platforms | Last Triggered |\n")
             f.write("|-------|-----|------------------|----------------|\n")
             for auto in disabled[:20]:
@@ -268,7 +279,7 @@ class ReportGenerator:
 
     def _write_integration_status(self, f):
         """Integration status with config entry health."""
-        f.write("## 🔌 2. Integration Status\n\n")
+        f.write("## 2. Integration Status\n\n")
 
         # Config entry health
         f.write("### Config Entry Health\n\n")
@@ -302,7 +313,7 @@ class ReportGenerator:
             else:
                 health_pct = 100
 
-            health_emoji = "🟢" if health_pct >= 95 else "🟡" if health_pct >= 80 else "🔴"
+            health_emoji = "" if health_pct >= 95 else "" if health_pct >= 80 else ""
 
             disabled_count = sum(1 for e in entries if e["disabled_by"])
             status = "OK" if disabled_count == 0 else f"{disabled_count} disabled"
@@ -347,7 +358,7 @@ class ReportGenerator:
             unknown = stats["unknown"]
 
             health_pct = (ok / total) * 100 if total > 0 else 100
-            health = "🟢" if health_pct >= 95 else "🟡" if health_pct >= 80 else "🔴"
+            health = "" if health_pct >= 95 else "" if health_pct >= 80 else ""
 
             f.write(
                 f"| {domain} | {total} | {ok} | {unavail} | {unknown} | {health} {health_pct:.0f}% |\n"
@@ -406,7 +417,7 @@ class ReportGenerator:
             total = data["stats"]["total"]
             unavail = data["stats"]["unavailable"]
             health_pct = ((total - unavail) / total * 100) if total > 0 else 100
-            health = "🟢" if health_pct >= 95 else "🟡" if health_pct >= 80 else "🔴"
+            health = "" if health_pct >= 95 else "" if health_pct >= 80 else ""
 
             f.write(
                 f"| {area_name} | {devices} | {total} | {unavail} | {health} {health_pct:.0f}% |\n"
@@ -430,15 +441,15 @@ class ReportGenerator:
 
                 for device_name, entities in sorted(devices.items()):
                     unavail_count = sum(1 for e in entities if e["state"] == "unavailable")
-                    status = f" ⚠️ {unavail_count} unavailable" if unavail_count > 0 else ""
+                    status = f" {unavail_count} unavailable" if unavail_count > 0 else ""
 
                     f.write(f"**{device_name}** ({len(entities)} entities){status}\n")
 
                     for e in entities[:5]:
                         state_emoji = (
-                            "🔴"
+                            ""
                             if e["state"] == "unavailable"
-                            else "🟡"
+                            else ""
                             if e["state"] == "unknown"
                             else ""
                         )
@@ -489,7 +500,7 @@ class ReportGenerator:
         for auto in self.automation.automation_analysis[:50]:
             triggers = ", ".join(auto.get("trigger_platforms", [])[:2])
             controls = len(auto.get("controlled_entities", []))
-            status = "🔴 OFF" if auto.get("is_disabled") else "🟢 ON"
+            status = " OFF" if auto.get("is_disabled") else " ON"
             alias = auto["alias"][:35] + "..." if len(auto["alias"]) > 35 else auto["alias"]
             last = auto.get("last_triggered", "")
             if last:
@@ -558,7 +569,7 @@ class ReportGenerator:
 
     def _write_entity_dependency_graph(self, f):
         """Entity dependency graph."""
-        f.write("## 🕸️ 5. Entity Dependency Graph\n\n")
+        f.write("## 🕸 5. Entity Dependency Graph\n\n")
         f.write("*Check this section BEFORE modifying an entity, to see what you might break.*\n\n")
 
         # Merge dependencies
@@ -604,7 +615,7 @@ class ReportGenerator:
             if total_usage >= 3:
                 critical[eid] = deps
 
-        f.write(f"### ⚠️ Critical Entities ({len(critical)} entities used in 3+ places)\n\n")
+        f.write(f"### Critical Entities ({len(critical)} entities used in 3+ places)\n\n")
 
         if critical:
             f.write("| Entity | Triggers | Used In | Controlled By | Dashboards | Total |\n")
@@ -631,7 +642,7 @@ class ReportGenerator:
             f.write("*No entities used in multiple places.*\n\n")
 
         # Full map
-        f.write(f"### 📊 Full Dependency Map ({len(all_dependencies)} entities)\n\n")
+        f.write(f"### Full Dependency Map ({len(all_dependencies)} entities)\n\n")
         f.write("<details>\n<summary>Click to expand</summary>\n\n")
         f.write("```json\n")
         f.write(json.dumps(all_dependencies, indent=2, ensure_ascii=False))
@@ -643,7 +654,7 @@ class ReportGenerator:
         f.write("## ⚡ 6. Automation Conflict Analysis\n\n")
 
         if not self.automation.conflicting_entities:
-            f.write("✅ *No automation conflicts detected.*\n\n")
+            f.write(" *No automation conflicts detected.*\n\n")
             return
 
         f.write(
@@ -665,7 +676,7 @@ class ReportGenerator:
             scenes = len(conflict["controlling_scenes"])
             total = conflict["total_controllers"]
 
-            risk = "🔴 HIGH" if conflict["race_condition_risk"] else "🟡 MEDIUM"
+            risk = " HIGH" if conflict["race_condition_risk"] else " MEDIUM"
 
             f.write(f"| `{eid}` | {autos} | {scripts} | {scenes} | {total} | {risk} |\n")
 
@@ -701,7 +712,7 @@ class ReportGenerator:
 
         # Validation errors
         if self.templates.validation_errors:
-            f.write("### ⚠️ Template Validation Errors\n\n")
+            f.write("### Template Validation Errors\n\n")
             for err in self.templates.validation_errors:
                 f.write(f"- **{err['name']}**: {err['error']}\n")
             f.write("\n")
@@ -743,9 +754,256 @@ class ReportGenerator:
         f.write("\n```\n\n")
         f.write("</details>\n\n")
 
+    def _write_persons_and_tracking(self, f):
+        """Persons and presence tracking section."""
+        if not self.persons or not self.persons.persons:
+            return
+        f.write("## Persons & Presence Tracking\n\n")
+
+        for person in self.persons.persons:
+            state_icon = ""
+            if person["state"] == "home":
+                state_icon = "(home)"
+            elif person["state"] == "not_home":
+                state_icon = "(away)"
+            else:
+                state_icon = f"({person['state']})"
+
+            f.write(f"### {person['name']} {state_icon}\n\n")
+            f.write(f"- **Entity:** `{person['entity_id']}`\n")
+            if person.get("latitude") and person.get("longitude"):
+                f.write(f"- **Location:** {person['latitude']}, {person['longitude']}\n")
+            if person.get("source"):
+                f.write(f"- **Source:** {person['source']}\n")
+
+            trackers = self.persons.trackers.get(person["entity_id"], [])
+            if trackers:
+                f.write(f"- **Trackers ({len(trackers)}):**\n")
+                for tracker in trackers:
+                    state = tracker.get("state", "unknown")
+                    battery = tracker.get("battery")
+                    source = tracker.get("source_type", "unknown")
+                    extras = []
+                    if battery is not None:
+                        extras.append(f"battery: {battery}%")
+                    if source != "unknown":
+                        extras.append(f"source: {source}")
+                    extra_str = f" ({', '.join(extras)})" if extras else ""
+                    f.write(f" - `{tracker['entity_id']}`: {state}{extra_str}\n")
+            f.write("\n")
+
+    def _write_zones_and_geofencing(self, f):
+        """Zones and geofencing section."""
+        if not self.zones or not self.zones.zones:
+            return
+        f.write("## Zones & Geofencing\n\n")
+
+        for zone in self.zones.zones:
+            f.write(f"### {zone.get('name', zone.get('entity_id', 'Unknown'))}\n\n")
+            f.write(f"- **Entity:** `{zone.get('entity_id', '')}`\n")
+            if zone.get("latitude") and zone.get("longitude"):
+                f.write(f"- **Center:** {zone['latitude']}, {zone['longitude']}\n")
+            f.write(f"- **Radius:** {zone.get('radius', 100)}m\n")
+            if zone.get("passive"):
+                f.write("- **Passive mode:** yes (does not trigger automations)\n")
+
+            persons_here = self.zones.persons_in_zones.get(zone.get("entity_id", ""), [])
+            if persons_here:
+                f.write(
+                    f"- **Persons currently here:** {', '.join(f'`{p}`' for p in persons_here)}\n"
+                )
+            f.write("\n")
+
+    def _write_energy_dashboard(self, f):
+        """Energy dashboard section."""
+        if not self.energy:
+            return
+        f.write("## Energy & Consumption\n\n")
+
+        if self.energy.energy_data.get("unavailable"):
+            f.write("*Energy data not available (API endpoint unreachable).*\n\n")
+            return
+
+        # Top consumers
+        if self.energy.consumption_by_device:
+            sorted_devices = sorted(
+                self.energy.consumption_by_device.items(), key=lambda x: x[1]["total"], reverse=True
+            )
+            f.write("### Top Energy Consumers\n\n")
+            f.write("| Device | Total (kWh) | Sensors |\n")
+            f.write("|--------|-------------|--------|\n")
+            for device_name, data in sorted_devices[:15]:
+                if data["total"] > 0:
+                    f.write(f"| {device_name} | {data['total']:.2f} | {len(data['sensors'])} |\n")
+            f.write("\n")
+
+        # Energy sensors
+        if self.energy.energy_sensors:
+            f.write("### Energy Sensors\n\n")
+            f.write("| Entity | Value | Unit |\n")
+            f.write("|--------|-------|------|\n")
+            for sensor in self.energy.energy_sensors[:20]:
+                f.write(
+                    f"| `{sensor['entity_id']}` | {sensor['state']} | {sensor.get('unit', '')} |\n"
+                )
+            if len(self.energy.energy_sensors) > 20:
+                f.write(f"| ... | *{len(self.energy.energy_sensors) - 20} more sensors* | |\n")
+            f.write("\n")
+
+    def _write_helper_inventory(self, f):
+        """Helper entity inventory section."""
+        if not self.helpers:
+            return
+        f.write("## Helper Inventory\n\n")
+
+        # Timers
+        if self.helpers.timers:
+            f.write("### Timers\n\n")
+            f.write("| Entity | State | Duration | Remaining |\n")
+            f.write("|--------|-------|----------|----------|\n")
+            for item in self.helpers.timers:
+                f.write(
+                    f"| `{item['entity_id']}` | {item['state']} | {item.get('duration', '-')} | {item.get('remaining', '-')} |\n"
+                )
+            f.write("\n")
+
+        # Counters
+        if self.helpers.counters:
+            f.write("### Counters\n\n")
+            f.write("| Entity | Value | Range | Step |\n")
+            f.write("|--------|-------|-------|------|\n")
+            for item in self.helpers.counters:
+                range_str = f"{item.get('min', 0)}-{item.get('max', 100)}"
+                f.write(
+                    f"| `{item['entity_id']}` | {item['state']} | {range_str} | {item.get('step', 1)} |\n"
+                )
+            f.write("\n")
+
+        # Input booleans
+        if self.helpers.input_booleans:
+            f.write(f"### Input Booleans ({len(self.helpers.input_booleans)})\n\n")
+            f.write("| Entity | State |\n")
+            f.write("|--------|-------|\n")
+            for item in self.helpers.input_booleans:
+                f.write(f"| `{item['entity_id']}` | {item['state']} |\n")
+            f.write("\n")
+
+        # Input numbers
+        if self.helpers.input_numbers:
+            f.write(f"### Input Numbers ({len(self.helpers.input_numbers)})\n\n")
+            f.write("| Entity | Value | Range | Unit |\n")
+            f.write("|--------|-------|-------|------|\n")
+            for item in self.helpers.input_numbers:
+                range_str = f"{item.get('min', '-')}-{item.get('max', '-')}"
+                f.write(
+                    f"| `{item['entity_id']}` | {item['state']} | {range_str} | {item.get('unit', '-')} |\n"
+                )
+            f.write("\n")
+
+        # Input selects
+        if self.helpers.input_selects:
+            f.write(f"### Input Selects ({len(self.helpers.input_selects)})\n\n")
+            f.write("| Entity | State | Options |\n")
+            f.write("|--------|-------|--------|\n")
+            for item in self.helpers.input_selects:
+                options_str = ", ".join(item.get("options", [])[:5])
+                if len(item.get("options", [])) > 5:
+                    options_str += "..."
+                f.write(f"| `{item['entity_id']}` | {item['state']} | {options_str} |\n")
+            f.write("\n")
+
+        # Input texts
+        if self.helpers.input_texts:
+            f.write(f"### Input Texts ({len(self.helpers.input_texts)})\n\n")
+            f.write("| Entity | State |\n")
+            f.write("|--------|-------|\n")
+            for item in self.helpers.input_texts:
+                f.write(f"| `{item['entity_id']}` | {item.get('state', '-')[:50]} |\n")
+            f.write("\n")
+
+    def _write_services_catalog(self, f):
+        """Services catalog section."""
+        if not self.services or not self.services.services:
+            return
+        f.write("## Services Catalog\n\n")
+        f.write(
+            f"**{self.services.total_services} services across {len(self.services.services)} domains**\n\n"
+        )
+
+        # Show most important domains first
+        important = [
+            "light",
+            "switch",
+            "climate",
+            "cover",
+            "media_player",
+            "automation",
+            "script",
+            "notify",
+            "homeassistant",
+            "input_boolean",
+            "timer",
+            "scene",
+            "group",
+        ]
+        shown = set()
+
+        for domain in important:
+            if domain in self.services.services:
+                shown.add(domain)
+                services = self.services.services[domain]
+                f.write(f"### `{domain}` ({len(services)} services)\n\n")
+                for svc in services[:10]:
+                    desc = svc.get("description", "")[:80]
+                    f.write(f"- **`{domain}.{svc['name']}`**")
+                    if desc:
+                        f.write(f" — {desc}")
+                    f.write("\n")
+                if len(services) > 10:
+                    f.write(f"- ... *{len(services) - 10} more services*\n")
+                f.write("\n")
+
+        # Remaining domains
+        for domain, services in sorted(self.services.services.items()):
+            if domain in shown:
+                continue
+            f.write(f"- **`{domain}`** ({len(services)} services)\n")
+
+        f.write("\n")
+
+    def _write_hacs_and_components(self, f):
+        """HACS and custom components section."""
+        if not self.hacs:
+            return
+        has_data = self.hacs.hacs_repos or self.hacs.custom_components
+        if not has_data:
+            return
+        f.write("## HACS & Custom Components\n\n")
+
+        if self.hacs.hacs_repos:
+            f.write("### HACS Repositories\n\n")
+            f.write("| Name | Category | Installed | Available | Status |\n")
+            f.write("|------|----------|-----------|-----------|--------|\n")
+            for repo in self.hacs.hacs_repos[:20]:
+                f.write(
+                    f"| {repo['name']} | {repo['category']} | {repo.get('installed_version', '-')} | {repo.get('available_version', '-')} | {repo.get('status', '-')} |\n"
+                )
+            if len(self.hacs.hacs_repos) > 20:
+                f.write(f"| ... | *{len(self.hacs.hacs_repos) - 20} more repos* | | | |\n")
+            f.write("\n")
+
+        if self.hacs.custom_components:
+            f.write("### Custom Components\n\n")
+            f.write("| Component | Version | Dependencies |\n")
+            f.write("|-----------|---------|-------------|\n")
+            for comp in self.hacs.custom_components:
+                deps = ", ".join(comp.get("dependencies", [])[:3]) or "-"
+                f.write(f"| `{comp['domain']}` | {comp.get('version', '-')} | {deps} |\n")
+            f.write("\n")
+
     def _write_dashboard_usage(self, f):
         """Entity usage in dashboards with source file list."""
-        f.write("## 📊 8. Dashboard Entity Usage\n\n")
+        f.write("## 8. Dashboard Entity Usage\n\n")
 
         if not self.dashboard.dashboards_found:
             f.write("*No dashboards or failed to parse them.*\n\n")
@@ -763,7 +1021,7 @@ class ReportGenerator:
 
         # Missing entities in dashboards
         if self.dashboard.missing_entities:
-            f.write("### ⚠️ Missing Entities in Dashboards\n\n")
+            f.write("### Missing Entities in Dashboards\n\n")
             f.write("*These entities are used in dashboards, but do not exist in the system.*\n\n")
 
             f.write("| Entity ID | Used In |\n")
@@ -839,7 +1097,7 @@ class ReportGenerator:
 
         # Top error patterns
         if self.logs.error_patterns:
-            f.write("### 🔴 Top Error Patterns\n\n")
+            f.write("### Top Error Patterns\n\n")
 
             sorted_patterns = sorted(
                 self.logs.error_patterns.items(),
@@ -886,7 +1144,7 @@ class ReportGenerator:
 
         # Startup errors
         if self.logs.startup_errors:
-            f.write("### 🚀 Startup Errors\n\n")
+            f.write("### Startup Errors\n\n")
             f.write("*Errors occurring during Home Assistant startup.*\n\n")
 
             f.write("<details>\n<summary>Show startup errors</summary>\n\n")
@@ -918,19 +1176,19 @@ class ReportGenerator:
             f.write("### 💡 Recommendations\n\n")
 
             for rec in recommendations:
-                priority_emoji = "🔴" if rec["priority"] == "high" else "🟡"
+                priority_emoji = "" if rec["priority"] == "high" else ""
                 f.write(f"- {priority_emoji} **{rec['issue']}**: {rec['message']}\n")
 
                 # Add specific fix suggestions based on category
                 if rec.get("category") == "timeout":
-                    f.write("  - *Check: CPU load, network connections, integration timeouts*\n")
+                    f.write(" - *Check: CPU load, network connections, integration timeouts*\n")
                 elif rec.get("category") == "connection":
-                    f.write("  - *Check: device availability, network configuration, firewall*\n")
+                    f.write(" - *Check: device availability, network configuration, firewall*\n")
                 elif rec.get("category") == "template":
-                    f.write("  - *Check: Jinja2 syntax, entity availability in templates*\n")
+                    f.write(" - *Check: Jinja2 syntax, entity availability in templates*\n")
                 elif rec.get("integration"):
                     f.write(
-                        f"  - *Consider: restart integration, check logs for `{rec['integration']}`*\n"
+                        f" - *Consider: restart integration, check logs for `{rec['integration']}`*\n"
                     )
 
             f.write("\n")
@@ -989,7 +1247,7 @@ class ReportGenerator:
 
     def _write_quick_reference(self, f):
         """Quick reference for AI."""
-        f.write("## 🚀 11. Quick Reference for AI\n\n")
+        f.write("## 11. Quick Reference for AI\n\n")
 
         f.write("### How to Use This Context\n\n")
         f.write("```\n")
@@ -1048,6 +1306,30 @@ class ReportGenerator:
 
         f.write("\n")
 
+        # Persons
+        if self.persons:
+            home_count = len([p for p in self.persons.persons if p["state"] == "home"])
+            away_count = len([p for p in self.persons.persons if p["state"] == "not_home"])
+            f.write("**Persons:** ")
+            f.write(f"{len(self.persons.persons)} total ")
+            f.write(f"({home_count} home, {away_count} away)")
+            f.write(" \n")
+
+        # Zones
+        if self.zones:
+            f.write(f"**Zones:** {len(self.zones.zones)} defined \n")
+
+        # Services
+        if self.services:
+            f.write(
+                f"**Services:** {self.services.total_services} across {len(self.services.services)} domains \n"
+            )
+
+        # HACS
+        if self.hacs:
+            f.write(f"**HACS Repos:** {len(self.hacs.hacs_repos)} installed \n")
+            f.write(f"**Custom Components:** {len(self.hacs.custom_components)} \n")
+
         # Areas summary
         f.write("### Available Areas\n\n")
 
@@ -1104,7 +1386,7 @@ class ReportGenerator:
         # Footer
         f.write("---\n\n")
         f.write(
-            f"*Generated by ha-generate-map V7 at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*\n"
+            f"*Generated by HA Context Generator v1.0 at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*\n"
         )
         f.write("*Based on MCP Server test patterns for improved accuracy*\n")
 

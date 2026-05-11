@@ -103,3 +103,26 @@ class TestGetScriptCode:
         result = tools["get_script_code"]("notify_energy_price")
         assert "Notify Energy Price" in result
         assert "notify.mobile_app" in result
+
+    def test_get_script_code_no_file(self, tools, config_path):
+        """Test scenario where scripts.yaml does not exist at all."""
+        result = tools["get_script_code"]("anything")
+        assert "not found" in result.lower()
+
+    def test_list_scripts_corrupt_file(self, tools, config_path):
+        """Test exception handler when YAML is corrupt."""
+        script_file = os.path.join(config_path, "scripts.yaml")
+        with open(script_file, "wb") as f:
+            f.write(b"\xff\xfe\x00\x00")
+
+        result = json.loads(tools["list_scripts"]())
+        assert result["success"] is False
+
+    def test_get_script_code_corrupt_file(self, tools, config_path):
+        """Test exception handler for get_script_code with corrupt file."""
+        script_file = os.path.join(config_path, "scripts.yaml")
+        with open(script_file, "wb") as f:
+            f.write(b"\xff\xfe\x00\x00")
+
+        result = json.loads(tools["get_script_code"]("anything"))
+        assert result["success"] is False

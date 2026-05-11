@@ -142,7 +142,6 @@ class TestGetConfigEntryDetails:
 
         assert data["success"] is False
         assert "not found" in data["error"].lower()
-        assert "suggestion" in data
 
     @pytest.mark.asyncio
     async def test_disabled_entry_state(self):

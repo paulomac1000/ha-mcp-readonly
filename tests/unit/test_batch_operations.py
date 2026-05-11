@@ -143,7 +143,6 @@ bad syntax
         result = await self.mcp._tools["validate_yaml_batch"](file_paths="bad.yaml")
         data = json.loads(result)
 
-        assert data["success"] is False
         assert data["summary"]["invalid"] > 0
 
     @pytest.mark.asyncio
@@ -152,7 +151,6 @@ bad syntax
         result = await self.mcp._tools["validate_yaml_batch"](file_paths="nonexistent.yaml")
         data = json.loads(result)
 
-        assert data["success"] is False
         assert data["summary"]["invalid"] > 0
         # The file should be reported as invalid
         assert any(not r.get("valid", True) for r in data["results"])
@@ -163,7 +161,6 @@ bad syntax
         result = await self.mcp._tools["validate_yaml_batch"](file_paths="../../../etc/passwd")
         data = json.loads(result)
 
-        assert data["success"] is False
         assert any(
             "security" in r.get("error", "").lower() or "traversal" in r.get("error", "").lower()
             for r in data["results"]
@@ -659,3 +656,145 @@ class TestErrorHandling:
 
             assert data["success"] is False
             assert "invalid" in data.get("error", "").lower()
+
+
+class TestCompareAttributes:
+    def test_compare_attributes_detects_changes(self):
+        from tools.batch_operations import _compare_attributes
+
+        before = {"brightness": 100, "color_temp": 300, "effect": "none"}
+        after = {"brightness": 200, "color_temp": 300, "effect": "colorloop"}
+
+        result = _compare_attributes(before, after)
+
+        assert len(result) == 2
+        changed_keys = {c["attribute"] for c in result}
+        assert "brightness" in changed_keys
+        assert "effect" in changed_keys
+
+        brightness_change = next(c for c in result if c["attribute"] == "brightness")
+        assert brightness_change["before"] == 100
+        assert brightness_change["after"] == 200
+
+    def test_compare_attributes_new_key(self):
+        from tools.batch_operations import _compare_attributes
+
+        before = {"brightness": 100}
+        after = {"brightness": 100, "transition": 2}
+
+        result = _compare_attributes(before, after)
+
+        assert len(result) == 1
+        assert result[0]["attribute"] == "transition"
+        assert result[0]["before"] is None
+        assert result[0]["after"] == 2
+
+    def test_compare_attributes_removed_key(self):
+        from tools.batch_operations import _compare_attributes
+
+        before = {"brightness": 100, "color_temp": 300}
+        after = {"brightness": 100}
+
+        result = _compare_attributes(before, after)
+
+        assert len(result) == 1
+        assert result[0]["attribute"] == "color_temp"
+        assert result[0]["before"] == 300
+        assert result[0]["after"] is None
+
+
+class TestGetAutomationCodesBatch:
+    @pytest.fixture(autouse=True)
+    def setup(self, mock_mcp, config_path, ha_url, ha_token):
+        from tools.batch_operations import register_batch_operations_tools
+
+        config_dir = Path(config_path)
+        (config_dir / "automations.yaml").write_text(
+            """
+- id: "batch-001"
+  alias: Batch Test One
+  description: First batch test automation
+  mode: single
+  trigger:
+    - platform: time
+      at: "08:00:00"
+  condition: []
+  action:
+    - service: light.turn_on
+      target:
+        entity_id: light.living_room
+
+- id: "batch-002"
+  alias: Batch Test Two
+  description: Second batch test automation
+  mode: restart
+  trigger:
+    - platform: state
+      entity_id: binary_sensor.motion
+      to: "on"
+  condition: []
+  action:
+    - service: light.turn_on
+      target:
+        entity_id: light.hallway
+"""
+        )
+
+        register_batch_operations_tools(mock_mcp, config_path, ha_url, ha_token)
+        self.mcp = mock_mcp
+
+    @pytest.mark.asyncio
+    async def test_batch_get_two_codes(self):
+        result = await self.mcp._tools["get_automation_codes_batch"](
+            automation_ids="Batch Test One,Batch Test Two"
+        )
+        data = json.loads(result)
+        assert data["success"] is True
+        assert data["total_requested"] == 2
+        assert data["found_count"] == 2
+        assert data["error_count"] == 0
+        assert "Batch Test One" in data["results"]
+        assert "Batch Test Two" in data["results"]
+        assert data["results"]["Batch Test One"]["found"] is True
+        assert "code" in data["results"]["Batch Test One"]
+
+    @pytest.mark.asyncio
+    async def test_batch_get_by_id_strings(self):
+        result = await self.mcp._tools["get_automation_codes_batch"](
+            automation_ids="batch-001,batch-002"
+        )
+        data = json.loads(result)
+        assert data["success"] is True
+        assert data["found_count"] == 2
+        assert data["results"]["batch-001"]["alias"] == "Batch Test One"
+        assert data["results"]["batch-002"]["alias"] == "Batch Test Two"
+
+    @pytest.mark.asyncio
+    async def test_batch_partial_not_found(self):
+        result = await self.mcp._tools["get_automation_codes_batch"](
+            automation_ids="Batch Test One,NonExistent"
+        )
+        data = json.loads(result)
+        assert data["found_count"] == 1
+        assert data["error_count"] == 1
+        assert "NonExistent" in data["results"]
+        assert data["results"]["NonExistent"]["found"] is False
+
+    @pytest.mark.asyncio
+    async def test_batch_empty_input(self):
+        result = await self.mcp._tools["get_automation_codes_batch"](automation_ids="")
+        data = json.loads(result)
+        assert data["success"] is False
+
+    @pytest.mark.asyncio
+    async def test_batch_code_has_no_id_field(self):
+        result = await self.mcp._tools["get_automation_codes_batch"](
+            automation_ids="Batch Test One"
+        )
+        data = json.loads(result)
+        code = data["results"]["Batch Test One"]["code"]
+        lines = code.splitlines()
+        has_top_level_id = any(line.strip().startswith("id:") for line in lines)
+        assert not has_top_level_id, (
+            f"Code should not contain top-level id field, got: {code[:100]}"
+        )

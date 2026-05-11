@@ -4,7 +4,7 @@ Shared Utilities for MCP Tools
 Provides common functionality used across all tools:
 - HTTP client for Home Assistant API with retry logic
 - Registry file loading with caching and blocklist
-- Log sanitization (security — prevents token/credential leaks)
+- Log sanitization (security -- prevents token/credential leaks)
 - Common helper functions
 
 CHANGES vs original:
@@ -13,27 +13,30 @@ CHANGES vs original:
 - Added get_registry_cache_stats() (observability)
 - Enhanced load_registry() with blocklist + hit/miss counters
 - Added invalidate_registry_cache() for manual invalidation
-- All existing public functions preserved — zero breaking changes
+- All existing public functions preserved -- zero breaking changes
 """
 
 import json
+import logging
 import os
 import re
 import subprocess
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import requests
+
+logger = logging.getLogger(__name__)
 
 # =============================================================================
 # CONFIGURATION
 # =============================================================================
 
-_REGISTRY_CACHE: Dict[str, Tuple[Any, float]] = {}
-_REGISTRY_TTL = 300  # seconds — 5 minutes
+_REGISTRY_CACHE: dict[str, tuple[Any, float]] = {}
+_REGISTRY_TTL = 300  # seconds -- 5 minutes
 
-_REGISTRY_CACHE_STATS: Dict[str, int] = {"hits": 0, "misses": 0, "blocked": 0}
+_REGISTRY_CACHE_STATS: dict[str, int] = {"hits": 0, "misses": 0, "blocked": 0}
 
 # =============================================================================
 # SECURITY: BLOCKED REGISTRIES
@@ -53,7 +56,7 @@ These contain credentials, password hashes, and auth tokens."""
 # SECURITY: LOG SANITIZATION
 # =============================================================================
 
-_SENSITIVE_PATTERNS: List[Tuple[re.Pattern, str]] = [
+_SENSITIVE_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     # JWT must come before Bearer (JWT is a superset pattern)
     (
         re.compile(r"eyJ[A-Za-z0-9_\-]{10,}\.eyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]+"),
@@ -78,7 +81,7 @@ def sanitize_log_line(line: str) -> str:
     Redacts: JWTs, Bearer tokens, passwords, tokens, API keys, secrets,
     and IPv4 addresses.
 
-    This function is designed to be called at the output boundary — just
+    This function is designed to be called at the output boundary -- just
     before log content is serialised into a tool response.
     """
     for pattern, replacement in _SENSITIVE_PATTERNS:
@@ -86,7 +89,7 @@ def sanitize_log_line(line: str) -> str:
     return line
 
 
-def get_registry_cache_stats() -> Dict[str, Any]:
+def get_registry_cache_stats() -> dict[str, Any]:
     """
     Return cache hit / miss / blocked statistics for monitoring.
 
@@ -114,11 +117,11 @@ def make_ha_request(
     ha_token: str,
     endpoint: str,
     method: str = "GET",
-    data: Optional[Dict] = None,
+    data: dict[str, Any] | None = None,
     timeout: int = 10,
     retries: int = 3,
     backoff: float = 1.0,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Execute HTTP request to Home Assistant API with exponential-backoff retry.
 
@@ -131,7 +134,7 @@ def make_ha_request(
         "Content-Type": "application/json",
     }
 
-    last_error: Optional[str] = None
+    last_error: str | None = None
 
     for attempt in range(retries):
         try:
@@ -164,7 +167,7 @@ def load_registry(
     registry_name: str,
     config_path: str,
     use_cache: bool = True,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Load a registry file from ``.storage`` with caching and blocklist.
 
@@ -182,7 +185,7 @@ def load_registry(
         data, timestamp = _REGISTRY_CACHE[cache_key]
         if now - timestamp < _REGISTRY_TTL:
             _REGISTRY_CACHE_STATS["hits"] += 1
-            return data
+            return data  # type: ignore[no-any-return]
 
     _REGISTRY_CACHE_STATS["misses"] += 1
 
@@ -191,21 +194,21 @@ def load_registry(
         if not path.exists():
             return {}
 
-        with open(path, "r", encoding="utf-8") as fh:
+        with open(path, encoding="utf-8") as fh:
             data = json.load(fh)
 
         _REGISTRY_CACHE[cache_key] = (data, now)
-        return data
+        return data  # type: ignore[no-any-return]
 
-    except (json.JSONDecodeError, IOError, KeyError) as exc:
-        print(f"[utils] Error loading registry {registry_name}: {exc}")
+    except (OSError, json.JSONDecodeError, KeyError) as exc:
+        logger.warning(f"Error loading registry {registry_name}: {exc}")
         _REGISTRY_CACHE.pop(cache_key, None)
         return {}
 
 
 def invalidate_registry_cache(
-    registry_name: Optional[str] = None,
-    config_path: Optional[str] = None,
+    registry_name: str | None = None,
+    config_path: str | None = None,
 ) -> None:
     """
     Invalidate registry cache entries.
@@ -229,24 +232,24 @@ def invalidate_registry_cache(
             del _REGISTRY_CACHE[key]
 
 
-def get_registry_entities(config_path: str) -> List[Dict]:
+def get_registry_entities(config_path: str) -> list[dict[str, Any]]:
     """Shorthand: get entities from entity registry."""
-    return load_registry("core.entity_registry", config_path).get("data", {}).get("entities", [])
+    return load_registry("core.entity_registry", config_path).get("data", {}).get("entities", [])  # type: ignore[no-any-return]
 
 
-def get_registry_devices(config_path: str) -> List[Dict]:
+def get_registry_devices(config_path: str) -> list[dict[str, Any]]:
     """Shorthand: get devices from device registry."""
-    return load_registry("core.device_registry", config_path).get("data", {}).get("devices", [])
+    return load_registry("core.device_registry", config_path).get("data", {}).get("devices", [])  # type: ignore[no-any-return]
 
 
-def get_registry_areas(config_path: str) -> List[Dict]:
+def get_registry_areas(config_path: str) -> list[dict[str, Any]]:
     """Shorthand: get areas from area registry."""
-    return load_registry("core.area_registry", config_path).get("data", {}).get("areas", [])
+    return load_registry("core.area_registry", config_path).get("data", {}).get("areas", [])  # type: ignore[no-any-return]
 
 
-def get_registry_config_entries(config_path: str) -> List[Dict]:
+def get_registry_config_entries(config_path: str) -> list[dict[str, Any]]:
     """Shorthand: get config entries from registry."""
-    return load_registry("core.config_entries", config_path).get("data", {}).get("entries", [])
+    return load_registry("core.config_entries", config_path).get("data", {}).get("entries", [])  # type: ignore[no-any-return]
 
 
 # =============================================================================
@@ -258,7 +261,7 @@ def tail_log_file(
     log_path: str,
     lines: int = 1000,
     encoding: str = "utf-8",
-) -> List[str]:
+) -> list[str]:
     """Read last *lines* from log file using ``tail``."""
     if not os.path.exists(log_path):
         return []
@@ -272,7 +275,7 @@ def tail_log_file(
         )
         return result.stdout.splitlines()
     except (subprocess.TimeoutExpired, subprocess.SubprocessError) as exc:
-        print(f"[utils] Error reading log file: {exc}")
+        logger.warning(f"Error reading log file: {exc}")
         return []
 
 
@@ -281,7 +284,7 @@ def tail_log_file(
 # =============================================================================
 
 
-def get_best_name(item: Dict, item_type: str = "entity") -> str:
+def get_best_name(item: dict[str, Any], item_type: str = "entity") -> str:
     """
     Best available name for an entity or device.
 
@@ -289,13 +292,13 @@ def get_best_name(item: Dict, item_type: str = "entity") -> str:
     """
     if item_type == "device":
         return item.get("name_by_user") or item.get("name") or "Unknown Device"
-    return item.get("name") or item.get("original_name") or item.get("entity_id", "Unknown")
+    return item.get("name") or item.get("original_name") or item.get("entity_id", "Unknown")  # type: ignore[no-any-return]
 
 
-def resolve_area_id(entity: Dict, device_map: Dict[str, Dict]) -> Optional[str]:
+def resolve_area_id(entity: dict[str, Any], device_map: dict[str, dict[str, Any]]) -> str | None:
     """Resolve area: entity area → device area → ``None``."""
     if entity.get("area_id"):
-        return entity["area_id"]
+        return entity["area_id"]  # type: ignore[no-any-return]
     device_id = entity.get("device_id")
     if device_id and device_id in device_map:
         return device_map[device_id].get("area_id")
@@ -324,3 +327,24 @@ def sanitize_for_json(obj: Any) -> Any:
     if isinstance(obj, list):
         return [sanitize_for_json(item) for item in obj]
     return obj
+
+
+def _success_response(data: dict[str, Any] | None = None) -> str:
+    """Format a successful tool response. All tools MUST use this."""
+    response: dict[str, Any] = {"success": True}
+    if data is not None:
+        if isinstance(data, dict):
+            response.update(data)
+        else:
+            response["data"] = data
+    return json.dumps(response, indent=2, ensure_ascii=False)
+
+
+def _error_response(error: str) -> str:
+    """Format an error tool response. All tools MUST use this."""
+    return json.dumps({"success": False, "error": str(error)}, indent=2, ensure_ascii=False)
+
+
+# Backward-compatible aliases
+success_response = _success_response
+error_response = _error_response

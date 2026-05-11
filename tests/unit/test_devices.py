@@ -70,8 +70,8 @@ class TestGetDeviceDetails:
         assert data["name"] == "Sonoff Button"
         assert data["manufacturer"] == "SONOFF"
         assert data["model"] == "Wireless button"
-        assert data["area_id"] == "biuro"
-        assert data["area_name"] == "Biuro"
+        assert data["area_id"] == "office"
+        assert data["area_name"] == "Office"
         assert "entities_summary" in data
         assert "entities" in data
 
@@ -456,13 +456,13 @@ class TestSearchDevices:
                             self.mock_mcp, self.config_path, "http://test", "token"
                         )
 
-                        result = await self.mock_mcp._tools["search_devices"](area_id="salon")
+                        result = await self.mock_mcp._tools["search_devices"](area_id="living_room")
 
         data = json.loads(result)
 
         assert data["success"] is True
         for device in data["devices"]:
-            assert device.get("area_id") == "salon"
+            assert device.get("area_id") == "living_room"
 
     @pytest.mark.asyncio
     async def test_search_disabled_only(self):
@@ -625,13 +625,13 @@ class TestGetDevicesByArea:
 
                     register_device_tools(self.mock_mcp, self.config_path, "http://test", "token")
 
-                    result = await self.mock_mcp._tools["get_devices_by_area"]("salon")
+                    result = await self.mock_mcp._tools["get_devices_by_area"]("living_room")
 
         data = json.loads(result)
 
         assert data["success"] is True
-        assert data["area"]["id"] == "salon"
-        assert data["area"]["name"] == "Salon"
+        assert data["area"]["id"] == "living_room"
+        assert data["area"]["name"] == "Living Room"
         assert "devices" in data
 
         for device in data["devices"]:
@@ -655,12 +655,12 @@ class TestGetDevicesByArea:
 
                     register_device_tools(self.mock_mcp, self.config_path, "http://test", "token")
 
-                    result = await self.mock_mcp._tools["get_devices_by_area"]("Biuro")
+                    result = await self.mock_mcp._tools["get_devices_by_area"]("Office")
 
         data = json.loads(result)
 
         assert data["success"] is True
-        assert data["area"]["id"] == "biuro"
+        assert data["area"]["id"] == "office"
 
     @pytest.mark.asyncio
     async def test_get_devices_by_nonexistent_area(self):
@@ -676,7 +676,419 @@ class TestGetDevicesByArea:
 
         assert data["success"] is False
         assert "not found" in data["error"].lower()
-        assert "available_areas" in data
+        assert "Available" in data["error"]
+
+
+class TestSearchDevicesEdgeCases:
+    """Edge case tests for search_devices()."""
+
+    @pytest.fixture(autouse=True)
+    def setup(self, mock_mcp, config_path, ha_url, ha_token, mock_registry_data):
+        self.mock_mcp = mock_mcp
+        self.config_path = config_path
+        self.mock_registry_data = mock_registry_data
+
+    @pytest.mark.asyncio
+    async def test_search_devices_no_results(self):
+        """Search by manufacturer that doesn't exist should return empty results."""
+        with patch("tools.devices.get_registry_devices") as mock_devices:
+            mock_devices.return_value = self.mock_registry_data["core.device_registry"]["data"][
+                "devices"
+            ]
+
+            with patch("tools.devices.get_registry_entities") as mock_entities:
+                mock_entities.return_value = []
+                with patch("tools.devices.get_registry_areas") as mock_areas:
+                    mock_areas.return_value = self.mock_registry_data["core.area_registry"]["data"][
+                        "areas"
+                    ]
+                    with patch("tools.devices.get_registry_config_entries") as mock_entries:
+                        mock_entries.return_value = []
+
+                        register_device_tools(
+                            self.mock_mcp, self.config_path, "http://test", "token"
+                        )
+
+                        result = await self.mock_mcp._tools["search_devices"](
+                            manufacturer="nonexistent_manufacturer"
+                        )
+
+        data = json.loads(result)
+        assert data["success"] is True
+        assert data["matched_count"] == 0
+        assert len(data["devices"]) == 0
+
+    @pytest.mark.asyncio
+    async def test_search_devices_combined_filters(self):
+        """Search by multiple filters simultaneously."""
+        with patch("tools.devices.get_registry_devices") as mock_devices:
+            mock_devices.return_value = self.mock_registry_data["core.device_registry"]["data"][
+                "devices"
+            ]
+
+            with patch("tools.devices.get_registry_entities") as mock_entities:
+                mock_entities.return_value = []
+                with patch("tools.devices.get_registry_areas") as mock_areas:
+                    mock_areas.return_value = self.mock_registry_data["core.area_registry"]["data"][
+                        "areas"
+                    ]
+                    with patch("tools.devices.get_registry_config_entries") as mock_entries:
+                        mock_entries.return_value = []
+
+                        register_device_tools(
+                            self.mock_mcp, self.config_path, "http://test", "token"
+                        )
+
+                        result = await self.mock_mcp._tools["search_devices"](
+                            search_term="sonoff", area_id="office"
+                        )
+
+        data = json.loads(result)
+        assert data["success"] is True
+        # Sonoff Button is in office area
+        for device in data["devices"]:
+            assert "sonoff" in (device.get("name") or "").lower()
+            assert device.get("area_id") == "office"
+
+
+class TestGetDevicesByAreaEdgeCases:
+    """Edge case tests for get_devices_by_area()."""
+
+    @pytest.fixture(autouse=True)
+    def setup(self, mock_mcp, config_path, ha_url, ha_token, mock_registry_data):
+        self.mock_mcp = mock_mcp
+        self.config_path = config_path
+        self.mock_registry_data = mock_registry_data
+
+    @pytest.mark.asyncio
+    async def test_get_devices_by_area_with_empty_area(self):
+        """Area with no devices should return success with empty devices list."""
+        # Temporarily add an empty area
+        areas = list(self.mock_registry_data["core.area_registry"]["data"]["areas"])
+        areas.append({"id": "empty_area", "name": "Empty Area", "aliases": []})
+        mock_areas_data = {"data": {"areas": areas}}
+
+        with patch("tools.devices.get_registry_areas") as mock_areas:
+            mock_areas.return_value = mock_areas_data["data"]["areas"]
+
+            with patch("tools.devices.get_registry_devices") as mock_devices:
+                mock_devices.return_value = self.mock_registry_data["core.device_registry"]["data"][
+                    "devices"
+                ]
+
+                with patch("tools.devices.get_registry_entities") as mock_entities:
+                    mock_entities.return_value = []
+
+                    register_device_tools(self.mock_mcp, self.config_path, "http://test", "token")
+
+                    result = await self.mock_mcp._tools["get_devices_by_area"]("empty_area")
+
+        data = json.loads(result)
+        assert data["success"] is True
+        assert data["area"]["id"] == "empty_area"
+        assert data["devices_count"] == 0
+
+
+class TestDeviceGetWifiStatus:
+    """Tests for device_get_wifi_status()."""
+
+    @pytest.fixture(autouse=True)
+    def setup(self, mock_mcp, config_path, ha_url, ha_token, mock_registry_data, sample_states):
+        self.mock_mcp = mock_mcp
+        self.config_path = config_path
+        self.ha_url = ha_url
+        self.ha_token = ha_token
+        self.mock_registry_data = mock_registry_data
+        self.sample_states = sample_states
+
+    @pytest.mark.asyncio
+    async def test_wifi_status_nonexistent_device(self):
+        """Non-existent device should return error."""
+        with patch("tools.devices.get_registry_devices") as mock_devices:
+            mock_devices.return_value = self.mock_registry_data["core.device_registry"]["data"][
+                "devices"
+            ]
+
+            register_device_tools(self.mock_mcp, self.config_path, self.ha_url, self.ha_token)
+            result = await self.mock_mcp._tools["device_get_wifi_status"]("nonexistent")
+
+        data = json.loads(result)
+        assert data["success"] is False
+        assert "not found" in data["error"].lower()
+
+    @pytest.mark.asyncio
+    async def test_wifi_status_tasmota_device(self):
+        """Tasmota device with rssi/ssid/ip entities returns full WiFi status."""
+        tasmota_device = {
+            "id": "tasmota_test_001",
+            "config_entries": ["mqtt_entry"],
+            "connections": [["mac", "aa:bb:cc:dd:ee:ff"]],
+            "identifiers": [["mqtt", "tasmota_plug"]],
+            "manufacturer": "Tasmota",
+            "model": "Smart Plug",
+            "name": "Test Tasmota Plug",
+            "name_by_user": None,
+            "area_id": "living_room",
+            "disabled_by": None,
+        }
+
+        tasmota_entities = [
+            {
+                "entity_id": "sensor.tasmota_plug_rssi",
+                "device_id": "tasmota_test_001",
+                "platform": "mqtt",
+            },
+            {
+                "entity_id": "sensor.tasmota_plug_ssid",
+                "device_id": "tasmota_test_001",
+                "platform": "mqtt",
+            },
+            {
+                "entity_id": "sensor.tasmota_plug_ip",
+                "device_id": "tasmota_test_001",
+                "platform": "mqtt",
+            },
+        ]
+
+        def mock_request(ha_url, ha_token, endpoint):
+            if "rssi" in endpoint:
+                return {"success": True, "data": {"state": "-55", "attributes": {}}}
+            if "ssid" in endpoint:
+                return {"success": True, "data": {"state": "MyWiFi", "attributes": {}}}
+            if "ip" in endpoint:
+                return {"success": True, "data": {"state": "192.168.0.50", "attributes": {}}}
+            return {"success": True, "data": {"state": "unknown", "attributes": {}}}
+
+        with patch("tools.devices.get_registry_devices") as mock_devices:
+            mock_devices.return_value = [tasmota_device]
+
+            with patch("tools.devices.get_registry_entities") as mock_entities:
+                mock_entities.return_value = tasmota_entities
+
+                with patch("tools.devices.make_ha_request") as mock_request_fn:
+                    mock_request_fn.side_effect = mock_request
+
+                    register_device_tools(
+                        self.mock_mcp, self.config_path, self.ha_url, self.ha_token
+                    )
+                    result = await self.mock_mcp._tools["device_get_wifi_status"](
+                        "tasmota_test_001"
+                    )
+
+        data = json.loads(result)
+        assert data["success"] is True
+        wifi = data["wifi_status"]
+        assert wifi["connection_state"] == "connected"
+        assert wifi["rssi"] == -55
+        assert wifi["signal_quality"] == 70
+        assert wifi["ssid"] == "MyWiFi"
+        assert wifi["ip_address"] == "192.168.0.50"
+        assert wifi["mac_address"] == "aa:bb:cc:dd:ee:ff"
+        assert wifi["source"] == "ha_sensor"
+
+    @pytest.mark.asyncio
+    async def test_wifi_status_openbk_device(self):
+        """OpenBK device with weak RSSI should report connection_state=weak."""
+        openbk_device = {
+            "id": "openbk_test_001",
+            "config_entries": ["mqtt_entry"],
+            "connections": [["mac", "11:22:33:44:55:66"]],
+            "identifiers": [["mqtt", "openbk_light"]],
+            "manufacturer": "OpenBeken",
+            "model": "WiFi Light",
+            "name": "Test OpenBK Light",
+            "name_by_user": "OpenBK Light",
+            "area_id": "bedroom",
+            "disabled_by": None,
+        }
+
+        openbk_entities = [
+            {
+                "entity_id": "sensor.openbk_light_rssi",
+                "device_id": "openbk_test_001",
+                "platform": "mqtt",
+            },
+        ]
+
+        def mock_request(ha_url, ha_token, endpoint):
+            if "rssi" in endpoint:
+                return {"success": True, "data": {"state": "-85", "attributes": {}}}
+            return {"success": True, "data": {"state": "unknown", "attributes": {}}}
+
+        with patch("tools.devices.get_registry_devices") as mock_devices:
+            mock_devices.return_value = [openbk_device]
+
+            with patch("tools.devices.get_registry_entities") as mock_entities:
+                mock_entities.return_value = openbk_entities
+
+                with patch("tools.devices.make_ha_request") as mock_request_fn:
+                    mock_request_fn.side_effect = mock_request
+
+                    register_device_tools(
+                        self.mock_mcp, self.config_path, self.ha_url, self.ha_token
+                    )
+                    result = await self.mock_mcp._tools["device_get_wifi_status"]("openbk_test_001")
+
+        data = json.loads(result)
+        assert data["success"] is True
+        wifi = data["wifi_status"]
+        assert wifi["connection_state"] == "weak"
+        assert wifi["rssi"] == -85
+        assert wifi["signal_quality"] == 10
+        assert wifi["mac_address"] == "11:22:33:44:55:66"
+        assert wifi["source"] == "ha_sensor"
+
+    @pytest.mark.asyncio
+    async def test_wifi_status_non_wifi_device(self):
+        """Non-WiFi device (e.g. Philips light) returns minimal data with unknown state."""
+        regular_device = {
+            "id": "regular_test_001",
+            "config_entries": ["some_entry"],
+            "connections": [],
+            "identifiers": [["tuya", "light_01"]],
+            "manufacturer": "Philips",
+            "model": "Hue White",
+            "name": "Regular Light",
+            "name_by_user": None,
+            "area_id": "living_room",
+            "disabled_by": None,
+        }
+
+        regular_entities = [
+            {
+                "entity_id": "light.regular_light",
+                "device_id": "regular_test_001",
+                "platform": "tuya",
+            },
+        ]
+
+        with patch("tools.devices.get_registry_devices") as mock_devices:
+            mock_devices.return_value = [regular_device]
+
+            with patch("tools.devices.get_registry_entities") as mock_entities:
+                mock_entities.return_value = regular_entities
+
+                with patch("tools.devices.make_ha_request") as mock_request_fn:
+                    register_device_tools(
+                        self.mock_mcp, self.config_path, self.ha_url, self.ha_token
+                    )
+                    result = await self.mock_mcp._tools["device_get_wifi_status"](
+                        "regular_test_001"
+                    )
+
+                    mock_request_fn.assert_not_called()
+
+        data = json.loads(result)
+        assert data["success"] is True
+        wifi = data["wifi_status"]
+        assert wifi["connection_state"] == "unknown"
+        assert wifi["ssid"] is None
+        assert wifi["rssi"] is None
+        assert wifi["signal_quality"] is None
+        assert wifi["ip_address"] is None
+        assert wifi["source"] == "none"
+
+    @pytest.mark.asyncio
+    async def test_wifi_status_rssi_signal_quality(self):
+        """RSSI=-30 should produce signal_quality=100 (clamped at ceiling)."""
+        tasmota_device = {
+            "id": "rssi_test_001",
+            "config_entries": ["mqtt_entry"],
+            "connections": [["mac", "aa:bb:cc:dd:ee:00"]],
+            "identifiers": [["mqtt", "tasmota_strong"]],
+            "manufacturer": "Tasmota",
+            "model": "Smart Plug",
+            "name": "Strong Signal Device",
+            "name_by_user": None,
+            "area_id": None,
+            "disabled_by": None,
+        }
+
+        tasmota_entities = [
+            {
+                "entity_id": "sensor.tasmota_strong_rssi",
+                "device_id": "rssi_test_001",
+                "platform": "mqtt",
+            },
+        ]
+
+        def mock_request(ha_url, ha_token, endpoint):
+            return {"success": True, "data": {"state": "-30", "attributes": {}}}
+
+        with patch("tools.devices.get_registry_devices") as mock_devices:
+            mock_devices.return_value = [tasmota_device]
+
+            with patch("tools.devices.get_registry_entities") as mock_entities:
+                mock_entities.return_value = tasmota_entities
+
+                with patch("tools.devices.make_ha_request") as mock_request_fn:
+                    mock_request_fn.side_effect = mock_request
+
+                    register_device_tools(
+                        self.mock_mcp, self.config_path, self.ha_url, self.ha_token
+                    )
+                    result = await self.mock_mcp._tools["device_get_wifi_status"]("rssi_test_001")
+
+        data = json.loads(result)
+        assert data["success"] is True
+        wifi = data["wifi_status"]
+        assert wifi["rssi"] == -30
+        assert wifi["signal_quality"] == 100
+        assert wifi["connection_state"] == "connected"
+
+    @pytest.mark.asyncio
+    async def test_wifi_status_partial_sensors(self):
+        """Device with only ssid (no rssi) should still report connected."""
+        tasmota_device = {
+            "id": "partial_test_001",
+            "config_entries": ["mqtt_entry"],
+            "connections": [["mac", "aa:bb:cc:dd:ee:11"]],
+            "identifiers": [["mqtt", "tasmota_partial"]],
+            "manufacturer": "Tasmota",
+            "model": "Smart Plug",
+            "name": "Partial WiFi Device",
+            "name_by_user": None,
+            "area_id": None,
+            "disabled_by": None,
+        }
+
+        tasmota_entities = [
+            {
+                "entity_id": "sensor.tasmota_partial_ssid",
+                "device_id": "partial_test_001",
+                "platform": "mqtt",
+            },
+        ]
+
+        def mock_request(ha_url, ha_token, endpoint):
+            if "ssid" in endpoint:
+                return {"success": True, "data": {"state": "PartialWiFi", "attributes": {}}}
+            return {"success": True, "data": {"state": "unknown", "attributes": {}}}
+
+        with patch("tools.devices.get_registry_devices") as mock_devices:
+            mock_devices.return_value = [tasmota_device]
+
+            with patch("tools.devices.get_registry_entities") as mock_entities:
+                mock_entities.return_value = tasmota_entities
+
+                with patch("tools.devices.make_ha_request") as mock_request_fn:
+                    mock_request_fn.side_effect = mock_request
+
+                    register_device_tools(
+                        self.mock_mcp, self.config_path, self.ha_url, self.ha_token
+                    )
+                    result = await self.mock_mcp._tools["device_get_wifi_status"](
+                        "partial_test_001"
+                    )
+
+        data = json.loads(result)
+        assert data["success"] is True
+        wifi = data["wifi_status"]
+        assert wifi["connection_state"] == "connected"
+        assert wifi["ssid"] == "PartialWiFi"
+        assert wifi["rssi"] is None
+        assert wifi["signal_quality"] is None
+        assert wifi["mac_address"] == "aa:bb:cc:dd:ee:11"
 
 
 if __name__ == "__main__":

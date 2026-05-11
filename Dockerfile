@@ -22,7 +22,7 @@ ENV PYTHONUNBUFFERED=1 \
 COPY --from=builder /root/.local /root/.local
 
 COPY server.py .
-COPY __init__.py .
+COPY version.py .
 COPY context_generator/ ./context_generator/
 COPY tools/ ./tools/
 COPY start.sh .

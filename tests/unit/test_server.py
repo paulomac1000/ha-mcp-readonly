@@ -2,8 +2,9 @@
 Tests for server.py REST API endpoints.
 """
 
+import sys
 from starlette.testclient import TestClient
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -81,6 +82,42 @@ class TestCallToolEndpoint:
         response = client.post("/api/tools/get_entity_state", json={"wrong_param": 123})
         # TypeError -> 400
         assert response.status_code in (400, 200, 500)
+
+    def test_call_tool_get_entity_state(self, client):
+        """Test calling get_entity_state with valid entity_id."""
+        response = client.post(
+            "/api/tools/get_entity_state",
+            json={"entity_id": "sun.sun"},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        assert data["tool"] == "get_entity_state"
+
+    def test_call_tool_invalid_json_body(self, client):
+        """POST with malformed JSON triggers JSONDecodeError handler (lines 318-319)."""
+        response = client.post(
+            "/api/tools/get_domains_summary",
+            content=b"not valid json {{{",
+            headers={"Content-Type": "application/json"},
+        )
+        assert response.status_code == 200
+
+    def test_call_tool_not_callable(self, client):
+        """Tool object exists but is not callable (lines 340-343)."""
+        with patch("server.get_tool", return_value={"not": "callable"}):
+            response = client.post("/api/tools/some_tool")
+        assert response.status_code == 500
+        data = response.json()
+        assert data["success"] is False
+        assert "not callable" in data["error"].lower()
+
+    def test_call_tool_missing_required_arg(self, client):
+        """TypeError -> 400 when required arg is missing (lines 370-371)."""
+        response = client.post("/api/tools/get_entity_state")
+        assert response.status_code == 400
+        data = response.json()
+        assert data["success"] is False
 
 
 class TestContextEndpoints:
@@ -225,6 +262,73 @@ class TestContextEndpoints:
         data = response.json()
         assert "still in progress" in data["error"].lower()
 
+    def test_context_generate_invalid_json(self, client, tmp_path, monkeypatch):
+        """POST with malformed JSON triggers JSONDecodeError handler (lines 397-400)."""
+        monkeypatch.setattr("server.HA_CONFIG_PATH", str(tmp_path))
+        monkeypatch.setattr("server.OUTPUT_PATH", str(tmp_path / "out.md"))
+
+        import server
+
+        server._generation_state = {
+            "status": "idle",
+            "started_at": None,
+            "completed_at": None,
+            "output_path": None,
+            "error": None,
+            "stats": {},
+        }
+
+        with patch("server._run_context_generation"):
+            response = client.post(
+                "/api/context/generate",
+                content=b"not json {{{",
+                headers={"Content-Type": "application/json"},
+            )
+            assert response.status_code == 200
+            data = response.json()
+            assert data["success"] is True
+
+    def test_context_generate_invalid_output_path(self, client, tmp_path, monkeypatch):
+        """output_path outside allowed prefixes returns 403 (line 416)."""
+        monkeypatch.setattr("server.HA_CONFIG_PATH", str(tmp_path))
+        monkeypatch.setattr("server.OUTPUT_PATH", str(tmp_path / "out.md"))
+
+        import server
+
+        server._generation_state = {
+            "status": "idle",
+            "started_at": None,
+            "completed_at": None,
+            "output_path": None,
+            "error": None,
+            "stats": {},
+        }
+
+        response = client.post(
+            "/api/context/generate",
+            json={
+                "config_path": str(tmp_path),
+                "output_path": "/unrelated/path/out.md",
+            },
+        )
+        assert response.status_code == 403
+        assert "Invalid output_path" in response.json()["error"]
+
+    def test_context_download_read_exception(self, client, tmp_path):
+        """File read error returns 500 (lines 502-503)."""
+        import server
+
+        out_file = tmp_path / "test.md"
+        out_file.write_text("# Test Context\n", encoding="utf-8")
+        server._generation_state["output_path"] = str(out_file)
+        server._generation_state["status"] = "completed"
+
+        with patch("builtins.open", side_effect=OSError("Permission denied")):
+            response = client.get("/api/context/download")
+        assert response.status_code == 500
+        data = response.json()
+        assert "Failed to read context file" in data["error"]
+
 
 class TestOpenApiSchema:
     """Tests for GET /api/openapi.json."""
@@ -238,3 +342,114 @@ class TestOpenApiSchema:
         assert "paths" in data
         assert "/api/tools" in data["paths"]
         assert "/api/health" in data["paths"]
+
+    def test_openapi_tool_paths_have_descriptions(self, client):
+        """Tool paths carry docstring-derived summaries (lines 558-559)."""
+        response = client.get("/api/openapi.json")
+        data = response.json()
+        tool_paths = {k: v for k, v in data["paths"].items() if k.startswith("/api/tools/")}
+        assert len(tool_paths) > 0
+        for _path, methods in tool_paths.items():
+            if "post" in methods:
+                assert "summary" in methods["post"]
+                assert len(methods["post"]["summary"]) > 0
+
+
+class TestToolCount:
+    """Tests for tool count."""
+
+    def test_tool_count_positive(self, client):
+        response = client.get("/api/health")
+        assert response.status_code == 200
+        assert response.json()["tools_registered"] > 0
+
+    def test_tool_count_matches_list(self, client):
+        health_data = client.get("/api/health").json()
+        tools_data = client.get("/api/tools").json()
+        assert health_data["tools_registered"] == tools_data["total"]
+
+    def test_list_tools_total_matches_items(self, client):
+        tools_data = client.get("/api/tools").json()
+        assert tools_data["total"] == len(tools_data["tools"])
+
+
+class TestRunContextGeneration:
+    """Tests for _run_context_generation background-thread function (lines 215-233)."""
+
+    def test_completes_successfully(self):
+        import server
+
+        server._generation_state["status"] = "idle"
+        server._generation_state["error"] = None
+        with patch(
+            "context_generator.generate_context_file",
+            return_value={"entities": 10},
+        ):
+            server._run_context_generation("/config", "/out.md", "offline")
+        assert server._generation_state["status"] == "completed"
+        assert server._generation_state["error"] is None
+        assert server._generation_state["stats"] == {"entities": 10}
+
+    def test_captures_exception(self):
+        import server
+
+        server._generation_state["status"] = "idle"
+        with patch(
+            "context_generator.generate_context_file",
+            side_effect=RuntimeError("test error"),
+        ):
+            server._run_context_generation("/config", "/out.md", "offline")
+        assert server._generation_state["status"] == "error"
+        assert server._generation_state["error"] == "test error"
+        assert server._generation_state["completed_at"] is not None
+
+
+class TestRunStartupTests:
+    """Tests for run_startup_tests function (lines 243-262)."""
+
+    def test_tests_pass(self):
+        from server import run_startup_tests
+
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value.returncode = 0
+            assert run_startup_tests() is True
+
+    def test_tests_fail(self):
+        from server import run_startup_tests
+
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value.returncode = 1
+            assert run_startup_tests() is False
+
+    def test_exception_returns_false(self):
+        from server import run_startup_tests
+
+        with patch("subprocess.run", side_effect=FileNotFoundError("pytest not found")):
+            assert run_startup_tests() is False
+
+
+class TestRunRestApi:
+    """Tests for run_rest_api function (lines 611-615)."""
+
+    def test_starts_uvicorn(self):
+        mock_uvicorn = MagicMock()
+        sys.modules["uvicorn"] = mock_uvicorn
+        try:
+            from server import run_rest_api
+
+            run_rest_api()
+            mock_uvicorn.run.assert_called_once()
+            call_kwargs = mock_uvicorn.run.call_args[1]
+            assert call_kwargs["host"] == "127.0.0.1"
+            assert call_kwargs["port"] == 9093
+        finally:
+            sys.modules.pop("uvicorn", None)
+
+    def test_uvicorn_missing_does_not_crash(self):
+        with patch.dict("sys.modules", {"uvicorn": MagicMock()}):
+            from server import run_rest_api
+
+            try:
+                run_rest_api()
+            except Exception:
+                pytest.fail("run_rest_api raised an unexpected exception")

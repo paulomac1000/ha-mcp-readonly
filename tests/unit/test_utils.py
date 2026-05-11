@@ -334,6 +334,78 @@ class TestGetRegistryCacheStats:
         assert stats["hit_rate_percent"] == 0.0
 
 
+class TestLoadRegistryErrors:
+    """Tests for error paths in load_registry."""
+
+    def test_load_registry_json_decode_error(self):
+        """JSONDecodeError should return {}."""
+        from tools.utils import invalidate_registry_cache, load_registry
+
+        invalidate_registry_cache()
+
+        with patch("tools.utils.Path") as mock_path_class:
+            mock_path = MagicMock()
+            mock_path_class.return_value = mock_path
+            mock_path.__truediv__ = MagicMock(return_value=mock_path)
+            mock_path.exists.return_value = True
+
+            with patch("builtins.open", create=True) as mock_open_fn:
+                mock_file = MagicMock()
+                mock_open_fn.return_value = mock_file
+                mock_file.__enter__.return_value = mock_file
+                mock_file.__exit__.return_value = False
+
+                import json as json_module
+
+                with patch("json.load") as mock_json_load:
+                    mock_json_load.side_effect = json_module.JSONDecodeError("bad json", "{}", 0)
+                    result = load_registry("core.entity_registry", "/config", use_cache=False)
+
+        assert result == {}
+
+    def test_load_registry_io_error(self):
+        """IOError during file open should return {}."""
+        from tools.utils import invalidate_registry_cache, load_registry
+
+        invalidate_registry_cache()
+
+        with patch("tools.utils.Path") as mock_path_class:
+            mock_path = MagicMock()
+            mock_path_class.return_value = mock_path
+            mock_path.__truediv__ = MagicMock(return_value=mock_path)
+            mock_path.exists.return_value = True
+            with patch("builtins.open", side_effect=OSError("permission denied")):
+                result = load_registry("core.entity_registry", "/config", use_cache=False)
+
+        assert result == {}
+
+    def test_invalidate_cache_by_config_path(self):
+        """invalidate_registry_cache(config_path=...) removes matching keys."""
+        from tools.utils import (
+            _REGISTRY_CACHE,
+            invalidate_registry_cache,
+        )
+
+        # Pre-populate cache
+        _REGISTRY_CACHE["/config1/core.entity_registry"] = ({}, 0)
+        _REGISTRY_CACHE["/config1/core.device_registry"] = ({}, 0)
+        _REGISTRY_CACHE["/config2/core.entity_registry"] = ({}, 0)
+
+        invalidate_registry_cache(config_path="/config1")
+        remaining = list(_REGISTRY_CACHE.keys())
+        assert "/config1/core.entity_registry" not in remaining
+        assert "/config1/core.device_registry" not in remaining
+        assert "/config2/core.entity_registry" in remaining
+
+    def test_resolve_area_id_from_device_unknown(self):
+        """resolve_area_id returns None when device not found in map."""
+        from tools.utils import resolve_area_id
+
+        entity = {"device_id": "nonexistent_dev"}
+        device_map = {"other_dev": {"area_id": "kitchen"}}
+        assert resolve_area_id(entity, device_map) is None
+
+
 class TestTailLogFile:
     """Tests for tail_log_file utility."""
 

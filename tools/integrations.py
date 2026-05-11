@@ -6,11 +6,12 @@ Provides tools for integration analysis:
 - get_integration_summary(domain)
 """
 
-import json
 from collections import Counter
-from typing import Any, Dict, List
+from typing import Any
 
 from tools.utils import (
+    _error_response,
+    _success_response,
     get_best_name,
     get_registry_config_entries,
     get_registry_devices,
@@ -18,13 +19,15 @@ from tools.utils import (
     make_ha_request,
 )
 
+TOOLS_VERSION = "1.0.0"
 
-def _get_entries_by_domain(entries: List[Dict[str, Any]], domain: str) -> List[Dict[str, Any]]:
+
+def _get_entries_by_domain(entries: list[dict[str, Any]], domain: str) -> list[dict[str, Any]]:
     """Get all config entries for a domain."""
     return [entry for entry in entries if entry.get("domain") == domain]
 
 
-def _get_entities_for_domain(entities: List[Dict[str, Any]], domain: str) -> List[Dict[str, Any]]:
+def _get_entities_for_domain(entities: list[dict[str, Any]], domain: str) -> list[dict[str, Any]]:
     """Get all entities for a domain based on platform."""
     domain_entities = []
     for entity in entities:
@@ -33,7 +36,7 @@ def _get_entities_for_domain(entities: List[Dict[str, Any]], domain: str) -> Lis
     return domain_entities
 
 
-def register_integration_tools(mcp, config_path: str, ha_url: str, ha_token: str) -> None:
+def register_integration_tools(mcp, config_path: str, ha_url: str, ha_token: str) -> None:  # type: ignore[no-untyped-def]
     """Register integration analysis tools."""
 
     # =========================================================================
@@ -42,8 +45,7 @@ def register_integration_tools(mcp, config_path: str, ha_url: str, ha_token: str
 
     @mcp.tool(name="get_integration_entities")
     async def get_integration_entities(domain: str, include_disabled: bool = False) -> str:
-        """
-        Get all entities for a given integration domain.
+        """[READ] Get all entities for a given integration domain.
 
         Args:
             domain: Integration domain (e.g., "mqtt", "hue").
@@ -56,14 +58,7 @@ def register_integration_tools(mcp, config_path: str, ha_url: str, ha_token: str
         entities = _get_entities_for_domain(get_registry_entities(config_path), domain)
 
         if not entities:
-            return json.dumps(
-                {
-                    "success": False,
-                    "error": f"No entities found for integration '{domain}'",
-                    "domain": domain,
-                },
-                indent=2,
-            )
+            return _error_response(f"No entities found for integration '{domain}'")
 
         # Get devices for context
         devices = get_registry_devices(config_path)
@@ -111,35 +106,31 @@ def register_integration_tools(mcp, config_path: str, ha_url: str, ha_token: str
                     device = devices_map[device_id]
                     by_device[device_id] = {
                         "device_name": get_best_name(device, "device"),
-                        "model": device.get("model"),
+                        "model": device.get("model"),  # type: ignore[dict-item]
                         "entities": [],
                     }
-                by_device[device_id]["entities"].append(entity_info)
+                by_device[device_id]["entities"].append(entity_info)  # type: ignore[attr-defined]
             else:
-                by_device["no_device"]["entities"].append(entity_info)
+                by_device["no_device"]["entities"].append(entity_info)  # type: ignore[attr-defined]
 
         # Remove empty "No Device" category
         if not by_device["no_device"]["entities"]:
             del by_device["no_device"]
 
-        return json.dumps(
+        return _success_response(
             {
-                "success": True,
                 "domain": domain,
                 "total_entities": len(entities),
                 "returned_entities": sum(len(d["entities"]) for d in by_device.values()),
                 "disabled_count": disabled_count,
                 "unavailable_count": unavailable_count,
                 "by_device": by_device,
-            },
-            indent=2,
-            ensure_ascii=False,
+            }
         )
 
     @mcp.tool(name="get_integration_summary")
     async def get_integration_summary(domain: str) -> str:
-        """
-        Summarize an integration (devices, entities, health).
+        """[READ] Summarize an integration (devices, entities, health).
 
         Args:
             domain: Integration domain.
@@ -151,10 +142,7 @@ def register_integration_tools(mcp, config_path: str, ha_url: str, ha_token: str
         entities = _get_entities_for_domain(get_registry_entities(config_path), domain)
 
         if not entries and not entities:
-            return json.dumps(
-                {"success": False, "error": f"Integration '{domain}' not found"},
-                indent=2,
-            )
+            return _error_response(f"Integration '{domain}' not found")
 
         # Analyze config entries
         entries_summary = {
@@ -166,9 +154,9 @@ def register_integration_tools(mcp, config_path: str, ha_url: str, ha_token: str
 
         for entry in entries:
             if entry.get("disabled_by"):
-                entries_summary["disabled"] += 1
+                entries_summary["disabled"] += 1  # type: ignore[operator]
             else:
-                entries_summary["loaded"] += 1
+                entries_summary["loaded"] += 1  # type: ignore[operator]
 
         # Analyze entities
         states_map = {}
@@ -185,10 +173,10 @@ def register_integration_tools(mcp, config_path: str, ha_url: str, ha_token: str
             "unavailable": 0,
         }
 
-        entity_platforms = Counter()
+        entity_platforms = Counter()  # type: ignore[var-annotated]
 
         for entity in entities:
-            platform = entity.get("entity_id").split(".")[0]
+            platform = entity.get("entity_id").split(".")[0]  # type: ignore[union-attr]
             entity_platforms[platform] += 1
 
             if entity.get("disabled_by"):
@@ -210,16 +198,13 @@ def register_integration_tools(mcp, config_path: str, ha_url: str, ha_token: str
             if any(entry_id in entry_ids for entry_id in d.get("config_entries", []))
         ]
 
-        return json.dumps(
+        return _success_response(
             {
-                "success": True,
                 "domain": domain,
                 "config_entries": entries_summary,
                 "devices_count": len(domain_devices),
                 "entities_summary": entities_summary,
                 "entity_platforms": dict(entity_platforms),
                 "health": "Healthy" if entities_summary["unavailable"] == 0 else "Issues Detected",
-            },
-            indent=2,
-            ensure_ascii=False,
+            }
         )

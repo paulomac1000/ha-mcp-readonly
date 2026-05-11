@@ -253,3 +253,133 @@ class TestToolRegistration:
         register_health_reporter_tools(mock_mcp, "http://ha", "token", config_path)
         assert "trigger_health_report" in mock_mcp._tools
         assert "get_last_health_report" not in mock_mcp._tools
+
+
+# ============================================================
+# Additional tests for trigger_health_report
+# ============================================================
+
+
+class TestTriggerHealthReport:
+    def test_trigger_health_report_success(
+        self, mock_mcp, config_path, sample_api_states, sample_api_config
+    ):
+        """trigger_health_report returns a valid health report JSON string."""
+        import json
+
+        # Create log file so collect_log_summary_optimized doesn't return early
+        log_path = config_path + "/home-assistant.log"
+        with open(log_path, "w") as f:
+            f.write("2025-01-01 12:00:00 INFO: Test\n")
+
+        def make_ha_request_side_effect(
+            ha_url, ha_token, endpoint, method="GET", data=None, **kwargs
+        ):
+            if endpoint == "/api/config":
+                return {"success": True, "data": sample_api_config}
+            if endpoint == "/api/states":
+                return {"success": True, "data": sample_api_states}
+            if "/api/hassio/" in endpoint:
+                return {"success": False}
+            return {"success": False, "error": "Unknown endpoint"}
+
+        with patch(
+            "tools.health_reporter.make_ha_request",
+            side_effect=make_ha_request_side_effect,
+        ):
+            with patch("tools.health_reporter.tail_log_file", return_value=[]):
+                register_health_reporter_tools(mock_mcp, "http://ha", "token", config_path)
+                result = mock_mcp._tools["trigger_health_report"]()
+                data = json.loads(result)
+
+        assert "health_score" in data
+        assert "system_metrics" in data
+        assert "entity_health" in data
+        assert "automation_health" in data
+        assert "log_summary" in data
+        assert data["health_score"]["score"] >= 0
+        assert data["system_metrics"]["core_version"] == "2025.1.0"
+
+    def test_trigger_health_report_api_unavailable(self, mock_mcp, config_path):
+        """trigger_health_report still produces a report when HA API is down."""
+        import json
+
+        with patch(
+            "tools.health_reporter.make_ha_request",
+            return_value={"success": False, "error": "Connection refused"},
+        ):
+            with patch("tools.health_reporter.tail_log_file", return_value=[]):
+                register_health_reporter_tools(mock_mcp, "http://ha", "token", config_path)
+                result = mock_mcp._tools["trigger_health_report"]()
+                data = json.loads(result)
+
+        # Should still return a valid report structure, not crash
+        assert "health_score" in data
+        assert "entity_health" in data
+        assert "automation_health" in data
+        assert "system_metrics" in data
+
+
+class TestCollectLogSummaryOptimized:
+    def test_log_parsing_loop_detects_errors_and_warnings(self, config_path):
+        from datetime import datetime, timedelta
+
+        from tools.health_reporter import collect_log_summary_optimized
+
+        now = datetime.now()
+        log_lines = [
+            (now - timedelta(minutes=10)).strftime("%Y-%m-%d %H:%M:%S")
+            + " ERROR (MainThread) [homeassistant.core] Something failed",
+            (now - timedelta(minutes=9)).strftime("%Y-%m-%d %H:%M:%S")
+            + " WARNING (MainThread) [homeassistant.components.mqtt] Retrying connection",
+            (now - timedelta(minutes=8)).strftime("%Y-%m-%d %H:%M:%S")
+            + " ERROR (MainThread) [homeassistant.components.automation] Template error",
+            (now - timedelta(minutes=7)).strftime("%Y-%m-%d %H:%M:%S")
+            + " INFO (MainThread) [homeassistant.core] All good",
+            (now - timedelta(minutes=6)).strftime("%Y-%m-%d %H:%M:%S")
+            + " WARNING (MainThread) [homeassistant.components.hue] Slow response",
+        ]
+
+        # Create log file so the path check passes
+        log_path = config_path + "/home-assistant.log"
+        with open(log_path, "w") as f:
+            f.write("\n".join(log_lines))
+
+        with patch(
+            "tools.health_reporter.make_ha_request",
+            return_value={"success": False},
+        ):
+            result = collect_log_summary_optimized("http://ha", "token", config_path, hours=1)
+
+        assert result["total_error_count"] == 2
+        assert result["total_warning_count"] == 2
+        assert result["unique_error_patterns"] > 0
+
+    def test_normalize_message_replaces_patterns(self, config_path):
+        from datetime import datetime, timedelta
+
+        from tools.health_reporter import collect_log_summary_optimized
+
+        now = datetime.now()
+        log_lines = [
+            (now - timedelta(minutes=5)).strftime("%Y-%m-%d %H:%M:%S")
+            + ".123 ERROR (MainThread) [homeassistant.core] Error from 192.168.0.100 with id a1b2c3d4e5f6a7b8",
+            (now - timedelta(minutes=4)).strftime("%Y-%m-%d %H:%M:%S")
+            + ".456 ERROR (MainThread) [homeassistant.core] Error from 10.0.0.1 with id 1234567890abcdef",
+        ]
+
+        log_path = config_path + "/home-assistant.log"
+        with open(log_path, "w") as f:
+            f.write("\n".join(log_lines))
+
+        with patch(
+            "tools.health_reporter.make_ha_request",
+            return_value={"success": False},
+        ):
+            result = collect_log_summary_optimized("http://ha", "token", config_path, hours=1)
+
+        patterns = [g["pattern"] for g in result["top_error_groups"]]
+        combined = " ".join(patterns)
+        assert "TIMESTAMP" in combined
+        assert "IP" in combined
+        assert "ID" in combined

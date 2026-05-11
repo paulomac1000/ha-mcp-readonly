@@ -13,18 +13,30 @@ Key features:
 """
 
 import json
+import logging
 import re
 import time
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any
 
 import yaml
 
-from tools.utils import get_registry_entities, make_ha_request
+from tools.automations import _get_automation_by_id_or_alias, _load_automations
+from tools.utils import (
+    _error_response,
+    _success_response,
+    get_registry_entities,
+    load_registry,
+    make_ha_request,
+)
 from tools.yaml_utils import load_yaml_file
 
+_logger = logging.getLogger(__name__)
+
+TOOLS_VERSION = "1.0.0"
+
 # =============================================================================
-# CONstateTS AND PATTERNS
+# CONSTANTS AND PATTERNS
 # =============================================================================
 
 ENTITY_PATTERN = re.compile(
@@ -51,7 +63,7 @@ TOKEN_PER_FILE = 100
 # =============================================================================
 
 
-async def validate_yaml_batch(
+async def _do_validate_yaml_batch(
     config_path: str,
     file_paths: str,
 ) -> str:
@@ -77,12 +89,8 @@ async def validate_yaml_batch(
     paths = [p.strip() for p in file_paths.split(",") if p.strip()]
 
     if not paths:
-        return json.dumps(
-            {
-                "success": False,
-                "error": "No file paths provided",
-                "usage_hint": "Provide comma-separated paths: 'automations.yaml,scripts.yaml'",
-            }
+        return _error_response(
+            "No file paths provided. Provide comma-separated paths: 'automations.yaml,scripts.yaml'"
         )
 
     results = []
@@ -119,7 +127,7 @@ async def validate_yaml_batch(
 
         # Validate YAML syntax
         try:
-            with open(full_path, "r", encoding="utf-8") as f:
+            with open(full_path, encoding="utf-8") as f:
                 content = f.read()
 
             # Parse with YAML loader
@@ -164,9 +172,8 @@ async def validate_yaml_batch(
 
     execution_time = (time.time() - start_time) * 1000
 
-    return json.dumps(
+    return _success_response(
         {
-            "success": total_errors == 0,
             "files_validated": len(paths),
             "results": results,
             "summary": {
@@ -179,8 +186,7 @@ async def validate_yaml_batch(
                 "token_savings_vs_individual": f"{round(80 - (20 * len(paths) / 10), 0)}%",
                 "optimization_hint": "Use this function for 3+ files to maximize token efficiency",
             },
-        },
-        indent=2,
+        }
     )
 
 
@@ -189,11 +195,11 @@ async def validate_yaml_batch(
 # =============================================================================
 
 
-async def compare_entities_state(
+async def _do_compare_entities_state(
     ha_url: str,
     ha_token: str,
     entity_ids: str,
-    snapshot_before: Optional[str] = None,
+    snapshot_before: str | None = None,
 ) -> str:
     """
     COMPARE - Compare entity states before/after changes.
@@ -222,17 +228,12 @@ async def compare_entities_state(
     entity_list = [e.strip() for e in entity_ids.split(",") if e.strip()]
 
     if not entity_list:
-        return json.dumps({"success": False, "error": "No entity IDs provided"})
+        return _error_response("No entity IDs provided")
 
     # Get current states
-    response = make_ha_request("GET", "/api/states", ha_url, ha_token)
+    response = make_ha_request(ha_url, ha_token, "/api/states")
     if not response.get("success"):
-        return json.dumps(
-            {
-                "success": False,
-                "error": f"Failed to fetch states: {response.get('error', 'Unknown error')}",
-            }
-        )
+        return _error_response(f"Failed to fetch states: {response.get('error', 'Unknown error')}")
 
     all_states = response.get("data", [])
     current_snapshot = {}
@@ -249,9 +250,8 @@ async def compare_entities_state(
 
     # If no previous snapshot, return current as baseline
     if snapshot_before is None:
-        return json.dumps(
+        return _success_response(
             {
-                "success": True,
                 "mode": "snapshot",
                 "message": "Snapshot taken. Use this as 'snapshot_before' parameter in next call",
                 "entities_captured": len(current_snapshot),
@@ -260,8 +260,7 @@ async def compare_entities_state(
                     "execution_time_ms": round((time.time() - start_time) * 1000, 2),
                     "usage_hint": "Store this snapshot and provide it as 'snapshot_before' parameter after making changes",
                 },
-            },
-            indent=2,
+            }
         )
 
     # Parse previous snapshot
@@ -273,7 +272,7 @@ async def compare_entities_state(
         else:
             previous_snapshot = snapshot_before
     except json.JSONDecodeError as e:
-        return json.dumps({"success": False, "error": f"Invalid snapshot_before format: {str(e)}"})
+        return _error_response(f"Invalid snapshot_before format: {str(e)}")
 
     # Compare snapshots
     changes = []
@@ -308,9 +307,8 @@ async def compare_entities_state(
 
     execution_time = (time.time() - start_time) * 1000
 
-    return json.dumps(
+    return _success_response(
         {
-            "success": True,
             "mode": "comparison",
             "entities_compared": len(entity_list),
             "summary": {
@@ -328,12 +326,11 @@ async def compare_entities_state(
                 "execution_time_ms": round(execution_time, 2),
                 "token_savings_vs_manual": "~70%",
             },
-        },
-        indent=2,
+        }
     )
 
 
-def _compare_attributes(before: Dict, after: Dict) -> List[Dict]:
+def _compare_attributes(before: dict[str, Any], after: dict[str, Any]) -> list[dict]:  # type: ignore[type-arg]
     """Compare attribute dictionaries and return changes."""
     changes = []
     all_keys = set(before.keys()) | set(after.keys())
@@ -353,7 +350,7 @@ def _compare_attributes(before: Dict, after: Dict) -> List[Dict]:
 # =============================================================================
 
 
-async def get_template_dependencies(
+async def _do_get_template_dependencies(
     config_path: str,
     entity_id: str,
 ) -> str:
@@ -380,16 +377,13 @@ async def get_template_dependencies(
     entity_data = next((e for e in entities if e.get("entity_id") == entity_id), None)
 
     if not entity_data:
-        return json.dumps({"success": False, "error": f"Entity {entity_id} not found in registry"})
+        return _error_response(f"Entity {entity_id} not found in registry")
 
     # Check if it's a template entity
     platform = entity_data.get("platform")
     if platform != "template":
-        return json.dumps(
-            {
-                "success": False,
-                "error": f"Entity {entity_id} is not a template entity (platform: {platform})",
-            }
+        return _error_response(
+            f"Entity {entity_id} is not a template entity (platform: {platform})",
         )
 
     # Extract template from entity data or config files
@@ -437,6 +431,26 @@ async def get_template_dependencies(
         except Exception:
             continue
 
+    # Fallback: UI-created template helpers are in .storage/core.config_entries,
+    # not in YAML files. Check config entries for the template source code.
+    if not template_content and entity_data.get("platform") == "template":
+        ce_id = entity_data.get("config_entry_id")
+        if ce_id:
+            ce_data = load_registry("core.config_entries", config_path)
+            for entry in ce_data.get("data", {}).get("entries", []):
+                if entry.get("entry_id") == ce_id:
+                    opts = entry.get("options", {})
+                    state_template = opts.get("state") or opts.get("template", "")
+                    if state_template:
+                        template_content = {"state": state_template}
+                        template_source = f".storage/core.config_entries (entry: {ce_id})"
+                        # Also check attribute templates
+                        for attr_val in opts.get("attributes", {}).values():
+                            if isinstance(attr_val, str) and "{{" in attr_val:
+                                if isinstance(template_content, dict):
+                                    template_content["_attr_" + str(attr_val)[:20]] = attr_val
+                    break
+
     # Extract entities from template
     dependencies = set()
 
@@ -473,7 +487,6 @@ async def get_template_dependencies(
     execution_time = (time.time() - start_time) * 1000
 
     result = {
-        "success": True,
         "entity_id": entity_id,
         "platform": platform,
         "template_source": template_source or "Not found in config files",
@@ -494,7 +507,7 @@ async def get_template_dependencies(
         result["warning"] = f"{missing_count} missing dependencies - template may fail at runtime"
         result["recommendation"] = "Create missing entities or update template before deployment"
 
-    return json.dumps(result, indent=2)
+    return _success_response(result)
 
 
 # =============================================================================
@@ -502,7 +515,7 @@ async def get_template_dependencies(
 # =============================================================================
 
 
-async def bulk_search_entities(
+async def _do_bulk_search_entities(
     config_path: str,
     search_terms: str,
     max_results_per_term: int = 10,
@@ -530,7 +543,7 @@ async def bulk_search_entities(
     terms = [t.strip().lower() for t in search_terms.split(",") if t.strip()]
 
     if not terms:
-        return json.dumps({"success": False, "error": "No search terms provided"})
+        return _error_response("No search terms provided")
 
     # Get all entities
     entities = get_registry_entities(config_path)
@@ -568,9 +581,8 @@ async def bulk_search_entities(
 
     execution_time = (time.time() - start_time) * 1000
 
-    return json.dumps(
+    return _success_response(
         {
-            "success": True,
             "terms_searched": len(terms),
             "total_matches": total_matches,
             "results": results,
@@ -579,8 +591,86 @@ async def bulk_search_entities(
                 "token_savings_vs_individual": f"~{min(85, 70 + len(terms) * 2)}%",
                 "optimization_hint": "Use this for 3+ search terms to maximize efficiency",
             },
-        },
-        indent=2,
+        }
+    )
+
+
+async def _do_get_automation_codes_batch(config_path: str, automation_ids: str) -> str:
+    """
+    BATCH - Get YAML code for multiple automations in one call.
+
+    Loads automations.yaml once and returns the code (without 'id' field)
+    for each requested automation. Much more efficient than calling
+    get_automation_code N times in sequence.
+
+    Args:
+        config_path: Path to HA config directory
+        automation_ids: Comma-separated list of automation aliases or IDs
+
+    Returns:
+        JSON with results keyed by each input automation_id, plus summary and errors
+
+    Example:
+        automation_ids="Motion Light Kitchen,Powiadomienie o kodzie IR"
+
+    Token savings: ~70% vs N individual get_automation_code calls
+    """
+    start_time = time.time()
+
+    if not automation_ids or not automation_ids.strip():
+        return _error_response("No automation IDs provided")
+
+    ids = [i.strip() for i in automation_ids.split(",") if i.strip()]
+
+    if not ids:
+        return _error_response("No automation IDs provided")
+
+    try:
+        data = _load_automations(config_path)
+    except Exception as e:
+        return _error_response(f"Failed to load automations.yaml: {e}")
+
+    results = {}
+    errors = []
+    found_count = 0
+
+    for automation_id in ids:
+        item = _get_automation_by_id_or_alias(data, automation_id)
+        if not item:
+            errors.append({"automation_id": automation_id, "error": "not found"})
+            results[automation_id] = {"found": False, "error": "Automation not found"}
+        else:
+            clean_item = item.copy()
+            auto_id_value = clean_item.pop("id", None)
+            code = yaml.dump(
+                clean_item,
+                allow_unicode=True,
+                default_flow_style=False,
+                sort_keys=False,
+            )
+            results[automation_id] = {
+                "found": True,
+                "alias": item.get("alias"),
+                "automation_id": auto_id_value,
+                "code": code,
+            }
+            found_count += 1
+
+    execution_time = (time.time() - start_time) * 1000
+
+    return _success_response(
+        {
+            "total_requested": len(ids),
+            "found_count": found_count,
+            "error_count": len(errors),
+            "results": results,
+            "errors": errors,
+            "metadata": {
+                "execution_time_ms": round(execution_time, 2),
+                "token_savings_vs_individual": f"~{min(70, 40 + len(ids) * 10)}%",
+                "optimization_hint": "Use this when inspecting 3+ automations to save round-trips",
+            },
+        }
     )
 
 
@@ -589,29 +679,45 @@ async def bulk_search_entities(
 # =============================================================================
 
 
-def register_batch_operations_tools(mcp, config_path: str, ha_url: str, ha_token: str):
+def register_batch_operations_tools(mcp, config_path: str, ha_url: str, ha_token: str) -> None:  # type: ignore[no-untyped-def]
     """Register batch operation tools with MCP server."""
 
     @mcp.tool()
     async def validate_yaml_batch(file_paths: str) -> str:
-        """BATCH - Validate multiple YAML files in one call. Saves ~80% tokens vs individual calls."""
-        return await globals()["validate_yaml_batch"](config_path, file_paths)
+        """[READ] BATCH - Validate multiple YAML files in one call. Saves ~80% tokens vs individual calls."""
+        try:
+            return await _do_validate_yaml_batch(config_path, file_paths)
+        except Exception as e:
+            return _error_response(str(e))
 
     @mcp.tool()
-    async def compare_entities_state(entity_ids: str, snapshot_before: str = None) -> str:
-        """COMPARE - Compare entity states before/after changes. Saves ~70% tokens vs manual checking."""
-        return await globals()["compare_entities_state"](
-            ha_url, ha_token, entity_ids, snapshot_before
-        )
+    async def compare_entities_state(entity_ids: str, snapshot_before: str | None = None) -> str:
+        """[READ] COMPARE - Compare entity states before/after changes. Saves ~70% tokens vs manual checking."""
+        try:
+            return await _do_compare_entities_state(ha_url, ha_token, entity_ids, snapshot_before)
+        except Exception as e:
+            return _error_response(str(e))
 
     @mcp.tool()
     async def get_template_dependencies(entity_id: str) -> str:
-        """ANALYZE - Get all entities referenced in template. Saves ~90% tokens vs manual analysis."""
-        return await globals()["get_template_dependencies"](config_path, entity_id)
+        """[READ] ANALYZE - Get all entities referenced in template. Saves ~90% tokens vs manual analysis."""
+        try:
+            return await _do_get_template_dependencies(config_path, entity_id)
+        except Exception as e:
+            return _error_response(str(e))
 
     @mcp.tool()
     async def bulk_search_entities(search_terms: str, max_results_per_term: int = 10) -> str:
-        """BATCH - Search multiple terms at once. Saves ~85% tokens vs individual searches."""
-        return await globals()["bulk_search_entities"](
-            config_path, search_terms, max_results_per_term
-        )
+        """[READ] BATCH - Search multiple terms at once. Saves ~85% tokens vs individual searches."""
+        try:
+            return await _do_bulk_search_entities(config_path, search_terms, max_results_per_term)
+        except Exception as e:
+            return _error_response(str(e))
+
+    @mcp.tool()
+    async def get_automation_codes_batch(automation_ids: str) -> str:
+        """[READ] BATCH - Get YAML code for multiple automations at once. Saves ~70% tokens vs N individual calls."""
+        try:
+            return await _do_get_automation_codes_batch(config_path, automation_ids)
+        except Exception as e:
+            return _error_response(str(e))

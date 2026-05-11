@@ -4,10 +4,10 @@ import json
 import os
 import re
 from collections import Counter, defaultdict
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from itertools import islice
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set
+from typing import Any
 
 from .constants import (
     ENTITY_PATTERN,
@@ -35,31 +35,31 @@ class RegistryCollector:
     """Collects and integrates data from HA registries with caching."""
 
     def __init__(self):
-        self.entities: List[Dict] = []
-        self.devices: List[Dict] = []
-        self.areas: List[Dict] = []
-        self.config_entries: List[Dict] = []
-        self.states: List[Dict] = []
+        self.entities: list[dict] = []
+        self.devices: list[dict] = []
+        self.areas: list[dict] = []
+        self.config_entries: list[dict] = []
+        self.states: list[dict] = []
 
         # maps for quick access
-        self.entities_map: Dict[str, Dict] = {}
-        self.devices_map: Dict[str, Dict] = {}
-        self.areas_map: Dict[str, str] = {}  # id -> name
-        self.states_map: Dict[str, Dict] = {}
-        self.config_entries_map: Dict[str, Dict] = {}
+        self.entities_map: dict[str, dict] = {}
+        self.devices_map: dict[str, dict] = {}
+        self.areas_map: dict[str, str] = {}  # id -> name
+        self.states_map: dict[str, dict] = {}
+        self.config_entries_map: dict[str, dict] = {}
 
         # Reverse lookups
-        self.entity_to_platform: Dict[str, str] = {}
-        self.entity_to_device: Dict[str, str] = {}
-        self.entity_to_config_entry: Dict[str, str] = {}
-        self.device_to_config_entry: Dict[str, List[str]] = defaultdict(list)
+        self.entity_to_platform: dict[str, str] = {}
+        self.entity_to_device: dict[str, str] = {}
+        self.entity_to_config_entry: dict[str, str] = {}
+        self.device_to_config_entry: dict[str, list[str]] = defaultdict(list)
 
         # Config entry health
-        self.config_entry_health: Dict[str, Dict] = {}
+        self.config_entry_health: dict[str, dict] = {}
 
     def collect(self) -> bool:
         """Collects all data. Returns True if successful."""
-        print("📦 Collecting data from registries (with cache)...")
+        print("Collecting data from registries (with cache)...")
 
         # Registry files
         entity_reg = load_registry("core.entity_registry")
@@ -75,22 +75,23 @@ class RegistryCollector:
         self.config_entries = config_reg.get("data", {}).get("entries", [])
 
         # API States
-        print("📡 Fetching states from API...", end=" ", flush=True)
+        print("Fetching states from API...", end=" ", flush=True)
         states_result = make_ha_request("/api/states")
         if states_result["success"]:
             self.states = states_result["data"]
-            print(f"✅ ({len(self.states)} entities)")
+            print(f"   ({len(self.states)} entities)")
         else:
-            print(f"❌ {states_result.get('error')}")
+            print(f"   Error: {states_result.get('error')}")
             return False
 
         self._build_maps()
         self._compute_config_entry_health()
+        self._compute_domain_summary()
 
         print(
-            f"   📊 Registry: {len(self.entities)} entities, {len(self.devices)} devices, {len(self.areas)} areas"
+            f"   Registry: {len(self.entities)} entities, {len(self.devices)} devices, {len(self.areas)} areas"
         )
-        print(f"   📊 Config entries: {len(self.config_entries)}")
+        print(f"   Config entries: {len(self.config_entries)}")
         return True
 
     def _build_maps(self):
@@ -166,6 +167,24 @@ class RegistryCollector:
                 "state": entry.get("state", "loaded"),
             }
 
+    def _compute_domain_summary(self):
+        """Compute aggregated domain statistics."""
+        self.domain_counts = Counter()
+        self.state_distribution = Counter()
+        self.unavailable_by_domain = defaultdict(int)
+        self.unavailable_by_integration = defaultdict(int)
+
+        for state in self.states:
+            eid = state.get("entity_id", "")
+            domain = eid.split(".", 1)[0] if "." in eid else "unknown"
+            self.domain_counts[domain] += 1
+            self.state_distribution[state.get("state", "unknown")] += 1
+
+            if state.get("state") == "unavailable":
+                self.unavailable_by_domain[domain] += 1
+                platform = self.entity_to_platform.get(eid, "unknown")
+                self.unavailable_by_integration[platform] += 1
+
     def get_entity_ids(self) -> list[str]:
         """
         Returns list of entity_id from registry.
@@ -199,7 +218,7 @@ class RegistryCollector:
         # remove duplicates + stability
         return sorted(set(entity_ids))
 
-    def get_entity_info(self, entity_id: str) -> Dict[str, Any]:
+    def get_entity_info(self, entity_id: str) -> dict[str, Any]:
         """
         Fetches full info about entity (registry + state).
         Based on test_storage.py get_entity_context.
@@ -234,7 +253,7 @@ class RegistryCollector:
 
         return info
 
-    def _get_device_name(self, device_id: Optional[str]) -> str:
+    def _get_device_name(self, device_id: str | None) -> str:
         """Fetches device name."""
         if not device_id:
             return "Virtual/Service"
@@ -269,27 +288,27 @@ class AutomationAnalyzer:
 
     def __init__(self, registry: RegistryCollector):
         self.registry = registry
-        self.automations: List[Dict] = []
-        self.scripts: Dict = {}
-        self.scenes: List[Dict] = []
-        self.blueprints: List[Dict] = []
+        self.automations: list[dict] = []
+        self.scripts: dict = {}
+        self.scenes: list[dict] = []
+        self.blueprints: list[dict] = []
 
         # analysis results
-        self.automation_analysis: List[Dict] = []
-        self.script_analysis: List[Dict] = []
-        self.scene_analysis: List[Dict] = []
-        self.blueprint_usage: Dict[str, List[str]] = defaultdict(list)
+        self.automation_analysis: list[dict] = []
+        self.script_analysis: list[dict] = []
+        self.scene_analysis: list[dict] = []
+        self.blueprint_usage: dict[str, list[str]] = defaultdict(list)
 
         # Dependency tracking
-        self.entity_triggered_by: Dict[str, List[str]] = defaultdict(list)
-        self.entity_used_in: Dict[str, List[str]] = defaultdict(list)
-        self.entity_controlled_by: Dict[str, List[str]] = defaultdict(list)
+        self.entity_triggered_by: dict[str, list[str]] = defaultdict(list)
+        self.entity_used_in: dict[str, list[str]] = defaultdict(list)
+        self.entity_controlled_by: dict[str, list[str]] = defaultdict(list)
 
         # Ghost entities - used but non-existent
-        self.ghost_entities: Dict[str, List[str]] = defaultdict(list)
+        self.ghost_entities: dict[str, list[str]] = defaultdict(list)
 
         # Conflict detection - EXTENDED to scenes and scripts
-        self.entity_conflicts: Dict[str, Dict] = defaultdict(
+        self.entity_conflicts: dict[str, dict] = defaultdict(
             lambda: {
                 "controlling_automations": [],
                 "controlling_scripts": [],
@@ -299,11 +318,11 @@ class AutomationAnalyzer:
         )
 
         # Conflicting entities
-        self.conflicting_entities: Dict[str, Dict] = {}
+        self.conflicting_entities: dict[str, dict] = {}
 
     def collect(self):
         """Collects data about HA logic."""
-        print("📜 Loading logic (automations, scripts, scenes)...")
+        print("Loading logic (automations, scripts, scenes)...")
 
         # Automations
         automations = load_yaml_file("automations.yaml")
@@ -368,7 +387,7 @@ class AutomationAnalyzer:
 
     def analyze(self):
         """Analyzes logic and builds dependency graphs."""
-        print("🔍 Analyzing logic and dependencies...")
+        print("Analyzing logic and dependencies...")
 
         self._analyze_automations()
         self._analyze_scripts()
@@ -384,6 +403,8 @@ class AutomationAnalyzer:
         print(f"   Entities with dependencies: {entities_with_deps}")
         print(f"   Ghost entities: {len(self.ghost_entities)}")
         print(f"   Potential conflicts: {len(self.conflicting_entities)}")
+
+        self._build_blueprint_summary()
 
     def _analyze_automations(self):
         """Analyzes automations."""
@@ -573,23 +594,42 @@ class AutomationAnalyzer:
                     "race_condition_risk": len(conflict_info["controlling_automations"]) > 1,
                 }
 
+    def _build_blueprint_summary(self):
+        """Build aggregated blueprint usage statistics."""
+        self.blueprint_summary = []
+        if hasattr(self, "blueprints") and self.blueprints:
+            usage = self.blueprint_usage if hasattr(self, "blueprint_usage") else {}
+            for bp in self.blueprints:
+                path = bp.get("path", "unknown")
+                self.blueprint_summary.append(
+                    {
+                        "name": bp.get("name", path),
+                        "path": path,
+                        "domain": bp.get("domain", "unknown"),
+                        "author": bp.get("author", "unknown"),
+                        "used_by": usage.get(path, []),
+                        "instance_count": len(usage.get(path, [])),
+                    }
+                )
+            self.blueprint_summary.sort(key=lambda x: x["instance_count"], reverse=True)
+
 
 class DashboardAnalyzer:
     """Analyzes entity usage in dashboards with extended custom card support."""
 
     def __init__(self, registry: RegistryCollector):
         self.registry = registry
-        self.entity_in_dashboards: Dict[str, List[Dict]] = defaultdict(list)
-        self.dashboards_found: List[Dict] = []  # CHANGE: now Dict with metadata
-        self.missing_entities: Dict[str, List[str]] = defaultdict(list)  # NEW
+        self.entity_in_dashboards: dict[str, list[dict]] = defaultdict(list)
+        self.dashboards_found: list[dict] = []  # CHANGE: now Dict with metadata
+        self.missing_entities: dict[str, list[str]] = defaultdict(list)  # NEW
 
     def analyze(self):
         """Analyzes all dashboards."""
-        print("📊 Analyzing Lovelace dashboards...")
+        print("Analyzing Lovelace dashboards...")
 
         storage_path = Path(HA_CONFIG_PATH) / ".storage"
         if not storage_path.exists():
-            print("   ⚠️ Missing .storage folder")
+            print("   Warning: Missing .storage folder")
             return
 
         # Find all lovelace files
@@ -599,7 +639,7 @@ class DashboardAnalyzer:
                 lovelace_files.append(f.name)
 
         if not lovelace_files:
-            print("   ⚠️ No lovelace files in .storage")
+            print("   Warning: No lovelace files in .storage")
             return
 
         print(f"   Found files: {lovelace_files}")
@@ -614,7 +654,9 @@ class DashboardAnalyzer:
         print(f"   Entities used in dashboards: {used_count}")
         print(f"   Non-existent entities in dashboards: {len(self.missing_entities)}")
 
-    def _analyze_dashboard(self, registry_name: str):
+        self._collect_lovelace_resources()
+
+    def _analyze_dashboard(self, registry_name):
         """Analyzes single dashboard."""
         data = load_registry(registry_name)
         if not data:
@@ -670,7 +712,7 @@ class DashboardAnalyzer:
                         }
                     )
 
-    def _parse_cards(self, cards: List, dashboard: str, view: str, depth: int = 0):
+    def _parse_cards(self, cards: list, dashboard: str, view: str, depth: int = 0):
         """Recursively parses cards with extended custom card support."""
         if depth > 15:
             return
@@ -784,18 +826,42 @@ class DashboardAnalyzer:
                         f"{u['dashboard']}/{u['view']}" for u in usages[:3]
                     ]
 
+    def _collect_lovelace_resources(self):
+        """Collect Lovelace dashboard resources (custom cards, modules)."""
+        self.lovelace_resources = []
+        resources_data = load_registry("lovelace.resources")
+        if resources_data:
+            items = resources_data.get("data", {}).get("items", [])
+            if not items:
+                items = resources_data.get("data", {}).get("resources", [])
+            for item in items:
+                if isinstance(item, dict):
+                    url = item.get("url", item.get("path", ""))
+                    self.lovelace_resources.append(
+                        {
+                            "type": item.get("type", "module"),
+                            "url": url,
+                            "source": "hacs"
+                            if "/hacsfiles/" in url
+                            else "local"
+                            if "/local/" in url
+                            else "external",
+                        }
+                    )
+        print(f"   Lovelace resources: {len(self.lovelace_resources)}")
+
 
 class TemplateEntityCollector:
     """Collects template entities with YAML validation."""
 
     def __init__(self, registry: RegistryCollector):
         self.registry = registry
-        self.template_entities: List[Dict] = []
-        self.validation_errors: List[Dict] = []
+        self.template_entities: list[dict] = []
+        self.validation_errors: list[dict] = []
 
     def collect(self):
         """Collects template entities."""
-        print("📐 Collecting template entities...")
+        print("Collecting template entities...")
 
         # 1. From config_entries (UI-defined)
         self._collect_from_config_entries()
@@ -806,6 +872,8 @@ class TemplateEntityCollector:
         print(f"   Template entities: {len(self.template_entities)}")
         if self.validation_errors:
             print(f"   Validation errors: {len(self.validation_errors)}")
+
+        self._collect_exposed_entities()
 
     def _collect_from_config_entries(self):
         """Collects template entities from config entries (UI)."""
@@ -882,7 +950,7 @@ class TemplateEntityCollector:
                     ):
                         self._parse_legacy_template(sensor_config, "binary_sensor")
 
-    def _parse_template_section(self, item: Dict):
+    def _parse_template_section(self, item: dict):
         """Parses template section from configuration.yaml."""
         for platform in ["sensor", "binary_sensor", "number", "select", "button"]:
             if platform not in item:
@@ -931,7 +999,7 @@ class TemplateEntityCollector:
                     }
                 )
 
-    def _parse_legacy_template(self, config: Dict, platform: str):
+    def _parse_legacy_template(self, config: dict, platform: str):
         """Parses legacy template format."""
         sensors = config.get("sensors", {})
         if not isinstance(sensors, dict):
@@ -966,14 +1034,31 @@ class TemplateEntityCollector:
                 }
             )
 
+    def _collect_exposed_entities(self):
+        """Collect entities exposed to voice assistants."""
+        self.exposed_entities = {}
+        # Check cloud configuration for exposed entities
+        cloud_data = load_registry("cloud")
+        if cloud_data:
+            alexa = cloud_data.get("data", {}).get("alexa", {})
+            google = cloud_data.get("data", {}).get("google_actions", {})
+            if alexa:
+                self.exposed_entities["alexa"] = {
+                    "entities": alexa.get("entities", {}),
+                    "filter": alexa.get("filter", {}),
+                }
+            if google:
+                self.exposed_entities["google"] = google
+        print(f"   Exposed entities: {len(self.exposed_entities)} assistants configured")
+
 
 class LogAnalyzer:
     """Analyzes HA logs with categorization per component."""
 
     def __init__(self):
-        self.errors: List[Dict] = []
-        self.warnings: List[Dict] = []
-        self.error_patterns: Dict[str, Dict] = defaultdict(
+        self.errors: list[dict] = []
+        self.warnings: list[dict] = []
+        self.error_patterns: dict[str, dict] = defaultdict(
             lambda: {
                 "count": 0,
                 "category": "",
@@ -987,29 +1072,29 @@ class LogAnalyzer:
         )
         self.component_errors: Counter = Counter()
         self.integration_errors: Counter = Counter()  # NOWE
-        self.affected_entities: Set[str] = set()
-        self.api_errors: List[Dict] = []
-        self.startup_errors: List[Dict] = []  # NOWE
+        self.affected_entities: set[str] = set()
+        self.api_errors: list[dict] = []
+        self.startup_errors: list[dict] = []  # NOWE
 
     def analyze(self, hours: int = LOG_HOURS_BACK):
         """
         Analyzes logs from the last X hours.
         Based on test_real_ha.py get_log_insights.
         """
-        print(f"📋 Analyzing logs (last {hours}h)...")
+        print(f"Analyzing logs (last {hours}h)...")
 
         log_path = Path(HA_CONFIG_PATH) / "home-assistant.log"
         if not log_path.exists():
-            print("   ⚠️ Missing home-assistant.log file")
+            print("   Warning: Missing home-assistant.log file")
             return
 
         cutoff = datetime.now() - timedelta(hours=hours)
 
         try:
-            with open(log_path, "r", encoding="utf-8", errors="replace") as f:
+            with open(log_path, encoding="utf-8", errors="replace") as f:
                 lines = f.readlines()[-15000:]  # More lines
         except Exception as e:
-            print(f"   ❌ Error reading log: {e}")
+            print(f"   Error reading log: {e}")
             return
 
         # Detect startup
@@ -1032,8 +1117,10 @@ class LogAnalyzer:
         print(f"   Affected entities: {len(self.affected_entities)}")
         print(f"   Startup errors: {len(self.startup_errors)}")
 
-    def _parse_line(self, line: str, cutoff: datetime, startup_cutoff: Optional[datetime]):
-        """Parses log line with extended categorization."""
+        self._collect_notifications()
+
+    def _parse_line(self, line, cutoff, startup_cutoff):
+        """Parses single log line with extended categorization."""
         # Timestamp
         ts_match = re.match(r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})", line)
         timestamp = None
@@ -1169,7 +1256,7 @@ class LogAnalyzer:
             return "setup"
         return "other"
 
-    def get_recommendations(self) -> List[Dict]:
+    def get_recommendations(self) -> list[dict]:
         """
         Generates recommendations per component/integration.
         Based on test_real_ha.py analyze_log_errors.
@@ -1186,25 +1273,25 @@ class LogAnalyzer:
             ),
             "connection": (
                 "high",
-                "🔌 Connection issues - check network and device availability",
+                " Connection issues - check network and device availability",
             ),
             "unavailable": (
                 "high",
-                "⚠️ Many unavailable entities - check devices and integrations",
+                " Many unavailable entities - check devices and integrations",
             ),
             "template": ("medium", "📝 Template errors - check Jinja2 syntax"),
             "api": (
                 "medium",
                 "🌐 API issues - check rate limits and service availability",
             ),
-            "configuration": ("medium", "⚙️ Configuration errors - check YAML files"),
+            "configuration": ("medium", " Configuration errors - check YAML files"),
             "authentication": (
                 "high",
                 "🔐 Authentication issues - check tokens and passwords",
             ),
             "setup": (
                 "high",
-                "🚀 Initialization errors - check integration configuration",
+                " Initialization errors - check integration configuration",
             ),
         }
 
@@ -1240,12 +1327,30 @@ class LogAnalyzer:
                 {
                     "priority": "high",
                     "issue": "startup_errors",
-                    "message": f"🚀 {len(self.startup_errors)} errors during startup - may cause problems",
+                    "message": f" {len(self.startup_errors)} errors during startup - may cause problems",
                     "count": len(self.startup_errors),
                 }
             )
 
         return sorted(recommendations, key=lambda x: 0 if x["priority"] == "high" else 1)
+
+    def _collect_notifications(self):
+        """Collect persistent notification data."""
+        self.notifications = []
+        result = make_ha_request("/api/states")
+        if result.get("success"):
+            for state in result.get("data", []):
+                if state["entity_id"].startswith("persistent_notification."):
+                    attrs = state.get("attributes", {})
+                    self.notifications.append(
+                        {
+                            "title": attrs.get("title", state["entity_id"]),
+                            "message": attrs.get("message", ""),
+                            "created_at": attrs.get("created_at"),
+                            "notification_id": attrs.get("notification_id"),
+                        }
+                    )
+        print(f"   Active notifications: {len(self.notifications)}")
 
 
 class HistoryAnalyzer:
@@ -1253,24 +1358,24 @@ class HistoryAnalyzer:
 
     def __init__(self, registry: RegistryCollector):
         self.registry = registry
-        self.recent_changes: List[Dict] = []
-        self.change_frequency: Dict[str, int] = Counter()
+        self.recent_changes: list[dict] = []
+        self.change_frequency: dict[str, int] = Counter()
 
     def analyze(self, hours: int = 1, batch_size: int = 25):
         """
         Analyzes recent entity changes.
         Fetches history in batches of batch_size entities to avoid URL limits.
         """
-        print(f"📈 Analyzing change history (last {hours}h)...")
+        print(f"Analyzing change history (last {hours}h)...")
 
-        end_time = datetime.now(timezone.utc)
+        end_time = datetime.now(UTC)
         start_time = end_time - timedelta(hours=hours)
         start_time_str = start_time.strftime("%Y-%m-%dT%H:%M:%SZ")
 
         entity_ids = self.registry.get_entity_ids()
 
         if not entity_ids:
-            print("   ⚠️ No entities to analyze")
+            print("   No entities to analyze")
             return
 
         # Helper function for batching
@@ -1291,19 +1396,20 @@ class HistoryAnalyzer:
 
             result = make_ha_request(endpoint, timeout=30)
             if not result["success"]:
-                print(f"   ⚠️ Failed to fetch history for batch: {filter_param}")
+                print(f"   Failed to fetch history for batch: {filter_param}")
                 print(f"       {result.get('error')}")
                 continue
 
             all_history.extend(result["data"])
 
         if not all_history:
-            print("   ⚠️ No history fetched")
+            print("   No history fetched")
             return
 
         # Parsing history (your existing logic)
         self.recent_changes = []
         self.change_frequency = Counter()
+        self.entity_history: dict[str, list[dict]] = defaultdict(list)
 
         for entity_history in all_history:
             if not entity_history:
@@ -1319,8 +1425,9 @@ class HistoryAnalyzer:
                     continue
 
                 self.change_frequency[entity_id] += 1
+                self.entity_history[entity_id].append(state)
 
-                if len(self.recent_changes) < 100:  # limit dla recent_changes
+                if len(self.recent_changes) < 100:
                     self.recent_changes.append(
                         {
                             "entity_id": entity_id,
@@ -1333,42 +1440,399 @@ class HistoryAnalyzer:
         # Sort by time descending
         self.recent_changes.sort(key=lambda x: x.get("last_changed", ""), reverse=True)
 
-        print(f"   📊 Recent changes: {len(self.recent_changes)}")
-        print(f"   🔹 Entities with changes: {len(self.change_frequency)}")
+        print(f"   Recent changes: {len(self.recent_changes)}")
+        print(f"   Entities with changes: {len(self.change_frequency)}")
 
-        history_data = result["data"]
-
-        # Parsuj zmiany
-        for entity_history in history_data:
-            if not entity_history:
+        # Per-entity statistics
+        self.entity_stats: dict[str, dict] = {}
+        for entity_id, entries in self.entity_history.items():
+            if not entries:
                 continue
+            states = [
+                e.get("state") for e in entries if e.get("state") not in ("unknown", "unavailable")
+            ]
+            numeric_values = []
+            for s in states:
+                try:
+                    numeric_values.append(float(s))
+                except (ValueError, TypeError):
+                    pass
 
-            for i, state in enumerate(entity_history):
-                entity_id = state.get("entity_id")
-                if not entity_id:
-                    continue
-
-                # Skip first entry (this is the initial state)
-                if i == 0:
-                    continue
-
-                self.change_frequency[entity_id] += 1
-
-                if len(self.recent_changes) < 100:  # Limit
-                    self.recent_changes.append(
-                        {
-                            "entity_id": entity_id,
-                            "state": state.get("state"),
-                            "last_changed": state.get("last_changed"),
-                            "previous_state": entity_history[i - 1].get("state") if i > 0 else None,
-                        }
-                    )
-
-        # Sort by time
-        self.recent_changes.sort(key=lambda x: x.get("last_changed", ""), reverse=True)
+            entity_info = (
+                self.registry.get_entity_info(entity_id)
+                if hasattr(self, "registry") and self.registry
+                else {}
+            )
+            self.entity_stats[entity_id] = {
+                "name": entity_info.get("friendly_name", entity_id) if entity_info else entity_id,
+                "state": entity_info.get("state", "unknown") if entity_info else "unknown",
+                "platform": entity_info.get("platform", "unknown") if entity_info else "unknown",
+                "area": entity_info.get("area_name", "Unassigned") if entity_info else "Unassigned",
+                "change_count": self.change_frequency.get(entity_id, 0),
+                "min": min(numeric_values) if numeric_values else None,
+                "max": max(numeric_values) if numeric_values else None,
+                "avg": round(sum(numeric_values) / len(numeric_values), 2)
+                if numeric_values
+                else None,
+            }
 
         print(f"   Recent changes: {len(self.recent_changes)}")
         print(f"   Entities with changes: {len(self.change_frequency)}")
+
+
+class PersonAnalyzer:
+    """Collects person entities, linked trackers, and location data."""
+
+    def __init__(self, registry: RegistryCollector):
+        self.registry = registry
+        self.persons: list[dict] = []
+        self.person_states: dict[str, dict] = {}
+        self.trackers: dict[str, list[dict]] = defaultdict(list)
+        self.tracker_states: dict[str, dict] = {}
+
+    def collect(self):
+        """Collect person and tracker data from registry and API states."""
+        print("Collecting person / tracking data...")
+
+        # Find person entities from states
+        for state in self.registry.states:
+            eid = state.get("entity_id", "")
+            if eid.startswith("person."):
+                self.person_states[eid] = state
+                attrs = state.get("attributes", {})
+                self.persons.append(
+                    {
+                        "entity_id": eid,
+                        "name": attrs.get("friendly_name", eid),
+                        "state": state.get("state"),
+                        "user_id": attrs.get("user_id"),
+                        "latitude": attrs.get("latitude"),
+                        "longitude": attrs.get("longitude"),
+                        "source": attrs.get("source"),
+                    }
+                )
+                # Get linked trackers
+                trackers = attrs.get("device_trackers", [])
+                for tid in trackers:
+                    self.trackers[eid].append({"entity_id": tid})
+
+        # Get tracker states
+        for state in self.registry.states:
+            eid = state.get("entity_id", "")
+            if eid.startswith("device_tracker."):
+                self.tracker_states[eid] = {
+                    "state": state.get("state"),
+                    "last_updated": state.get("last_updated"),
+                    "battery": state.get("attributes", {}).get("battery"),
+                    "source_type": state.get("attributes", {}).get("source_type", "unknown"),
+                }
+                # Link to person
+                for person_entities in self.trackers.values():
+                    for tracker in person_entities:
+                        if tracker["entity_id"] == eid:
+                            tracker.update(self.tracker_states[eid])
+                            break
+
+        print(f"   Persons: {len(self.persons)}, Trackers: {len(self.tracker_states)}")
+
+
+class ZoneAnalyzer:
+    """Collects zone definitions and presence mapping."""
+
+    def __init__(self, registry: RegistryCollector):
+        self.registry = registry
+        self.zones: list[dict] = []
+        self.zone_states: dict[str, dict] = {}
+        self.persons_in_zones: dict[str, list[str]] = defaultdict(list)
+
+    def collect(self):
+        """Collect zone data from registry and API states."""
+        print("Collecting zone / geofence data...")
+
+        # Load zone registry from config entries
+        zone_reg = load_registry("core.config_entries")
+        entries = zone_reg.get("data", {}).get("entries", [])
+
+        for entry in entries:
+            if entry.get("domain") == "zone":
+                zone_id = f"zone.{entry.get('title', '').lower().replace(' ', '_')}"
+                data = entry.get("data", {})
+                self.zones.append(
+                    {
+                        "entity_id": zone_id,
+                        "name": entry.get("title", "Unknown Zone"),
+                        "latitude": data.get("latitude"),
+                        "longitude": data.get("longitude"),
+                        "radius": data.get("radius", 100),
+                        "passive": data.get("passive", False),
+                    }
+                )
+
+        # Also get zone states from API
+        for state in self.registry.states:
+            eid = state.get("entity_id", "")
+            if eid.startswith("zone."):
+                attrs = state.get("attributes", {})
+                self.zone_states[eid] = {
+                    "entity_id": eid,
+                    "name": attrs.get("friendly_name", eid),
+                    "state": state.get("state"),
+                    "latitude": attrs.get("latitude"),
+                    "longitude": attrs.get("longitude"),
+                    "radius": attrs.get("radius"),
+                }
+                # Count persons in this zone
+                for person_state in self.registry.states:
+                    if (
+                        person_state["entity_id"].startswith("person.")
+                        and person_state["state"] == eid
+                    ):
+                        self.persons_in_zones[eid].append(person_state["entity_id"])
+
+        # Merge registry zones with state zones
+        seen = {z["entity_id"] for z in self.zones}
+        for eid, zs in self.zone_states.items():
+            if eid not in seen:
+                self.zones.append(zs)
+
+        print(f"   Zones: {len(self.zones)}")
+        for z in self.zones:
+            persons_count = len(self.persons_in_zones.get(z["entity_id"], []))
+            if persons_count > 0:
+                print(f"   {z.get('name', z.get('entity_id'))}: {persons_count} persons")
+
+
+class EnergyAnalyzer:
+    """Collects energy dashboard data and consumption analysis."""
+
+    def __init__(self, registry: RegistryCollector):
+        self.registry = registry
+        self.energy_data: dict[str, Any] = {}
+        self.consumption_by_device: dict[str, dict] = {}
+        self.energy_sensors: list[dict] = []
+
+    def collect(self):
+        """Collect energy data from API."""
+        print("Collecting energy dashboard data...")
+
+        # Fetch energy data from API
+        energy_result = make_ha_request("/api/energy/dashboard")
+        if energy_result.get("success"):
+            self.energy_data = energy_result.get("data", {})
+            print(f"   Energy data: {len(self.energy_data)} sections")
+        else:
+            print(f"   Energy API unavailable: {energy_result.get('error', 'unknown')}")
+            self.energy_data = {"unavailable": True}
+
+        # Collect energy-related sensors from state
+        for state in self.registry.states:
+            eid = state.get("entity_id", "")
+            attrs = state.get("attributes", {})
+            device_class = attrs.get("device_class", "")
+
+            if (
+                device_class in ("energy", "power", "gas", "water")
+                or "energy" in eid.lower()
+                or "power" in eid.lower()
+            ):
+                unit = attrs.get("unit_of_measurement", "")
+                if device_class == "energy" or "kwh" in unit.lower() or "wh" in unit.lower():
+                    try:
+                        val = float(state.get("state", 0))
+                    except (ValueError, TypeError):
+                        val = 0
+
+                    self.energy_sensors.append(
+                        {
+                            "entity_id": eid,
+                            "name": attrs.get("friendly_name", eid),
+                            "state": state.get("state"),
+                            "value_numeric": val,
+                            "unit": unit,
+                            "device_class": device_class,
+                        }
+                    )
+
+                    # Group by device
+                    device_name = attrs.get("friendly_name", eid).split(" ")[0]
+                    if device_name not in self.consumption_by_device:
+                        self.consumption_by_device[device_name] = {"total": 0, "sensors": []}
+                    self.consumption_by_device[device_name]["total"] += val
+                    self.consumption_by_device[device_name]["sensors"].append(eid)
+
+        self.energy_sensors.sort(key=lambda x: x.get("value_numeric", 0), reverse=True)
+        print(
+            f"   Energy sensors: {len(self.energy_sensors)} ({len(self.consumption_by_device)} devices)"
+        )
+
+
+class HelperAnalyzer:
+    """Collects timers, counters, and input helpers."""
+
+    def __init__(self, registry: RegistryCollector):
+        self.registry = registry
+        self.timers: list[dict] = []
+        self.counters: list[dict] = []
+        self.input_booleans: list[dict] = []
+        self.input_numbers: list[dict] = []
+        self.input_texts: list[dict] = []
+        self.input_selects: list[dict] = []
+        self.input_datetimes: list[dict] = []
+        self.input_buttons: list[dict] = []
+
+    def collect(self):
+        """Collect helper entity data from states and registry."""
+        print("Collecting helper entities...")
+
+        for state in self.registry.states:
+            eid = state.get("entity_id", "")
+            attrs = state.get("attributes", {})
+            base = {
+                "entity_id": eid,
+                "name": attrs.get("friendly_name", eid),
+                "state": state.get("state"),
+            }
+
+            if eid.startswith("timer."):
+                base["duration"] = attrs.get("duration")
+                base["remaining"] = attrs.get("remaining")
+                base["finishes_at"] = attrs.get("finishes_at")
+                self.timers.append(base)
+            elif eid.startswith("counter."):
+                base["min"] = attrs.get("min")
+                base["max"] = attrs.get("max")
+                base["step"] = attrs.get("step")
+                self.counters.append(base)
+            elif eid.startswith("input_boolean."):
+                self.input_booleans.append(base)
+            elif eid.startswith("input_number."):
+                base["min"] = attrs.get("min")
+                base["max"] = attrs.get("max")
+                base["step"] = attrs.get("step")
+                base["unit"] = attrs.get("unit_of_measurement")
+                self.input_numbers.append(base)
+            elif eid.startswith("input_text."):
+                self.input_texts.append(base)
+            elif eid.startswith("input_select."):
+                base["options"] = attrs.get("options", [])
+                self.input_selects.append(base)
+            elif eid.startswith("input_datetime."):
+                base["has_date"] = attrs.get("has_date")
+                base["has_time"] = attrs.get("has_time")
+                self.input_datetimes.append(base)
+            elif eid.startswith("input_button."):
+                self.input_buttons.append(base)
+
+        print(f"   Timers: {len(self.timers)}, Counters: {len(self.counters)}")
+        print(f"   Input booleans: {len(self.input_booleans)}, numbers: {len(self.input_numbers)}")
+        print(f"   Input texts: {len(self.input_texts)}, selects: {len(self.input_selects)}")
+        print(
+            f"   Input datetimes: {len(self.input_datetimes)}, buttons: {len(self.input_buttons)}"
+        )
+
+
+class ServiceCatalogAnalyzer:
+    """Collects available Home Assistant services."""
+
+    def __init__(self, registry: RegistryCollector):
+        self.registry = registry
+        self.services: dict[str, list[dict]] = {}
+        self.total_services = 0
+
+    def collect(self):
+        """Collect available services from API."""
+        print("Collecting service catalog...")
+
+        result = make_ha_request("/api/services")
+        if result.get("success"):
+            data = result.get("data", [])
+            for domain_info in data:
+                domain = domain_info.get("domain", "unknown")
+                services = domain_info.get("services", {})
+                domain_services = []
+                for svc_name, svc_info in services.items():
+                    domain_services.append(
+                        {
+                            "name": svc_name,
+                            "description": svc_info.get("description", ""),
+                            "fields": svc_info.get("fields", {}),
+                        }
+                    )
+                    self.total_services += 1
+                self.services[domain] = domain_services
+            print(f"   Services: {self.total_services} across {len(self.services)} domains")
+        else:
+            print(f"   Service API unavailable: {result.get('error', 'unknown')}")
+
+
+class HacsAnalyzer:
+    """Collects HACS data and custom components."""
+
+    def __init__(self, registry: RegistryCollector):
+        self.registry = registry
+        self.hacs_repos: list[dict] = []
+        self.custom_components: list[dict] = []
+        self.custom_components_dir = os.path.join(HA_CONFIG_PATH, "custom_components")
+
+    def collect(self):
+        """Collect HACS and custom component data."""
+        print("Collecting HACS / custom components...")
+
+        # Load HACS data from storage
+        hacs_data = load_registry("hacs.repositories")
+        repos = hacs_data.get("data", {}).get("repositories", [])
+        if isinstance(repos, list):
+            for repo in repos:
+                if isinstance(repo, dict):
+                    self.hacs_repos.append(
+                        {
+                            "name": repo.get("name", "Unknown"),
+                            "category": repo.get("category", "unknown"),
+                            "installed_version": repo.get("installed_version"),
+                            "available_version": repo.get("available_version"),
+                            "status": repo.get("status"),
+                        }
+                    )
+        elif isinstance(repos, dict):
+            for rid, repo in repos.items():
+                if isinstance(repo, dict):
+                    self.hacs_repos.append(
+                        {
+                            "name": repo.get("name", rid),
+                            "category": repo.get("category", "unknown"),
+                            "installed_version": repo.get("installed_version"),
+                            "available_version": repo.get("available_version"),
+                            "status": repo.get("status"),
+                        }
+                    )
+
+        # Collect custom components
+        if os.path.isdir(self.custom_components_dir):
+            for item in sorted(os.listdir(self.custom_components_dir)):
+                item_path = os.path.join(self.custom_components_dir, item)
+                if os.path.isdir(item_path):
+                    manifest_path = os.path.join(item_path, "manifest.json")
+                    manifest = {}
+                    if os.path.isfile(manifest_path):
+                        try:
+                            with open(manifest_path) as mf:
+                                manifest = json.load(mf)
+                        except (OSError, json.JSONDecodeError):
+                            pass
+
+                    self.custom_components.append(
+                        {
+                            "name": item,
+                            "version": manifest.get("version", "unknown"),
+                            "domain": manifest.get("domain", item),
+                            "requirements": manifest.get("requirements", []),
+                            "dependencies": manifest.get("dependencies", []),
+                        }
+                    )
+
+        print(
+            f"   HACS repos: {len(self.hacs_repos)}, Custom components: {len(self.custom_components)}"
+        )
 
 
 # --- REPORT GENERATOR ---

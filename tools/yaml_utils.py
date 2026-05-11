@@ -5,16 +5,19 @@ Provides a custom YAML loader that handles Home Assistant specific tags
 like !include, !secret, !input, etc.
 """
 
+import logging
 from typing import Any
 
 import yaml
+
+logger = logging.getLogger(__name__)
 
 # =============================================================================
 # CUSTOM YAML LOADER
 # =============================================================================
 
 
-class HomeAssistantLoader(yaml.SafeLoader):
+class HomeAssistantLoader(yaml.SafeLoader):  # type: ignore[misc]
     """
     Custom YAML loader that handles Home Assistant specific tags.
 
@@ -74,10 +77,10 @@ def load_yaml_file(file_path: str) -> Any:
         Parsed YAML data or None on error
     """
     try:
-        with open(file_path, "r", encoding="utf-8") as f:
+        with open(file_path, encoding="utf-8") as f:
             return yaml.load(f, Loader=HomeAssistantLoader)
-    except (yaml.YAMLError, IOError) as e:
-        print(f"[yaml_utils] Error loading {file_path}: {e}")
+    except (OSError, yaml.YAMLError) as e:
+        logger.warning(f"Error loading {file_path}: {e}")
         return None
 
 
@@ -94,7 +97,7 @@ def parse_yaml_string(yaml_content: str) -> Any:
     try:
         return yaml.load(yaml_content, Loader=HomeAssistantLoader)
     except yaml.YAMLError as e:
-        print(f"[yaml_utils] Error parsing YAML: {e}")
+        logger.warning(f"Error parsing YAML: {e}")
         return None
 
 
@@ -110,7 +113,7 @@ def dump_yaml(data: Any, default_flow_style: bool = False, sort_keys: bool = Fal
     Returns:
         YAML string
     """
-    return yaml.dump(
+    return yaml.dump(  # type: ignore[no-any-return]
         data,
         allow_unicode=True,
         default_flow_style=default_flow_style,

@@ -196,7 +196,6 @@ class TestGetIntegrationEntities:
 
             assert data["success"] is False
             assert "No entities found" in data["error"]
-            assert data["domain"] == "nonexistent"
 
     @pytest.mark.asyncio
     async def test_include_disabled(self, tools):

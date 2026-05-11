@@ -4,7 +4,7 @@ Tests for tools/states.py
 
 import asyncio
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
 import pytest
@@ -56,7 +56,7 @@ def mock_mcp():
 @pytest.fixture
 def sample_states():
     """Sample states for testing."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     recent = (now - timedelta(minutes=30)).isoformat()
     old = (now - timedelta(hours=5)).isoformat()
 
@@ -106,11 +106,11 @@ def sample_states():
             "attributes": {"friendly_name": "Broken Sensor"},
         },
         {
-            "entity_id": "binary_sensor.motion_salon",
+            "entity_id": "binary_sensor.motion_living_room",
             "state": "off",
             "last_changed": recent,
             "last_updated": recent,
-            "attributes": {"friendly_name": "Salon Motion", "device_class": "motion"},
+            "attributes": {"friendly_name": "Living Room Motion", "device_class": "motion"},
         },
         {
             "entity_id": "automation.test_automation",

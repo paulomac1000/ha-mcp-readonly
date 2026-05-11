@@ -3,7 +3,7 @@ Tests for tools/history.py
 """
 
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
 import pytest
@@ -21,7 +21,7 @@ class TestGetEntityStateHistorySummary:
         self.ha_token = ha_token
 
         # Sample history data: 3 changes over 3 hours
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         self.sample_history = [
             [
                 {
@@ -73,7 +73,7 @@ class TestGetEntityStateHistorySummary:
     @pytest.mark.asyncio
     async def test_rapid_cycling_anomaly(self):
         """Test detection of rapid cycling."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         rapid_history = [
             [
                 {
@@ -137,7 +137,7 @@ class TestGetEntityStateHistorySummary:
     @pytest.mark.asyncio
     async def test_unavailable_states_filtered(self):
         """'unavailable' and 'unknown' states must not appear in states_breakdown."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         history_with_noise = [
             [
                 {
@@ -173,7 +173,7 @@ class TestGetRecentStateChanges:
         self.ha_url = ha_url
         self.ha_token = ha_token
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         self.sample_history = [
             # Entity 1 history
             [
@@ -257,7 +257,7 @@ class TestGetRecentStateChanges:
     @pytest.mark.asyncio
     async def test_recent_changes_truncation(self):
         """More than 50 changes → truncated to 50 and 'note' field present."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         # Build 60 change events for one entity
         many_history = [
             [

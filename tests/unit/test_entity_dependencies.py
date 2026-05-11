@@ -324,5 +324,99 @@ class TestGetEntityConsumers:
         assert data["consumers"][0]["name"] == "List Script"
 
 
+class TestIncludeFileScanning:
+    """Tests for !include file scanning in entity dependencies."""
+
+    @pytest.fixture(autouse=True)
+    def setup(self, mock_mcp, config_path, mock_registry_data):
+        self.mock_mcp = mock_mcp
+        self.config_path = config_path
+        self.mock_registry_data = mock_registry_data
+
+    @pytest.mark.asyncio
+    async def test_finds_entity_in_include_files(self):
+        """Entity referenced in YAML !include files should be found."""
+        from pathlib import Path
+
+        config_dir = Path(self.config_path)
+        include_dir = config_dir / "packages"
+        include_dir.mkdir(parents=True, exist_ok=True)
+        include_file = include_dir / "test_includes.yaml"
+        include_file.write_text("entity_id: light.test_entity\n")
+
+        config_yaml = f"homeassistant: !include {include_file}"
+        main_config = config_dir / "configuration.yaml"
+        main_config.write_text(config_yaml)
+
+        with patch("tools.entity_dependencies.load_yaml_file") as mock_yaml:
+
+            def yaml_side_effect(path):
+                if "automations.yaml" in path:
+                    return []
+                if "scripts.yaml" in path:
+                    return {}
+                if "configuration.yaml" in path:
+                    return {"homeassistant": "!include " + str(include_file)}
+                return None
+
+            mock_yaml.side_effect = yaml_side_effect
+
+            with patch("tools.entity_dependencies.load_registry") as mock_reg:
+                mock_reg.side_effect = lambda name, path: self.mock_registry_data.get(
+                    name, {"data": {"entries": []}}
+                )
+
+                with patch("os.path.exists", return_value=True):
+                    register_entity_dependency_tools(
+                        self.mock_mcp, self.config_path, "http://test", "token"
+                    )
+
+                    result = await self.mock_mcp._tools["get_entity_dependencies"](
+                        "light.test_entity"
+                    )
+
+        data = json.loads(result)
+        assert data["success"] is True
+        assert data["summary"]["templates_count"] >= 1
+        includes = [t for t in data["used_in"]["templates"] if t.get("type") == "include"]
+        assert len(includes) >= 1
+
+    @pytest.mark.asyncio
+    async def test_include_files_not_found(self):
+        """!include files that don't exist should be safely skipped."""
+        from pathlib import Path
+
+        config_dir = Path(self.config_path)
+        main_config = config_dir / "configuration.yaml"
+        main_config.write_text("homeassistant: !include /nonexistent/file.yaml\n")
+
+        with patch("tools.entity_dependencies.load_yaml_file") as mock_yaml:
+
+            def yaml_side_effect(path):
+                if "automations.yaml" in path:
+                    return []
+                if "scripts.yaml" in path:
+                    return {}
+                if "configuration.yaml" in path:
+                    return {"homeassistant": "!include /nonexistent/file.yaml"}
+                return None
+
+            mock_yaml.side_effect = yaml_side_effect
+
+            with patch("tools.entity_dependencies.load_registry") as mock_reg:
+                mock_reg.side_effect = lambda name, path: self.mock_registry_data.get(
+                    name, {"data": {"entries": []}}
+                )
+
+                register_entity_dependency_tools(
+                    self.mock_mcp, self.config_path, "http://test", "token"
+                )
+
+                result = await self.mock_mcp._tools["get_entity_dependencies"]("light.test_entity")
+
+        data = json.loads(result)
+        assert data["success"] is True
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

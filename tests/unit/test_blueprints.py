@@ -245,3 +245,76 @@ class TestGetBlueprintUsageSummary:
         assert data["success"] is True
         assert data["total_instances"] == 0
         assert any(u["name"] == "Orphan" for u in data["unused"])
+
+
+class TestGetBlueprintInstancesExtended:
+    def test_get_instances_list_format_scripts(self, mock_mcp, tmp_path):
+        """Scripts in list format (not dict) should still find blueprint instances."""
+        bp_dir = tmp_path / "blueprints" / "script"
+        bp_dir.mkdir(parents=True)
+        (bp_dir / "helper.yaml").write_text(
+            "blueprint:\n  name: Helper\n  domain: script\n  input: {}\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "automations.yaml").write_text("[]", encoding="utf-8")
+        (tmp_path / "scripts.yaml").write_text(
+            "- alias: List Script\n  use_blueprint:\n    path: script/helper.yaml\n    input: {}\n",
+            encoding="utf-8",
+        )
+
+        register_blueprint_tools(mock_mcp, str(tmp_path))
+        tool = mock_mcp._tools["get_blueprint_instances"]
+        data = json.loads(tool("script/helper.yaml"))
+
+        assert data["success"] is True
+        assert data["usage_count"] == 1
+        assert data["instances"][0]["type"] == "script"
+        assert data["instances"][0]["alias"] == "List Script"
+
+    def test_get_instances_dict_format_automations(self, mock_mcp, tmp_path):
+        """Automations.yaml in dict format should be converted to list (non-crashing)."""
+        bp_dir = tmp_path / "blueprints" / "automation"
+        bp_dir.mkdir(parents=True)
+        (bp_dir / "motion.yaml").write_text(
+            "blueprint:\n  name: Motion\n  domain: automation\n  input: {}\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "automations.yaml").write_text(
+            "my_auto:\n"
+            "  alias: Dict Auto\n"
+            "  use_blueprint:\n"
+            "    path: automation/motion.yaml\n"
+            "    input: {}\n",
+            encoding="utf-8",
+        )
+
+        register_blueprint_tools(mock_mcp, str(tmp_path))
+        tool = mock_mcp._tools["get_blueprint_instances"]
+        data = json.loads(tool("automation/motion.yaml"))
+
+        assert data["success"] is True
+
+    def test_get_instances_non_dict_skip(self, mock_mcp, tmp_path):
+        """Non-dict items in automations list should be safely skipped."""
+        bp_dir = tmp_path / "blueprints" / "automation"
+        bp_dir.mkdir(parents=True)
+        (bp_dir / "motion.yaml").write_text(
+            "blueprint:\n  name: Motion\n  domain: automation\n  input: {}\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "automations.yaml").write_text(
+            "- just_a_string_not_a_dict\n"
+            "- alias: Real Auto\n"
+            "  use_blueprint:\n"
+            "    path: automation/motion.yaml\n"
+            "    input: {}\n",
+            encoding="utf-8",
+        )
+
+        register_blueprint_tools(mock_mcp, str(tmp_path))
+        tool = mock_mcp._tools["get_blueprint_instances"]
+        data = json.loads(tool("automation/motion.yaml"))
+
+        assert data["success"] is True
+        assert data["usage_count"] == 1
+        assert data["instances"][0]["alias"] == "Real Auto"

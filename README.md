@@ -1,3 +1,7 @@
+---
+description: Read-only MCP server for Home Assistant — 120 tools for AI observability and context generation
+---
+
 # HA-MCP-Readonly
 
 [![CI](https://github.com/paulomac1000/ha-mcp-readonly/actions/workflows/ci.yml/badge.svg)](https://github.com/paulomac1000/ha-mcp-readonly/actions/workflows/ci.yml)
@@ -5,7 +9,7 @@
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-Read-only MCP (Model Context Protocol) server for Home Assistant. Gives AI assistants (Claude Desktop, LibreChat, Cline) full observability into your smart home — entity states, automations, scripts, devices, logs, diagnostics — without any write access. Built in Python, runs anywhere — locally, in Docker, or as an MCP integration.
+Read-only MCP (Model Context Protocol) server for Home Assistant. Gives AI assistants (Claude Desktop, LibreChat, Cline) full observability into your smart home — entity states, automations, scripts, devices, logs, diagnostics — without any write access. Also generates static AI context snapshots for RAG systems, ChatGPT Projects, Qwen, and other tools that accept custom knowledge files. Built in Python, runs anywhere — locally, in Docker, or as an MCP integration.
 
 ## Requirements
 
@@ -124,14 +128,14 @@ curl -X POST http://localhost:9093/api/context/generate \
   -d '{"mode": "hybrid"}'
 ```
 
-## Available Tools (107 total)
+## Available Tools (120 total)
 
-Tools are organized by category (51 shown in table below). All are **read-only** — no state changes, no service calls, no modifications.
+Tools are organized by category (53 shown in table below). All are **read-only** — no state changes, no service calls, no modifications.
 
 | Category | Key tools |
 |----------|-----------|
 | **States** | `get_entity_state`, `get_states_grouped`, `search_entities`, `get_domains_summary`, `get_system_overview` |
-| **Automations** | `list_automations`, `get_automation_code`, `diagnose_automation`, `search_automations_by_entity`, `get_automation_conflicts` |
+| **Automations** | `list_automations`, `get_automation_code`, `get_automation_file_location`, `diagnose_automation`, `search_automations_by_entity`, `get_automation_conflicts` |
 | **Scripts & Scenes** | `list_scripts`, `get_script_code`, `list_scenes`, `get_scene_code` |
 | **Blueprints** | `list_blueprints`, `get_blueprint_code`, `get_blueprint_instances`, `get_blueprint_usage_summary` |
 | **Devices & Areas** | `get_device_details`, `search_devices`, `get_devices_by_area`, `get_area_devices_summary` |
@@ -142,10 +146,11 @@ Tools are organized by category (51 shown in table below). All are **read-only**
 | **History** | `get_entity_state_history_summary`, `get_recent_state_changes` |
 | **Context** | `entity_get_context_tree`, `get_entity_dependencies`, `get_entity_consumers` |
 | **Config** | `get_main_configuration`, `search_in_config`, `validate_yaml_syntax`, `read_config_file` |
-| **Storage** | `search_registries_batch`, `get_entity_registry`, `get_device_registry`, `get_area_registry` |
-| **Batch** | `bulk_search_entities`, `compare_entities_state`, `validate_yaml_batch` |
-| **Composite** | `investigate_entity`, `get_area_diagnostic`, `get_entity_with_automations` |
-| **Dev tools** | `test_template`, `diagnose_entity`, `check_entity_exists`, `validate_automation_trigger` |
+| **Storage** | `search_registries_batch`, `get_entity_registry`, `get_device_registry`, `get_area_registry`, `get_template_entity_code` |
+| **Lovelace** | `get_lovelace_dashboards`, `get_lovelace_config`, `get_lovelace_resources`, `search_lovelace_config`, `get_lovelace_config_summary`, `diagnose_lovelace_setup` |
+| **Batch** | `bulk_search_entities`, `compare_entities_state`, `validate_yaml_batch`, `get_automation_codes_batch` |
+| **Composite** | `investigate_entity`, `get_area_diagnostic`, `get_entity_with_automations`, `diagnose_person_tracking` |
+| **Dev tools** | `test_template`, `diagnose_entity`, `check_entity_exists`, `validate_automation_trigger`, `diagnose_template` |
 
 ## Claude Desktop Configuration
 
@@ -165,7 +170,7 @@ Add the following to your Claude Desktop config:
 }
 ```
 
-After restarting Claude Desktop, the 107 Home Assistant tools will be available.
+After restarting Claude Desktop, the 120 Home Assistant tools will be available.
 
 ### LibreChat
 
@@ -178,7 +183,15 @@ mcpServers:
 
 ## Context Generator
 
-Creates a comprehensive Markdown file analyzing your entire Home Assistant instance. Available modes:
+Generates a comprehensive Markdown snapshot of your entire Home Assistant instance. Designed for scenarios where live MCP access isn't available or desired:
+
+**Use cases:**
+- **RAG systems** — use the generated file as a knowledge base for retrieval-augmented generation (e.g., with LangChain, LlamaIndex, or custom RAG pipelines)
+- **ChatGPT Projects / Qwen / Claude Projects** — upload the file as custom knowledge to give the AI full awareness of your smart home without network access to HA
+- **Static context for AI coding tools** — provide the file alongside your codebase so AI assistants understand your automations, devices, and entity relationships
+- **Documentation snapshots** — freeze configuration state for auditing, debugging, or sharing with other users
+
+**Modes:**
 
 | Mode | Description |
 |------|-------------|
@@ -229,18 +242,25 @@ pip install -r requirements.txt
 ### Run tests
 
 ```bash
-pytest tests/unit/ -v --tb=short --cov=. --cov-report=term
-```
+# Unit tests (no credentials needed, 703 tests, <20s)
+pytest tests/unit/ -q
 
-All unit tests use mocked dependencies — no real Home Assistant instance required. 417 tests, no network calls.
+# Smoke tests (requires local MCP server, 84 tests, <5s)
+pytest tests/smoke/ -q
 
-### Integration tests (requires real HA)
-
-```bash
+# Integration tests (requires real HA, 98 tests, ~2min)
 export HA_URL=http://your-ha:8123
 export HA_TOKEN=your_token
-pytest tests/integration/ -v
+pytest tests/integration/ -q
+
+# E2E tests (requires real HA + local MCP server, 24 tests, ~30s)
+pytest tests/e2e/ -q
+
+# All tests
+pytest tests/unit/ tests/smoke/ tests/e2e/ tests/integration/ -q
 ```
+
+All unit tests use mocked dependencies — no real Home Assistant instance required. 909 total tests across 4 suites.
 
 ### Lint & format
 
@@ -262,7 +282,7 @@ context_generator/
 
 tools/
 ├── states.py              # Entity state queries (12 tools)
-├── automations.py         # Automation analysis (9 tools)
+├── automations.py         # Automation analysis (10 tools)
 ├── scripts.py, scenes.py  # Script and scene inspection (2+2 tools)
 ├── blueprints.py          # Blueprint management (4 tools)
 ├── devices.py, areas.py   # Device and area tools (5+1 tools)
@@ -284,7 +304,7 @@ tools/
 └── yaml_utils.py          # HomeAssistantLoader for HA-specific YAML tags
 
 tests/
-├── unit/                  # 26 test files, 417 tests, fully mocked
+├── unit/                  # 26 test files, 703 tests, fully mocked
 └── integration/           # Real HA tests (requires HA_URL + HA_TOKEN)
 ```
 
