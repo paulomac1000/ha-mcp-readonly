@@ -21,7 +21,6 @@ from fastmcp import FastMCP
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Any
 
-from __init__ import __version__
 from tools.areas import register_area_tools  # noqa: E402
 from tools.automations import register_automation_tools  # noqa: E402
 from tools.batch_operations import register_batch_operations_tools  # noqa: E402
@@ -60,6 +59,7 @@ from tools.scripts import register_script_tools  # noqa: E402
 # Tool imports (placed at top; registration happens after config)
 from tools.states import register_state_tools  # noqa: E402
 from tools.storage import register_storage_tools  # noqa: E402
+from version import __version__  # noqa: E402
 
 # Logging: MUST target stderr (stdout corrupts MCP stdio transport)
 logging.basicConfig(
