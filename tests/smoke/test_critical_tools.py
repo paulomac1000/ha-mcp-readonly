@@ -126,6 +126,47 @@ class TestCriticalAutomationTools:
             code_data = _call_tool("get_automation_code", automation_id=auto_id)
             assert code_data["success"] is True
 
+    def test_get_automation_file_location(self):
+        """get_automation_file_location should return line range for an automation."""
+        list_data = _call_tool("list_automations")
+        assert list_data["success"] is True
+        automations = list_data.get("result", {}).get("automations", [])
+        if automations:
+            first = automations[0]
+            auto_id = first.get("alias") or first.get("id") or first.get("entity_id")
+            data = _call_tool("get_automation_file_location", automation_id=auto_id)
+            assert data["success"] is True
+            result = data.get("result", {})
+            assert "line_start" in result
+            assert "line_end" in result
+            assert "file_path" in result
+
+    def test_get_automation_codes_batch(self):
+        """get_automation_codes_batch should return codes for multiple automations."""
+        list_data = _call_tool("list_automations")
+        assert list_data["success"] is True
+        automations = list_data.get("result", {}).get("automations", [])
+        if len(automations) >= 2:
+            id1 = (
+                automations[0].get("alias")
+                or automations[0].get("id")
+                or automations[0].get("entity_id")
+            )
+            id2 = (
+                automations[1].get("alias")
+                or automations[1].get("id")
+                or automations[1].get("entity_id")
+            )
+            data = _call_tool("get_automation_codes_batch", automation_ids=f"{id1},{id2}")
+            assert data["success"] is True
+            result = data.get("result", {})
+            assert "results" in result
+            assert "total_requested" in result
+        else:
+            import pytest
+
+            pytest.skip("Need at least 2 automations for batch test")
+
 
 class TestScriptSceneSmoke:
     """Smoke tests for script and scene tools."""

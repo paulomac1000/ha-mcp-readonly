@@ -701,3 +701,100 @@ class TestCompareAttributes:
         assert result[0]["attribute"] == "color_temp"
         assert result[0]["before"] == 300
         assert result[0]["after"] is None
+
+
+class TestGetAutomationCodesBatch:
+    @pytest.fixture(autouse=True)
+    def setup(self, mock_mcp, config_path, ha_url, ha_token):
+        from tools.batch_operations import register_batch_operations_tools
+
+        config_dir = Path(config_path)
+        (config_dir / "automations.yaml").write_text(
+            """
+- id: "batch-001"
+  alias: Batch Test One
+  description: First batch test automation
+  mode: single
+  trigger:
+    - platform: time
+      at: "08:00:00"
+  condition: []
+  action:
+    - service: light.turn_on
+      target:
+        entity_id: light.living_room
+
+- id: "batch-002"
+  alias: Batch Test Two
+  description: Second batch test automation
+  mode: restart
+  trigger:
+    - platform: state
+      entity_id: binary_sensor.motion
+      to: "on"
+  condition: []
+  action:
+    - service: light.turn_on
+      target:
+        entity_id: light.hallway
+"""
+        )
+
+        register_batch_operations_tools(mock_mcp, config_path, ha_url, ha_token)
+        self.mcp = mock_mcp
+
+    @pytest.mark.asyncio
+    async def test_batch_get_two_codes(self):
+        result = await self.mcp._tools["get_automation_codes_batch"](
+            automation_ids="Batch Test One,Batch Test Two"
+        )
+        data = json.loads(result)
+        assert data["success"] is True
+        assert data["total_requested"] == 2
+        assert data["found_count"] == 2
+        assert data["error_count"] == 0
+        assert "Batch Test One" in data["results"]
+        assert "Batch Test Two" in data["results"]
+        assert data["results"]["Batch Test One"]["found"] is True
+        assert "code" in data["results"]["Batch Test One"]
+
+    @pytest.mark.asyncio
+    async def test_batch_get_by_id_strings(self):
+        result = await self.mcp._tools["get_automation_codes_batch"](
+            automation_ids="batch-001,batch-002"
+        )
+        data = json.loads(result)
+        assert data["success"] is True
+        assert data["found_count"] == 2
+        assert data["results"]["batch-001"]["alias"] == "Batch Test One"
+        assert data["results"]["batch-002"]["alias"] == "Batch Test Two"
+
+    @pytest.mark.asyncio
+    async def test_batch_partial_not_found(self):
+        result = await self.mcp._tools["get_automation_codes_batch"](
+            automation_ids="Batch Test One,NonExistent"
+        )
+        data = json.loads(result)
+        assert data["found_count"] == 1
+        assert data["error_count"] == 1
+        assert "NonExistent" in data["results"]
+        assert data["results"]["NonExistent"]["found"] is False
+
+    @pytest.mark.asyncio
+    async def test_batch_empty_input(self):
+        result = await self.mcp._tools["get_automation_codes_batch"](automation_ids="")
+        data = json.loads(result)
+        assert data["success"] is False
+
+    @pytest.mark.asyncio
+    async def test_batch_code_has_no_id_field(self):
+        result = await self.mcp._tools["get_automation_codes_batch"](
+            automation_ids="Batch Test One"
+        )
+        data = json.loads(result)
+        code = data["results"]["Batch Test One"]["code"]
+        lines = code.splitlines()
+        has_top_level_id = any(line.strip().startswith("id:") for line in lines)
+        assert not has_top_level_id, (
+            f"Code should not contain top-level id field, got: {code[:100]}"
+        )

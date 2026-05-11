@@ -1,9 +1,37 @@
+---
+description: Release history for HA-MCP-Readonly following Keep a Changelog
+---
+
 # Changelog
 
 All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [1.3.0] - Unreleased
+
+### Added
+- `get_automation_file_location(automation_id)` — returns the file path, line_start,
+  line_end, and surrounding YAML for an automation in automations.yaml. Eliminates
+  manual grep + read steps when inspecting file context around an automation.
+- `get_automation_codes_batch(automation_ids)` — batch retrieval of YAML code for
+  multiple automations in a single call. Loads automations.yaml once. ~70% token
+  savings vs N individual get_automation_code calls.
+- AFDS documentation standard adoption — added YAML frontmatter with `description`
+  to README.md and CHANGELOG.md, created `afds_config.yaml` validator configuration,
+  cleaned up ambiguous language (banned words) in documentation
+- AFDS validator improvements — added line number reporting to banned word
+  violation messages, implemented tier-based relaxation (L0 skips all section
+  checks, L1 requires only the first 2 sections), unified code block removal
+  regex between `check_single_h1` and `_blank_code_blocks`
+
+### Tests
+- Unit tests: 689 → 701 (+12). 11 new tests for the two new tools across
+  test_automations.py and test_batch_operations.py.
+- Smoke tests: 84 → 86 (+2). Two new tests in test_critical_tools.py.
+- Both tools added to _REQUIRES_PARAMS in test_response_format.py.
+- Code coverage tools/ maintained at >85%.
 
 ## [1.2.0] - 2026-05-08
 

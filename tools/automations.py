@@ -1275,6 +1275,73 @@ def _do_automation_validate_triggers(
     }
 
 
+def _do_get_automation_file_location(automation_id: str, config_path: str) -> dict:
+    if not automation_id or not isinstance(automation_id, str):
+        return {"success": False, "error": "automation_id is required and must be a string"}
+
+    if not automation_id.strip():
+        return {"success": False, "error": "automation_id is required"}
+
+    data = _load_automations(config_path)
+    if not data:
+        return {
+            "success": False,
+            "error": f"No automations found in {config_path}/automations.yaml",
+        }
+
+    item = _get_automation_by_id_or_alias(data, automation_id)
+    if not item:
+        return {"success": False, "error": f"Automation '{automation_id}' not found"}
+
+    auto_id = str(item.get("id", ""))
+    file_path = os.path.join(config_path, "automations.yaml")
+
+    try:
+        with open(file_path, encoding="utf-8") as f:
+            lines = f.readlines()
+    except OSError as e:
+        return {"success": False, "error": f"Cannot read automations.yaml: {e}"}
+
+    line_start = None
+    line_end = None
+    found_current = False
+
+    for i, line in enumerate(lines, start=1):
+        stripped = line.strip()
+        if stripped.startswith("- "):
+            if found_current:
+                line_end = i - 1
+                break
+            id_str = f"id: '{auto_id}'" if auto_id else ""
+            id_str_dq = f'id: "{auto_id}"' if auto_id else ""
+            id_str_nq = f"id: {auto_id}" if auto_id else ""
+            if (
+                (auto_id and id_str in stripped)
+                or (auto_id and id_str_dq in stripped)
+                or (auto_id and id_str_nq in stripped)
+            ):
+                found_current = True
+                line_start = i
+
+    if line_start is None:
+        return {"success": False, "error": f"Could not locate automation '{auto_id}' in file lines"}
+
+    if line_end is None:
+        line_end = len(lines)
+
+    surrounding = "".join(lines[line_start - 1 : line_end])
+
+    return {
+        "success": True,
+        "automation_id": auto_id,
+        "alias": item.get("alias"),
+        "file_path": "automations.yaml",
+        "line_start": line_start,
+        "line_end": line_end,
+        "surrounding_yaml": surrounding.rstrip(),
+    }
+
+
 # ========================================
 # TOOL REGISTRATION
 # ========================================
@@ -1542,4 +1609,28 @@ def register_automation_tools(mcp, config_path, ha_url=None, ha_token=None):
             )
         except Exception as exc:
             _logger.exception("automation_validate_triggers failed")
+            return _error_response(str(exc))
+
+    @mcp.tool()
+    def get_automation_file_location(automation_id: str) -> str:
+        """[READ] Returns the file path and line numbers (line_start, line_end) of an automation in automations.yaml.
+
+        Use this to locate an automation's exact position before reading surrounding context
+        with read_config_file(offset=line_start, limit=...). Eliminates manual grep + read steps.
+
+        Args:
+            automation_id: Automation alias or ID
+
+        Returns:
+            JSON with file_path, line_start, line_end, and optionally surrounding_yaml
+        """
+        try:
+            result = _do_get_automation_file_location(automation_id, config_path)
+            return (
+                _success_response(result)
+                if result.get("success")
+                else _error_response(result.get("error", "Unknown error"))
+            )
+        except Exception as exc:
+            _logger.exception("get_automation_file_location failed")
             return _error_response(str(exc))

@@ -1,3 +1,7 @@
+---
+description: Read-only MCP server for Home Assistant — 120 tools for AI observability and context generation
+---
+
 # HA-MCP-Readonly
 
 [![CI](https://github.com/paulomac1000/ha-mcp-readonly/actions/workflows/ci.yml/badge.svg)](https://github.com/paulomac1000/ha-mcp-readonly/actions/workflows/ci.yml)
@@ -124,14 +128,14 @@ curl -X POST http://localhost:9093/api/context/generate \
   -d '{"mode": "hybrid"}'
 ```
 
-## Available Tools (118 total)
+## Available Tools (120 total)
 
-Tools are organized by category (51 shown in table below). All are **read-only** — no state changes, no service calls, no modifications.
+Tools are organized by category (53 shown in table below). All are **read-only** — no state changes, no service calls, no modifications.
 
 | Category | Key tools |
 |----------|-----------|
 | **States** | `get_entity_state`, `get_states_grouped`, `search_entities`, `get_domains_summary`, `get_system_overview` |
-| **Automations** | `list_automations`, `get_automation_code`, `diagnose_automation`, `search_automations_by_entity`, `get_automation_conflicts` |
+| **Automations** | `list_automations`, `get_automation_code`, `get_automation_file_location`, `diagnose_automation`, `search_automations_by_entity`, `get_automation_conflicts` |
 | **Scripts & Scenes** | `list_scripts`, `get_script_code`, `list_scenes`, `get_scene_code` |
 | **Blueprints** | `list_blueprints`, `get_blueprint_code`, `get_blueprint_instances`, `get_blueprint_usage_summary` |
 | **Devices & Areas** | `get_device_details`, `search_devices`, `get_devices_by_area`, `get_area_devices_summary` |
@@ -144,7 +148,7 @@ Tools are organized by category (51 shown in table below). All are **read-only**
 | **Config** | `get_main_configuration`, `search_in_config`, `validate_yaml_syntax`, `read_config_file` |
 | **Storage** | `search_registries_batch`, `get_entity_registry`, `get_device_registry`, `get_area_registry`, `get_template_entity_code` |
 | **Lovelace** | `get_lovelace_dashboards`, `get_lovelace_config`, `get_lovelace_resources`, `search_lovelace_config`, `get_lovelace_config_summary`, `diagnose_lovelace_setup` |
-| **Batch** | `bulk_search_entities`, `compare_entities_state`, `validate_yaml_batch` |
+| **Batch** | `bulk_search_entities`, `compare_entities_state`, `validate_yaml_batch`, `get_automation_codes_batch` |
 | **Composite** | `investigate_entity`, `get_area_diagnostic`, `get_entity_with_automations`, `diagnose_person_tracking` |
 | **Dev tools** | `test_template`, `diagnose_entity`, `check_entity_exists`, `validate_automation_trigger`, `diagnose_template` |
 
@@ -166,7 +170,7 @@ Add the following to your Claude Desktop config:
 }
 ```
 
-After restarting Claude Desktop, the 118 Home Assistant tools will be available.
+After restarting Claude Desktop, the 120 Home Assistant tools will be available.
 
 ### LibreChat
 
@@ -238,7 +242,7 @@ pip install -r requirements.txt
 ### Run tests
 
 ```bash
-# Unit tests (no credentials needed, 689 tests, <20s)
+# Unit tests (no credentials needed, 701 tests, <20s)
 pytest tests/unit/ -q
 
 # Smoke tests (requires local MCP server, 84 tests, <5s)
@@ -256,7 +260,7 @@ pytest tests/e2e/ -q
 pytest tests/unit/ tests/smoke/ tests/e2e/ tests/integration/ -q
 ```
 
-All unit tests use mocked dependencies — no real Home Assistant instance required. 895 total tests across 4 suites.
+All unit tests use mocked dependencies — no real Home Assistant instance required. 907 total tests across 4 suites.
 
 ### Lint & format
 
@@ -278,7 +282,7 @@ context_generator/
 
 tools/
 ├── states.py              # Entity state queries (12 tools)
-├── automations.py         # Automation analysis (9 tools)
+├── automations.py         # Automation analysis (10 tools)
 ├── scripts.py, scenes.py  # Script and scene inspection (2+2 tools)
 ├── blueprints.py          # Blueprint management (4 tools)
 ├── devices.py, areas.py   # Device and area tools (5+1 tools)
@@ -300,7 +304,7 @@ tools/
 └── yaml_utils.py          # HomeAssistantLoader for HA-specific YAML tags
 
 tests/
-├── unit/                  # 26 test files, 417 tests, fully mocked
+├── unit/                  # 26 test files, 701 tests, fully mocked
 └── integration/           # Real HA tests (requires HA_URL + HA_TOKEN)
 ```
 

@@ -345,33 +345,6 @@ def _error_response(error):
     return json.dumps({"success": False, "error": str(error)}, indent=2, ensure_ascii=False)
 
 
-def _error_response_extended(
-    code: str,
-    message: str,
-    retryable: bool = False,
-    suggestion: str | None = None,
-    available_names: list[str] | None = None,
-) -> str:
-    """Format a structured error response with machine-readable fields.
-
-    Args:
-        code: UPPER_SNAKE_CASE error code (TIMEOUT, INVALID_PARAM, etc.).
-        message: Human-readable error description.
-        retryable: Whether the agent should retry with backoff.
-        suggestion: One-sentence actionable next step.
-        available_names: Valid alternatives when an unknown identifier is the cause.
-
-    Returns:
-        JSON string with structured error.
-    """
-    error: dict[str, object] = {"code": code, "message": message, "retryable": retryable}
-    if suggestion:
-        error["suggestion"] = suggestion
-    if available_names is not None:
-        error["available_names"] = available_names[:50]
-    return json.dumps({"success": False, "error": error}, indent=2, ensure_ascii=False)
-
-
 # Backward-compatible aliases
 success_response = _success_response
 error_response = _error_response

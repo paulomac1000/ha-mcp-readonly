@@ -1,3 +1,8 @@
+---
+description: Full documentation for HA-MCP-Readonly — MCP server giving AI assistants read-only Home Assistant observability
+last_verified: 2026-05-10
+---
+
 # HA-MCP-Readonly Documentation
 
 > Read-only MCP (Model Context Protocol) server for Home Assistant.
@@ -118,7 +123,7 @@ All configuration is via environment variables. See `.env.example` for a complet
 | `HEALTH_CHECK_PORT` | `9091` | Health check HTTP server port |
 | `MCP_SSE_PORT` | `9092` | MCP SSE transport port |
 | `REST_API_PORT` | `9093` | REST API port |
-| `MCP_DEV_TOOLS_ENABLED` | `1` | Enable developer tools (template testing, etc.) |
+| `MCP_DEV_TOOLS_ENABLED` | `1` | Enable developer tools (template testing and diagnostics) |
 | `RUN_TESTS_ON_STARTUP` | `0` | Run unit tests on server startup |
 | `OUTPUT_PATH` | `/app/output/ha-ai-context.md` | Path for generated context file |
 
@@ -350,7 +355,7 @@ The output file (`ha-ai-context.md`) includes:
 ### Read-Only Design
 
 - **No write operations** — All MCP tools are read-only
-- **No service calls** — Cannot turn on lights, run scripts, etc.
+- **No service calls** — Cannot turn on lights or run scripts
 - **No state changes** — Cannot modify entity states
 
 ### Filesystem Restrictions
@@ -364,7 +369,7 @@ The output file (`ha-ai-context.md`) includes:
 ### Credential Protection
 
 - `HA_TOKEN` never exposed in tool outputs
-- Secrets redacted from logs (`password`, `token`, `api_key`, etc.)
+- Secrets redacted from logs (`password`, `token`, `api_key`)
 - Log lines sanitized before returning to AI
 
 ---

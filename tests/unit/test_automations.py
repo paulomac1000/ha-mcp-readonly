@@ -1217,3 +1217,95 @@ class TestAutomationDetailFull:
         ]
         assert len(scene_issues) == 1
         assert "not found" in scene_issues[0]["message"].lower()
+
+
+class TestGetAutomationFileLocation:
+    def test_found_by_alias_returns_line_range(self, mock_mcp, config_path):
+        register_automation_tools(mock_mcp, config_path)
+        tool = mock_mcp._tools["get_automation_file_location"]
+        data = json.loads(tool("Test Automation One"))
+        assert data["success"] is True
+        assert data["automation_id"] == "123"
+        assert data["alias"] == "Test Automation One"
+        assert data["file_path"] == "automations.yaml"
+        assert isinstance(data["line_start"], int)
+        assert isinstance(data["line_end"], int)
+        assert data["line_start"] >= 1
+        assert data["line_end"] >= data["line_start"]
+        assert "id:" in data.get("surrounding_yaml", "")
+
+    def test_found_by_id_returns_line_range(self, mock_mcp, config_path):
+        register_automation_tools(mock_mcp, config_path)
+        tool = mock_mcp._tools["get_automation_file_location"]
+        data = json.loads(tool("456"))
+        assert data["success"] is True
+        assert data["automation_id"] == "456"
+        assert data["alias"] == "Another Automation"
+        assert data["line_start"] >= 1
+        assert data["line_end"] >= data["line_start"]
+
+    def test_not_found_returns_error(self, mock_mcp, config_path):
+        register_automation_tools(mock_mcp, config_path)
+        tool = mock_mcp._tools["get_automation_file_location"]
+        data = json.loads(tool("NonExistentAutomation"))
+        assert data["success"] is False
+        assert "not found" in data.get("error", "").lower()
+
+    def test_empty_automation_id_returns_error(self, mock_mcp, config_path):
+        register_automation_tools(mock_mcp, config_path)
+        tool = mock_mcp._tools["get_automation_file_location"]
+        data = json.loads(tool(""))
+        assert data["success"] is False
+
+    def test_empty_automations_file(self, mock_mcp, tmp_path):
+        (tmp_path / "automations.yaml").write_text("", encoding="utf-8")
+        register_automation_tools(mock_mcp, str(tmp_path))
+        tool = mock_mcp._tools["get_automation_file_location"]
+        data = json.loads(tool("Anything"))
+        assert data["success"] is False
+
+    def test_surrounding_yaml_is_valid_yaml(self, mock_mcp, config_path):
+        import yaml
+
+        register_automation_tools(mock_mcp, config_path)
+        tool = mock_mcp._tools["get_automation_file_location"]
+        data = json.loads(tool("Test Automation One"))
+        assert data["success"] is True
+        surrounding = data.get("surrounding_yaml", "")
+        assert surrounding
+        parsed = yaml.safe_load(surrounding)
+        assert parsed is not None
+        assert isinstance(parsed, list)
+        assert parsed[0]["id"] == "123"
+
+
+class TestExceptionHandler:
+    """Verify tool wrappers catch internal exceptions per [TEST-REG-3]."""
+
+    def test_exception_in_internal_fn_returns_error(self, mock_mcp, config_path):
+        """When _do_* raises RuntimeError, wrapper returns success=false with error text."""
+        register_automation_tools(mock_mcp, config_path)
+
+        with patch(
+            "tools.automations._do_get_automation_code",
+            side_effect=RuntimeError("test explosion"),
+        ):
+            tool = mock_mcp._tools["get_automation_code"]
+            data = json.loads(tool("Test Automation One"))
+
+        assert data["success"] is False
+        assert "test explosion" in data.get("error", "")
+
+    def test_exception_in_list_tool_returns_error(self, mock_mcp, config_path):
+        """When list_automations internal logic raises, wrapper returns error."""
+        register_automation_tools(mock_mcp, config_path)
+
+        with patch(
+            "tools.automations._do_list_automations",
+            side_effect=RuntimeError("listing failed"),
+        ):
+            tool = mock_mcp._tools["list_automations"]
+            data = json.loads(tool())
+
+        assert data["success"] is False
+        assert "listing failed" in data.get("error", "")

@@ -20,6 +20,7 @@ from typing import Any
 
 from tools.utils import _error_response, _success_response, load_registry, make_ha_request
 
+TOOLS_VERSION = "1.0.0"
 _logger = logging.getLogger(__name__)
 
 # ========================================
