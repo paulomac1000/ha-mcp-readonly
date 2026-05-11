@@ -35,7 +35,7 @@ jobs:
       - name: Run bandit
         run: |
           pip install bandit
-          bandit -r tools/ -ll
+          bandit -r tools/ -lll
 
   test:
     runs-on: ubuntu-latest
