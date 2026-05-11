@@ -267,9 +267,9 @@ def _get_log_errors_with_patterns(
 
 
 def _get_unavailable_by_integration(
-    states: list[dict],
-    entity_registry: list[dict],
-    device_registry: list[dict],  # type: ignore[type-arg]
+    states: list[dict[str, Any]],
+    entity_registry: list[dict[str, Any]],
+    device_registry: list[dict[str, Any]],
 ) -> dict[str, Any]:
     """
     Groups unavailable entities by integration.
