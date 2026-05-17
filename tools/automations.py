@@ -6,6 +6,7 @@ Tools for listing, searching, analyzing, and debugging Home Assistant automation
 import logging
 import os
 import re
+from collections import defaultdict
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -100,11 +101,37 @@ def _extract_templates(data: Any, path: str = "") -> list[dict[str, str]]:
 # ========================================
 
 
+def _find_deep_match_paths(item: dict[str, Any], search_term: str) -> list[str]:
+    """Recursively search full item config for search_term, return JSON-path strings."""
+    term = search_term.lower()
+    found_paths: list[str] = []
+
+    def _walk(obj: Any, path: str) -> None:
+        if isinstance(obj, dict):
+            for key, value in obj.items():
+                cur_path = f"{path}/{key}" if path else key
+                if isinstance(value, str) and term in value.lower():
+                    found_paths.append(cur_path)
+                elif isinstance(value, (dict, list)):
+                    _walk(value, cur_path)
+        elif isinstance(obj, list):
+            for idx, value in enumerate(obj):
+                cur_path = f"{path}[{idx}]"
+                if isinstance(value, str) and term in value.lower():
+                    found_paths.append(cur_path)
+                elif isinstance(value, (dict, list)):
+                    _walk(value, cur_path)
+
+    _walk(item, "")
+    return found_paths
+
+
 def _do_search_automations(
     search_term: str | None = None,
     include_code: bool = False,
     mode: str | None = None,
     uses_blueprint: bool | None = None,
+    deep: bool = False,
     config_path: str | None = None,
 ) -> dict[str, Any]:
     data = _load_automations(config_path)  # type: ignore[arg-type]
@@ -114,8 +141,15 @@ def _do_search_automations(
         if search_term:
             term = search_term.lower()
             text_corpus = f"{item.get('id', '')} {item.get('alias', '')} {item.get('description', '')}".lower()
-            if term not in text_corpus:
-                continue
+            shallow_match = term in text_corpus
+
+            if not shallow_match:
+                if deep:
+                    deep_paths = _find_deep_match_paths(item, term)
+                    if not deep_paths:
+                        continue
+                else:
+                    continue
 
         if mode and item.get("mode", "single") != mode:
             continue
@@ -144,6 +178,11 @@ def _do_search_automations(
             if item.get("action")
             else 0,
         }
+
+        if deep and search_term:
+            deep_paths = _find_deep_match_paths(item, search_term)
+            if deep_paths:
+                res["match_paths"] = deep_paths
 
         if include_code:
             clean_item = item.copy()
@@ -1342,6 +1381,67 @@ def _do_get_automation_file_location(automation_id: str, config_path: str) -> di
     }
 
 
+def _do_diagnose_automation_aliases(
+    config_path: str,
+    ha_url: str | None = None,
+    ha_token: str | None = None,
+) -> dict[str, Any]:
+    result: dict[str, Any] = {
+        "duplicates": [],
+        "total_duplicates": 0,
+    }
+
+    aliases: dict[str, list[dict[str, Any]]] = defaultdict(list)
+
+    yaml_autos = _load_automations(config_path)
+    for item in yaml_autos:
+        alias = item.get("alias", "Unknown")
+        aliases[alias].append(
+            {
+                "entity_id": f"automation.{alias}",
+                "state": "unknown",
+                "source": "automations.yaml",
+            }
+        )
+
+    states_res = make_ha_request(ha_url, ha_token, "/api/states")
+    if states_res.get("success"):
+        for s in states_res["data"]:
+            if s["entity_id"].startswith("automation."):
+                alias = s["attributes"].get("friendly_name", s["entity_id"])
+                entry = {
+                    "entity_id": s["entity_id"],
+                    "state": s.get("state", "unknown"),
+                    "last_triggered": s["attributes"].get("last_triggered"),
+                    "source": "ui",
+                }
+                already = any(e["entity_id"] == entry["entity_id"] for e in aliases.get(alias, []))
+                if not already:
+                    aliases[alias].append(entry)
+
+    duplicates = []
+    for alias, entries in aliases.items():
+        if len(entries) > 1:
+            states_set = set(e.get("state") for e in entries)
+            if states_set == {"unknown"} or states_set == {None}:
+                impact = "all_disabled"
+            elif all(s == "on" for s in states_set if s and s != "unknown"):
+                impact = "all_enabled"
+            else:
+                impact = "mixed"
+            duplicates.append(
+                {
+                    "alias": alias,
+                    "entities": entries,
+                    "impact": impact,
+                }
+            )
+
+    result["duplicates"] = duplicates
+    result["total_duplicates"] = len(duplicates)
+    return result
+
+
 # ========================================
 # TOOL REGISTRATION
 # ========================================
@@ -1358,6 +1458,7 @@ def register_automation_tools(mcp, config_path, ha_url=None, ha_token=None) -> N
         include_code: bool = False,
         mode: str | None = None,
         uses_blueprint: bool | None = None,
+        deep: bool = False,
     ) -> str:
         """[READ] Search automations by alias, description, mode, or blueprint usage. ~95% token savings vs listing all.
 
@@ -1369,14 +1470,16 @@ def register_automation_tools(mcp, config_path, ha_url=None, ha_token=None) -> N
             include_code: Whether to include full YAML code (default: False)
             mode: Filter by mode: "single", "restart", "queued", "parallel"
             uses_blueprint: True = only blueprint, False = only native, None = all
+            deep: Recursively search nested fields (variables, choose branches, sequences) (default: False)
 
         Returns:
-            JSON with matching automations + optional full code
+            JSON with matching automations, optional full code, and match_paths when deep=True
 
         Examples:
             search_automations("energy")
             search_automations("dashboard", include_code=True)
             search_automations(mode="restart", uses_blueprint=True)
+            search_automations("_hp_days", deep=True)
         """
         try:
             result = _do_search_automations(
@@ -1384,6 +1487,7 @@ def register_automation_tools(mcp, config_path, ha_url=None, ha_token=None) -> N
                 include_code=include_code,
                 mode=mode,
                 uses_blueprint=uses_blueprint,
+                deep=deep,
                 config_path=config_path,
             )
             return (
@@ -1633,4 +1737,28 @@ def register_automation_tools(mcp, config_path, ha_url=None, ha_token=None) -> N
             )
         except Exception as exc:
             _logger.exception("get_automation_file_location failed")
+            return _error_response(str(exc))
+
+    @mcp.tool()
+    def diagnose_automation_aliases() -> str:
+        """[READ] Detect duplicate automation aliases from YAML and UI sources.
+
+        Groups all automations by alias and flags groups of 2+ entries
+        with the same display name, categorizing the impact as
+        all_disabled, all_enabled, or mixed.
+
+        Returns:
+            JSON with:
+            - duplicates: list of groups with alias, entities, and impact
+            - total_duplicates: number of duplicate groups
+        """
+        try:
+            result = _do_diagnose_automation_aliases(
+                config_path=config_path,
+                ha_url=ha_url,
+                ha_token=ha_token,
+            )
+            return _success_response(result)
+        except Exception as exc:
+            _logger.exception("diagnose_automation_aliases failed")
             return _error_response(str(exc))

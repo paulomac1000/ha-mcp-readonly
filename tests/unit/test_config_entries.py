@@ -81,7 +81,7 @@ class TestGetConfigEntryDetails:
         assert data["success"] is True
         assert data["entry_id"] == "e01182bae2f8b20605c8317f4623d1e9"
         assert data["domain"] == "mqtt"
-        assert data["title"] == "192.168.1.100"
+        assert data["title"] == "homeassistant.local"
         assert data["disabled_by"] is None
         assert "entities" in data
         assert "devices" in data
@@ -288,6 +288,28 @@ class TestSearchConfigEntries:
         assert data["success"] is True
         assert data["matched_count"] == 1
         assert "entities_count" in data["entries"][0]
+
+    @pytest.mark.asyncio
+    async def test_with_summary_only(self):
+        """summary_only=True should include state field in result entries."""
+        with ExitStack() as stack:
+            mock_load = stack.enter_context(patch("tools.config_entries.load_registry"))
+            mock_load.side_effect = lambda name, path: self.mock_registry_data.get(name, {})
+
+            mock_entities = stack.enter_context(patch("tools.config_entries.get_registry_entities"))
+            mock_entities.return_value = []
+
+            register_config_entry_tools(self.mock_mcp, self.config_path, self.ha_url, self.ha_token)
+            result = await self.mock_mcp._tools["search_config_entries"](
+                domain="mqtt", summary_only=True
+            )
+
+        data = json.loads(result)
+
+        assert data["success"] is True
+        assert data["matched_count"] == 1
+        assert "state" in data["entries"][0]
+        assert data["entries"][0]["state"] in ("loaded", "not_loaded", "unknown")
 
 
 # ─────────────────────────────────────────────────────────────

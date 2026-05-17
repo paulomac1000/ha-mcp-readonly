@@ -1309,3 +1309,118 @@ class TestExceptionHandler:
 
         assert data["success"] is False
         assert "listing failed" in data.get("error", "")
+
+
+class TestDiagnoseAutomationAliases:
+    """Tests for diagnose_automation_aliases tool."""
+
+    def test_no_duplicates(self, mock_mcp, config_path, ha_url, ha_token):
+        register_automation_tools(mock_mcp, config_path, ha_url, ha_token)
+
+        from tools.automations import _do_diagnose_automation_aliases
+
+        def _wrapper():
+            try:
+                result = _do_diagnose_automation_aliases(config_path, ha_url, ha_token)
+                return json.dumps({"success": True, **result})
+            except Exception as e:
+                return json.dumps({"success": False, "error": str(e)})
+
+        mock_mcp._tools["diagnose_automation_aliases"] = _wrapper
+
+        with (
+            patch(
+                "tools.automations._load_automations",
+                return_value=[],
+            ),
+            patch("tools.automations.make_ha_request", return_value={"success": True, "data": []}),
+        ):
+            tool = mock_mcp._tools["diagnose_automation_aliases"]
+            data = json.loads(tool())
+
+        assert data["success"] is True
+        assert data["duplicates"] == []
+        assert data["total_duplicates"] == 0
+
+    def test_with_duplicates(self, mock_mcp, config_path, ha_url, ha_token):
+        register_automation_tools(mock_mcp, config_path, ha_url, ha_token)
+
+        from tools.automations import _do_diagnose_automation_aliases
+
+        def _wrapper():
+            try:
+                result = _do_diagnose_automation_aliases(config_path, ha_url, ha_token)
+                return json.dumps({"success": True, **result})
+            except Exception as e:
+                return json.dumps({"success": False, "error": str(e)})
+
+        mock_mcp._tools["diagnose_automation_aliases"] = _wrapper
+
+        autos = [
+            {
+                "id": "1",
+                "alias": "Duplicate Alias",
+                "description": "",
+                "mode": "single",
+                "trigger": [],
+                "condition": [],
+                "action": [],
+            },
+            {
+                "id": "2",
+                "alias": "Duplicate Alias",
+                "description": "",
+                "mode": "single",
+                "trigger": [],
+                "condition": [],
+                "action": [],
+            },
+        ]
+        states = {
+            "success": True,
+            "data": [
+                {
+                    "entity_id": "automation.duplicate_alias",
+                    "state": "on",
+                    "attributes": {"friendly_name": "Duplicate Alias"},
+                },
+                {
+                    "entity_id": "automation.duplicate_alias_2",
+                    "state": "on",
+                    "attributes": {"friendly_name": "Duplicate Alias"},
+                },
+            ],
+        }
+        with (
+            patch("tools.automations._load_automations", return_value=autos),
+            patch("tools.automations.make_ha_request", return_value=states),
+        ):
+            tool = mock_mcp._tools["diagnose_automation_aliases"]
+            data = json.loads(tool())
+
+        assert data["success"] is True
+        assert data["total_duplicates"] > 0
+        assert any(d["alias"] == "Duplicate Alias" for d in data["duplicates"])
+
+    def test_exception_handler(self, mock_mcp, config_path, ha_url, ha_token):
+        register_automation_tools(mock_mcp, config_path, ha_url, ha_token)
+
+        def _wrapper():
+            from tools.automations import _do_diagnose_automation_aliases
+
+            try:
+                result = _do_diagnose_automation_aliases(config_path, ha_url, ha_token)
+                return json.dumps({"success": True, **result})
+            except Exception as e:
+                return json.dumps({"success": False, "error": str(e)})
+
+        mock_mcp._tools["diagnose_automation_aliases"] = _wrapper
+
+        with patch(
+            "tools.automations._do_diagnose_automation_aliases", side_effect=RuntimeError("msg")
+        ):
+            tool = mock_mcp._tools["diagnose_automation_aliases"]
+            data = json.loads(tool())
+
+        assert data["success"] is False
+        assert "msg" in data.get("error", "")

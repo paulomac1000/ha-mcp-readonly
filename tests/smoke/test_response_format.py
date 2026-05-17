@@ -92,6 +92,8 @@ _REQUIRES_PARAMS = {
     "search_devices",
     "get_recent_state_changes",
     "get_template_entity_code",
+    "eval_templates_batch",
+    "compare_entity_health_snapshot",
 }
 
 

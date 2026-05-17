@@ -3,6 +3,7 @@ Tests for tools/storage.py
 """
 
 import json
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -1128,3 +1129,167 @@ class TestTemplateEntityTools:
             data = json.loads(result)
             assert data["success"] is True
             assert data["entity_id"] == "sensor.tracker_test_user_extended"
+
+
+class TestHacsGetUpdateCount:
+    @pytest.mark.asyncio
+    async def test_hacs_not_installed(self, mock_mcp, config_path):
+        with patch("tools.storage.load_registry") as mock_reg:
+            mock_reg.return_value = {}
+            register_storage_tools(mock_mcp, config_path)
+            data = json.loads(await mock_mcp._tools["hacs_get_update_count"]())
+        assert data["success"] is False
+        assert "HACS not installed" in data["error"]
+
+    @pytest.mark.asyncio
+    async def test_with_updates(self, mock_mcp, config_path):
+        hacs_data = {
+            "data": {
+                "repositories": [
+                    {
+                        "installed": True,
+                        "full_name": "user/repo-up-to-date",
+                        "installed_version": "v1.0.0",
+                        "available_version": "v1.0.0",
+                        "available_updates": 0,
+                        "critical": False,
+                    },
+                    {
+                        "installed": True,
+                        "full_name": "user/repo-minor",
+                        "installed_version": "v1.0.0",
+                        "available_version": "v1.1.0",
+                        "available_updates": 1,
+                        "critical": False,
+                    },
+                    {
+                        "installed": True,
+                        "full_name": "user/repo-major",
+                        "installed_version": "v1.0.0",
+                        "available_version": "v2.0.0",
+                        "available_updates": 1,
+                        "critical": False,
+                    },
+                ]
+            }
+        }
+        with patch("tools.storage.load_registry") as mock_reg:
+            mock_reg.return_value = hacs_data
+            register_storage_tools(mock_mcp, config_path)
+            data = json.loads(await mock_mcp._tools["hacs_get_update_count"]())
+        assert data["success"] is True
+        assert data["updates_available"] == 2
+        assert len(data["major_version_bumps"]) == 1
+        assert data["major_version_bumps"][0]["name"] == "user/repo-major"
+
+    @pytest.mark.asyncio
+    async def test_no_updates(self, mock_mcp, config_path):
+        hacs_data = {
+            "data": {
+                "repositories": [
+                    {
+                        "installed": True,
+                        "full_name": "user/repo-one",
+                        "installed_version": "v2.0.0",
+                        "available_version": "v2.0.0",
+                        "available_updates": 0,
+                        "critical": False,
+                    },
+                    {
+                        "installed": True,
+                        "full_name": "user/repo-two",
+                        "installed_version": "v1.5.0",
+                        "available_version": "v1.5.0",
+                        "available_updates": 0,
+                        "critical": False,
+                    },
+                ]
+            }
+        }
+        with patch("tools.storage.load_registry") as mock_reg:
+            mock_reg.return_value = hacs_data
+            register_storage_tools(mock_mcp, config_path)
+            data = json.loads(await mock_mcp._tools["hacs_get_update_count"]())
+        assert data["success"] is True
+        assert data["updates_available"] == 0
+
+    @pytest.mark.asyncio
+    async def test_exception_handler(self, mock_mcp, config_path):
+        register_storage_tools(mock_mcp, config_path)
+        with patch(
+            "tools.storage._do_hacs_get_update_count",
+            side_effect=RuntimeError("hacs fail"),
+        ):
+            data = json.loads(await mock_mcp._tools["hacs_get_update_count"]())
+        assert data["success"] is False
+        assert "hacs fail" in data["error"]
+
+
+class TestGetNfcTags:
+    TAG_DATA = {
+        "data": {
+            "tags": [
+                {"id": "tag_abc123", "name": "Front Door", "last_scanned": "2024-01-01T00:00:00"},
+            ]
+        }
+    }
+
+    @pytest.mark.asyncio
+    async def test_from_registry(self, mock_mcp, config_path):
+        with (
+            patch("tools.storage.Path", Path, create=True),
+            patch("tools.storage.load_registry") as mock_reg,
+        ):
+            mock_reg.return_value = self.TAG_DATA
+            register_storage_tools(mock_mcp, config_path)
+            data = json.loads(await mock_mcp._tools["get_nfc_tags"]())
+        assert data["success"] is True
+        assert data["total"] == 1
+        assert data["tags"][0]["tag_id"] == "tag_abc123"
+        assert data["tags"][0]["name"] == "Front Door"
+
+    @pytest.mark.asyncio
+    async def test_from_api_fallback(self, mock_mcp, config_path):
+        with (
+            patch("tools.storage.Path", Path, create=True),
+            patch("tools.storage.load_registry") as mock_reg,
+            patch("tools.storage.make_ha_request") as mock_req,
+        ):
+            mock_reg.return_value = {}
+            mock_req.return_value = {
+                "success": True,
+                "data": [
+                    {
+                        "entity_id": "tag.tag_def456",
+                        "attributes": {
+                            "friendly_name": "Back Door",
+                            "last_scanned": "2024-02-01T00:00:00",
+                        },
+                    }
+                ],
+            }
+            register_storage_tools(mock_mcp, config_path, "http://ha", "token")
+            data = json.loads(await mock_mcp._tools["get_nfc_tags"]())
+        assert data["success"] is True
+        assert data["total"] == 1
+        assert data["tags"][0]["tag_id"] == "tag.tag_def456"
+
+    @pytest.mark.asyncio
+    async def test_no_tags(self, mock_mcp, config_path):
+        with patch("tools.storage.load_registry") as mock_reg:
+            mock_reg.return_value = {}
+            register_storage_tools(mock_mcp, config_path)
+            data = json.loads(await mock_mcp._tools["get_nfc_tags"]())
+        assert data["success"] is True
+        assert data["total"] == 0
+
+    @pytest.mark.asyncio
+    async def test_exception_handler(self, mock_mcp, config_path):
+        register_storage_tools(mock_mcp, config_path)
+        with patch(
+            "tools.storage._do_get_nfc_tags",
+            side_effect=RuntimeError("nfc fail"),
+        ):
+            data = json.loads(await mock_mcp._tools["get_nfc_tags"]())
+        assert data["success"] is False
+        assert "nfc fail" in data["error"]

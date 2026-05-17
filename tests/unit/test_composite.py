@@ -10,9 +10,11 @@ Tests composite/aggregate functions that combine multiple operations:
 """
 
 import json
+import os
 from unittest.mock import Mock, patch
 
 import pytest
+import yaml
 
 # Mock the tools registry loading
 MOCK_REGISTRY_DATA = {
@@ -1130,3 +1132,138 @@ class TestInvestigateEntityExtended:
         assert any("RACE CONDITION" in issue for issue in data["issues"])
         assert data["conflicts"]["feedback_loop_risk"] is True
         assert any("FEEDBACK LOOP" in issue for issue in data["issues"])
+
+
+class TestAuditConfigOrphans:
+    """Tests for audit_config_orphans tool."""
+
+    @pytest.fixture(autouse=True)
+    def setup(self, mock_mcp, config_path, ha_url, ha_token):
+        from tools.composite import register_composite_tools
+
+        self.mock_registry_data = MOCK_REGISTRY_DATA
+
+        with patch("tools.composite.load_registry") as mock_load:
+            mock_load.side_effect = lambda name, path: self.mock_registry_data.get(name, {})
+            register_composite_tools(mock_mcp, config_path, ha_url, ha_token)
+
+        self.mcp = mock_mcp
+        self.config_path = config_path
+
+    @pytest.mark.asyncio
+    async def test_orphans_found(self):
+        automations = [
+            {
+                "id": "auto1",
+                "alias": "Test Auto",
+                "trigger": [{"platform": "state", "entity_id": "sensor.temperature_living_room"}],
+                "action": [],
+            }
+        ]
+        with open(os.path.join(self.config_path, "automations.yaml"), "w") as f:
+            yaml.dump(automations, f)
+
+        reg_data = json.loads(json.dumps(self.mock_registry_data))
+        reg_data["core.entity_registry"]["data"]["entities"].append(
+            {"entity_id": "sensor.orphan_unused", "name": "Orphan", "platform": "mqtt"}
+        )
+
+        with (
+            patch("tools.composite.load_registry") as mock_load,
+            patch("tools.composite.make_ha_request") as mock_req,
+        ):
+            mock_load.side_effect = lambda name, path: reg_data.get(name, {})
+            mock_req.return_value = {"success": True, "data": []}
+
+            result = json.loads(await self.mcp._tools["audit_config_orphans"]())
+
+        assert result["success"] is True
+        assert result["orphan_count"] > 0
+        assert "sensor.orphan_unused" in result["orphan_entities"]
+
+    @pytest.mark.asyncio
+    async def test_broken_references(self):
+        automations = [
+            {
+                "id": "auto1",
+                "alias": "Test Auto",
+                "trigger": [{"platform": "state", "entity_id": "sensor.nonexistent_ref"}],
+                "action": [],
+            }
+        ]
+        with open(os.path.join(self.config_path, "automations.yaml"), "w") as f:
+            yaml.dump(automations, f)
+
+        reg_data = json.loads(json.dumps(self.mock_registry_data))
+        reg_data["core.entity_registry"]["data"]["entities"] = []
+
+        with (
+            patch("tools.composite.load_registry") as mock_load,
+            patch("tools.composite.make_ha_request") as mock_req,
+        ):
+            mock_load.side_effect = lambda name, path: reg_data.get(name, {})
+            mock_req.return_value = {"success": True, "data": []}
+
+            result = json.loads(await self.mcp._tools["audit_config_orphans"]())
+
+        assert result["success"] is True
+        assert result["broken_reference_count"] > 0
+        assert "sensor.nonexistent_ref" in result["broken_references"]
+
+    @pytest.mark.asyncio
+    async def test_no_issues(self):
+        automations = [
+            {
+                "id": "auto1",
+                "alias": "Test Auto",
+                "trigger": [
+                    {"platform": "state", "entity_id": "sensor.temperature_living_room"},
+                    {"platform": "state", "entity_id": "binary_sensor.motion_kitchen"},
+                ],
+                "action": [],
+            }
+        ]
+        with open(os.path.join(self.config_path, "automations.yaml"), "w") as f:
+            yaml.dump(automations, f)
+
+        reg_data = json.loads(json.dumps(self.mock_registry_data))
+        reg_data["core.entity_registry"]["data"]["entities"] = [
+            e
+            for e in reg_data["core.entity_registry"]["data"]["entities"]
+            if e.get("entity_id")
+            in ("sensor.temperature_living_room", "binary_sensor.motion_kitchen")
+        ]
+
+        with (
+            patch("tools.composite.load_registry") as mock_load,
+            patch("tools.composite.make_ha_request") as mock_req,
+        ):
+            mock_load.side_effect = lambda name, path: reg_data.get(name, {})
+            mock_req.return_value = {
+                "success": True,
+                "data": [
+                    {
+                        "entity_id": "automation.test_auto",
+                        "state": "on",
+                        "attributes": {
+                            "last_triggered": "2024-01-01T00:00:00",
+                            "friendly_name": "Test",
+                        },
+                    }
+                ],
+            }
+
+            result = json.loads(await self.mcp._tools["audit_config_orphans"]())
+
+        assert result["success"] is True
+        assert result["orphan_count"] == 0
+        assert result["broken_reference_count"] == 0
+
+    @pytest.mark.asyncio
+    async def test_exception_handler(self):
+        with patch("tools.composite._do_audit_config_orphans") as mock_do:
+            mock_do.side_effect = RuntimeError("audit failed")
+            result = json.loads(await self.mcp._tools["audit_config_orphans"]())
+
+        assert result["success"] is False
+        assert "audit failed" in result["error"]

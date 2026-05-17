@@ -279,6 +279,7 @@ def real_mcp():
         from tools.automations import register_automation_tools
         from tools.batch_operations import register_batch_operations_tools
         from tools.blueprints import register_blueprint_tools
+        from tools.capabilities import register_capability_tools
         from tools.composite import register_composite_tools
         from tools.config import register_config_tools
         from tools.config_entries import register_config_entry_tools
@@ -318,6 +319,7 @@ def real_mcp():
         register_composite_tools(mcp, HA_CONFIG_PATH, HA_URL, HA_TOKEN)
         register_batch_operations_tools(mcp, HA_CONFIG_PATH, HA_URL, HA_TOKEN)
         register_filesystem_tools(mcp)
+        register_capability_tools(mcp)
 
         print(f"[OK] Registered Home Assistant tools (url: {HA_URL})", file=sys.stderr)
 

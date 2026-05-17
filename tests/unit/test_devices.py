@@ -856,7 +856,7 @@ class TestDeviceGetWifiStatus:
             if "ssid" in endpoint:
                 return {"success": True, "data": {"state": "MyWiFi", "attributes": {}}}
             if "ip" in endpoint:
-                return {"success": True, "data": {"state": "192.168.0.50", "attributes": {}}}
+                return {"success": True, "data": {"state": "device.local", "attributes": {}}}
             return {"success": True, "data": {"state": "unknown", "attributes": {}}}
 
         with patch("tools.devices.get_registry_devices") as mock_devices:
@@ -882,7 +882,7 @@ class TestDeviceGetWifiStatus:
         assert wifi["rssi"] == -55
         assert wifi["signal_quality"] == 70
         assert wifi["ssid"] == "MyWiFi"
-        assert wifi["ip_address"] == "192.168.0.50"
+        assert wifi["ip_address"] == "device.local"
         assert wifi["mac_address"] == "aa:bb:cc:dd:ee:ff"
         assert wifi["source"] == "ha_sensor"
 

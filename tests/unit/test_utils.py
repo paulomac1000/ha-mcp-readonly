@@ -2,6 +2,7 @@
 Tests for tools/utils.py
 """
 
+import json
 from unittest.mock import MagicMock, Mock, patch
 
 import pytest
@@ -435,6 +436,78 @@ class TestTailLogFile:
         with patch("tools.utils.subprocess.run", side_effect=subprocess.SubprocessError("fail")):
             lines = tail_log_file(str(log), lines=5)
         assert lines == []
+
+
+class TestErrorResponseExtended:
+    """Tests for the extended (L2+) error contract helpers."""
+
+    def test_error_dict_extended_minimal(self):
+        from tools.utils import _error_dict_extended
+
+        d = _error_dict_extended("TIMEOUT", "timed out", True)
+        assert d["success"] is False
+        assert d["error"]["code"] == "TIMEOUT"
+        assert d["error"]["message"] == "timed out"
+        assert d["error"]["retryable"] is True
+        assert "suggestion" not in d["error"]
+        assert "available_names" not in d["error"]
+
+    def test_error_dict_extended_full(self):
+        from tools.utils import _error_dict_extended
+
+        d = _error_dict_extended(
+            "INVALID_PARAM",
+            "bad parameter",
+            False,
+            suggestion="fix it",
+            available_names=["a", "b"],
+        )
+        assert d["error"]["suggestion"] == "fix it"
+        assert d["error"]["available_names"] == ["a", "b"]
+
+    def test_available_names_capped_at_50(self):
+        from tools.utils import _error_dict_extended
+
+        d = _error_dict_extended("X", "m", True, available_names=[str(i) for i in range(100)])
+        assert len(d["error"]["available_names"]) == 50
+
+    def test_error_response_extended_serializes(self):
+        from tools.utils import _error_response_extended
+
+        raw = _error_response_extended("HTTP_ERROR", "boom", True)
+        parsed = json.loads(raw)
+        assert parsed["success"] is False
+        assert parsed["error"]["code"] == "HTTP_ERROR"
+        assert parsed["error"]["retryable"] is True
+
+
+class TestMakeHaRequestErrorCode:
+    """Tests for the structured error siblings of make_ha_request."""
+
+    @patch("tools.utils.requests")
+    def test_connection_error_code(self, mock_requests):
+        import requests
+
+        from tools.utils import make_ha_request
+
+        mock_requests.exceptions = requests.exceptions
+        mock_requests.get.side_effect = requests.exceptions.ConnectionError("down")
+        result = make_ha_request("http://h", "t", "/api/states", retries=1, backoff=0.01)
+        assert result["success"] is False
+        assert result["error_code"] == "HTTP_ERROR"
+        assert result["retryable"] is True
+
+    @patch("tools.utils.requests")
+    def test_timeout_error_code(self, mock_requests):
+        import requests
+
+        from tools.utils import make_ha_request
+
+        mock_requests.exceptions = requests.exceptions
+        mock_requests.get.side_effect = requests.exceptions.Timeout("slow")
+        result = make_ha_request("http://h", "t", "/api/states", retries=1, backoff=0.01)
+        assert result["error_code"] == "TIMEOUT"
+        assert result["retryable"] is True
 
 
 if __name__ == "__main__":
