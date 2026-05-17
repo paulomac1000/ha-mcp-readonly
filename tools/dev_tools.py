@@ -10,6 +10,7 @@ import re
 import time
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 from tools.utils import _error_response, _success_response, make_ha_request
 
@@ -155,7 +156,13 @@ def _do_eval_templates_batch(templates_str, mock_variables, ha_url, ha_token):  
         except (json.JSONDecodeError, TypeError):
             pass
 
-    results = {"success": True, "total": 0, "successful": 0, "failed": 0, "results": {}}
+    results: dict[str, Any] = {
+        "success": True,
+        "total": 0,
+        "successful": 0,
+        "failed": 0,
+        "results": {},
+    }
 
     for name, template in templates_dict.items():
         full_template = mock_prefix + template

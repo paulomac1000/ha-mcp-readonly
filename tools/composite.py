@@ -697,17 +697,17 @@ def _do_audit_config_orphans(
         if auto_warn:
             warnings.append(auto_warn)
 
-        scripts: list = []
+        scripts: list[dict[str, Any]] = []
         scripts_path = os.path.join(config_path, "scripts.yaml")
         if os.path.exists(scripts_path):
-            with open(scripts_path, encoding="utf-8") as f:
-                scripts = yaml.load(f, Loader=HomeAssistantLoader) or []
+            with open(scripts_path, encoding="utf-8") as _f:
+                scripts = yaml.load(_f, Loader=HomeAssistantLoader) or []
 
-        scenes: list = []
+        scenes: list[dict[str, Any]] = []
         scenes_path = os.path.join(config_path, "scenes.yaml")
         if os.path.exists(scenes_path):
-            with open(scenes_path, encoding="utf-8") as f:
-                scenes = yaml.load(f, Loader=HomeAssistantLoader) or []
+            with open(scenes_path, encoding="utf-8") as _f:
+                scenes = yaml.load(_f, Loader=HomeAssistantLoader) or []
 
         dashboards = load_registry("lovelace", config_path).get("data", {}).get("dashboards", {})
 

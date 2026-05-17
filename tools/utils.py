@@ -116,8 +116,8 @@ def get_registry_cache_stats() -> dict[str, Any]:
 
 
 def make_ha_request(
-    ha_url: str,
-    ha_token: str,
+    ha_url: str | None,
+    ha_token: str | None,
     endpoint: str,
     method: str = "GET",
     data: dict[str, Any] | None = None,
@@ -131,6 +131,14 @@ def make_ha_request(
     Returns ``{"success": True, "data": ...}`` on success,
     ``{"success": False, "error": "..."}`` on failure.
     """
+    if ha_url is None or ha_token is None:
+        return {
+            "success": False,
+            "error": "HA_URL or HA_TOKEN not configured",
+            "error_code": "CONFIG_ERROR",
+            "retryable": False,
+        }
+
     url = f"{ha_url}{endpoint}"
     headers = {
         "Authorization": f"Bearer {ha_token}",
@@ -187,7 +195,7 @@ def make_ha_request(
 
 def load_registry(
     registry_name: str,
-    config_path: str,
+    config_path: str | None,
     use_cache: bool = True,
 ) -> dict[str, Any]:
     """
@@ -199,6 +207,9 @@ def load_registry(
     if registry_name in BLOCKED_REGISTRIES:
         with _CACHE_LOCK:
             _REGISTRY_CACHE_STATS["blocked"] += 1
+        return {}
+
+    if config_path is None:
         return {}
 
     cache_key = f"{config_path}/{registry_name}"

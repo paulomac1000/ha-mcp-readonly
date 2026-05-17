@@ -72,6 +72,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `diagnose_automation_aliases` — `_load_automations()` returns a list (not a dict);
   the caller incorrectly called `.get("success")` on the list, causing
   `AttributeError`. Fixed by iterating the list directly.
+- mypy `--strict` compliance — fixed 46 type errors across 5 files:
+  `make_ha_request()` and `load_registry()` signatures widened to accept
+  `str | None`; removed 29 unused `# type: ignore` comments; added explicit
+  `dict[str, Any]`, `list[dict[str, Any]]`, and `Counter[str]` type
+  annotations; fixed variable shadowing (`f` from `open()` vs loop var);
+  added `None` guards for `Path()` calls with optional `config_path`.
 
 ## [1.3.0] - 2026-05-11
 

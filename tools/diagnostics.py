@@ -64,7 +64,7 @@ def _clear_cache() -> None:
 
 
 def _get_log_errors_with_patterns(
-    config_path: str,
+    config_path: str | None,
     hours: int = 1,
     max_patterns: int = 10,
 ) -> dict[str, Any]:
@@ -72,6 +72,15 @@ def _get_log_errors_with_patterns(
     Counts errors in logs from last N hours and groups them into patterns.
     Also returns affected entities for each pattern.
     """
+    if config_path is None:
+        return {
+            "errors": 0,
+            "warnings": 0,
+            "top_error_patterns": [],
+            "api_errors": [],
+            "slow_entities": [],
+        }
+
     log_path = Path(config_path) / "home-assistant.log"
     if not log_path.exists():
         return {
@@ -382,17 +391,17 @@ def _do_diagnose_system_health(
 
     hours_back = min(max(int(hours_back), 1), 24)
 
-    states_res = make_ha_request(ha_url, ha_token, "/api/states")  # type: ignore[arg-type]
+    states_res = make_ha_request(ha_url, ha_token, "/api/states")
     if not states_res["success"]:
         return {"success": False, "error": "Cannot fetch system states"}
 
     states = states_res["data"]
 
     entity_reg = (
-        load_registry("core.entity_registry", config_path).get("data", {}).get("entities", [])  # type: ignore[arg-type]
+        load_registry("core.entity_registry", config_path).get("data", {}).get("entities", [])
     )
     device_reg = (
-        load_registry("core.device_registry", config_path).get("data", {}).get("devices", [])  # type: ignore[arg-type]
+        load_registry("core.device_registry", config_path).get("data", {}).get("devices", [])
     )
 
     total_entities = len(states)
@@ -405,7 +414,7 @@ def _do_diagnose_system_health(
 
     unavailable = [s for s in unavailable_raw if not is_ignorable(s["entity_id"])]
 
-    log_analysis = {
+    log_analysis: dict[str, Any] = {
         "errors": 0,
         "warnings": 0,
         "top_error_patterns": [],
@@ -413,7 +422,7 @@ def _do_diagnose_system_health(
         "slow_entities": [],
     }
     if include_log_analysis or include_performance:
-        log_analysis = _get_log_errors_with_patterns(config_path=config_path, hours=hours_back)  # type: ignore[arg-type]
+        log_analysis = _get_log_errors_with_patterns(config_path=config_path, hours=hours_back)
 
     unavailable_breakdown = {}
     if include_unavailable_breakdown:
@@ -424,9 +433,9 @@ def _do_diagnose_system_health(
 
     score = 100
     score -= min(len(unavailable) * 2, 40)
-    score -= min(log_analysis["errors"] * 3, 30)  # type: ignore[operator]
+    score -= min(log_analysis["errors"] * 3, 30)
     score -= min(len(notifications) * 10, 20)
-    score -= min(len(log_analysis.get("api_errors", [])) * 5, 10)  # type: ignore[arg-type]
+    score -= min(len(log_analysis.get("api_errors", [])) * 5, 10)
     score = max(0, score)
 
     if score >= 80:
@@ -461,7 +470,7 @@ def _do_diagnose_system_health(
             )
 
     if log_analysis.get("api_errors"):
-        for api_err in log_analysis["api_errors"][:2]:  # type: ignore[index]
+        for api_err in log_analysis["api_errors"][:2]:
             if api_err.get("error_type") == "rate_limit":
                 recommendations.append(
                     {
@@ -478,7 +487,7 @@ def _do_diagnose_system_health(
                 )
 
     if log_analysis.get("top_error_patterns"):
-        top_pattern = log_analysis["top_error_patterns"][0]  # type: ignore[index]
+        top_pattern = log_analysis["top_error_patterns"][0]
         if top_pattern["count"] > 10:
             recommendations.append(
                 {
@@ -488,7 +497,7 @@ def _do_diagnose_system_health(
             )
 
     if log_analysis.get("slow_entities"):
-        slow = log_analysis["slow_entities"][0]  # type: ignore[index]
+        slow = log_analysis["slow_entities"][0]
         if slow.get("max_time", 0) > 2.0:
             recommendations.append(
                 {
@@ -497,7 +506,7 @@ def _do_diagnose_system_health(
                 }
             )
 
-    if log_analysis["errors"] > 20:  # type: ignore[operator]
+    if log_analysis["errors"] > 20:
         recommendations.append(
             {
                 "priority": "medium",
@@ -569,17 +578,17 @@ def _do_get_unavailable_entities_grouped(
     if cached:
         return cached  # type: ignore[no-any-return]
 
-    states_res = make_ha_request(ha_url, ha_token, "/api/states")  # type: ignore[arg-type]
+    states_res = make_ha_request(ha_url, ha_token, "/api/states")
     if not states_res["success"]:
         return {"success": False, "error": "Cannot fetch states"}
 
     states = states_res["data"]
 
     entity_reg = (
-        load_registry("core.entity_registry", config_path).get("data", {}).get("entities", [])  # type: ignore[arg-type]
+        load_registry("core.entity_registry", config_path).get("data", {}).get("entities", [])
     )
     device_reg = (
-        load_registry("core.device_registry", config_path).get("data", {}).get("devices", [])  # type: ignore[arg-type]
+        load_registry("core.device_registry", config_path).get("data", {}).get("devices", [])
     )
 
     if group_by == "integration":
@@ -617,11 +626,11 @@ def _do_get_integration_health(
     ha_token: str | None = None,
     config_path: str | None = None,
 ) -> dict[str, Any]:
-    states_res = make_ha_request(ha_url, ha_token, "/api/states")  # type: ignore[arg-type]
+    states_res = make_ha_request(ha_url, ha_token, "/api/states")
     if not states_res["success"]:
         return {"success": False, "error": "API error"}
 
-    entity_reg_data = load_registry("core.entity_registry", config_path)  # type: ignore[arg-type]
+    entity_reg_data = load_registry("core.entity_registry", config_path)
     entity_reg = entity_reg_data.get("data", {}).get("entities", [])
 
     platform_entity_ids = {e["entity_id"] for e in entity_reg if e.get("platform") == domain}
@@ -643,7 +652,8 @@ def _do_get_integration_health(
     unavailable = [e for e in domain_entities if e["state"] in ["unavailable", "unknown"]]
 
     log_issues = []
-    log_path = Path(config_path) / "home-assistant.log"  # type: ignore[arg-type]
+    if config_path is not None:
+        log_path = Path(config_path) / "home-assistant.log"
     if log_path.exists():
         try:
             with open(log_path, encoding="utf-8", errors="ignore") as f:
@@ -705,9 +715,9 @@ def _do_get_area_automation_summary(
     ha_token: str | None = None,
     config_path: str | None = None,
 ) -> dict[str, Any]:
-    area_reg = load_registry("core.area_registry", config_path).get("data", {}).get("areas", [])  # type: ignore[arg-type]
-    dev_reg = load_registry("core.device_registry", config_path).get("data", {}).get("devices", [])  # type: ignore[arg-type]
-    ent_reg = load_registry("core.entity_registry", config_path).get("data", {}).get("entities", [])  # type: ignore[arg-type]
+    area_reg = load_registry("core.area_registry", config_path).get("data", {}).get("areas", [])
+    dev_reg = load_registry("core.device_registry", config_path).get("data", {}).get("devices", [])
+    ent_reg = load_registry("core.entity_registry", config_path).get("data", {}).get("entities", [])
 
     area = None
     for a in area_reg:
@@ -733,35 +743,36 @@ def _do_get_area_automation_summary(
             "error": f"No entities found in area '{area.get('name')}'",
         }
 
-    automations = []
+    automations: list[dict[str, Any]] = []
     try:
-        auto_path = Path(config_path) / "automations.yaml"  # type: ignore[arg-type]
-        if auto_path.exists():
-            with open(auto_path, encoding="utf-8") as f:
-                auto_data = yaml.safe_load(f) or []
+        if config_path is not None:
+            auto_path = Path(config_path) / "automations.yaml"
+            if auto_path.exists():
+                with open(auto_path, encoding="utf-8") as f:
+                    auto_data = yaml.safe_load(f) or []
 
-                for auto in auto_data:
-                    auto_str = str(auto)
-                    related_entities = []
+                    for auto in auto_data:
+                        auto_str = str(auto)
+                        related_entities = []
 
-                    for entity_id in area_ents:
-                        if re.search(rf"\b{re.escape(entity_id)}\b", auto_str):
-                            related_entities.append(entity_id)
+                        for entity_id in area_ents:
+                            if re.search(rf"\b{re.escape(entity_id)}\b", auto_str):
+                                related_entities.append(entity_id)
 
-                    if related_entities:
-                        automations.append(
-                            {
-                                "alias": auto.get("alias", "Unknown"),
-                                "id": auto.get("id"),
-                                "related_entities_count": len(related_entities),
-                                "sample_related": related_entities[:3],
-                            }
-                        )
+                        if related_entities:
+                            automations.append(
+                                {
+                                    "alias": auto.get("alias", "Unknown"),
+                                    "id": auto.get("id"),
+                                    "related_entities_count": len(related_entities),
+                                    "sample_related": related_entities[:3],
+                                }
+                            )
     except Exception:
         pass
 
     live_states = []
-    states_res = make_ha_request(ha_url, ha_token, "/api/states")  # type: ignore[arg-type]
+    states_res = make_ha_request(ha_url, ha_token, "/api/states")
     if states_res["success"]:
         live_states = [s for s in states_res["data"] if s["entity_id"] in area_ents]
 
@@ -825,7 +836,7 @@ def _do_get_notification_history(
     ha_url: str | None = None,
     ha_token: str | None = None,
 ) -> dict[str, Any]:
-    states_res = make_ha_request(ha_url, ha_token, "/api/states")  # type: ignore[arg-type]
+    states_res = make_ha_request(ha_url, ha_token, "/api/states")
     active = []
     if states_res["success"]:
         for s in states_res["data"]:
@@ -846,8 +857,8 @@ def _do_get_notification_history(
         start_time = end_time - timedelta(hours=24)
 
         logbook_res = make_ha_request(
-            ha_url,  # type: ignore[arg-type]
-            ha_token,  # type: ignore[arg-type]
+            ha_url,
+            ha_token,
             f"/api/logbook/{start_time.isoformat()}?end_time={end_time.isoformat()}",
         )
 
@@ -877,7 +888,7 @@ def _do_get_energy_dashboard_data(
     ha_url: str | None = None,
     ha_token: str | None = None,
 ) -> dict[str, Any]:
-    states_res = make_ha_request(ha_url, ha_token, "/api/states")  # type: ignore[arg-type]
+    states_res = make_ha_request(ha_url, ha_token, "/api/states")
     if not states_res["success"]:
         return {"success": False, "error": "API error"}
 
@@ -1048,7 +1059,7 @@ def _do_diagnose_person_tracking(
     if not person_entity.startswith("person."):
         person_entity = f"person.{person_entity}"
 
-    person_res = make_ha_request(ha_url, ha_token, f"/api/states/{person_entity}")  # type: ignore[arg-type]
+    person_res = make_ha_request(ha_url, ha_token, f"/api/states/{person_entity}")
     if not person_res["success"]:
         return {
             "success": False,
@@ -1067,7 +1078,7 @@ def _do_diagnose_person_tracking(
 
     zones_list = []
     try:
-        ce_data = load_registry("core.config_entries", config_path)  # type: ignore[arg-type]
+        ce_data = load_registry("core.config_entries", config_path)
         for entry in ce_data.get("data", {}).get("entries", []):
             if entry.get("domain") == "zone":
                 data = entry.get("data", {})
@@ -1082,7 +1093,7 @@ def _do_diagnose_person_tracking(
                     }
                 )
         if not zones_list:
-            zone_reg = load_registry("zone", config_path)  # type: ignore[arg-type]
+            zone_reg = load_registry("zone", config_path)
             for z in zone_reg.get("data", {}).get("items", []):
                 zones_list.append(
                     {
@@ -1125,24 +1136,24 @@ def _do_diagnose_person_tracking(
                     )
         nearby_zones.sort(key=lambda x: x["distance_m"])
 
-    states_result = make_ha_request(ha_url, ha_token, "/api/states")  # type: ignore[arg-type]
+    states_result = make_ha_request(ha_url, ha_token, "/api/states")
     states_map = {}
     if states_result.get("success"):
         states_map = {s["entity_id"]: s for s in states_result.get("data", [])}
 
     entity_reg = (
-        load_registry("core.entity_registry", config_path).get("data", {}).get("entities", [])  # type: ignore[arg-type]
+        load_registry("core.entity_registry", config_path).get("data", {}).get("entities", [])
     )
     entity_to_platform = {e["entity_id"]: e.get("platform", "unknown") for e in entity_reg}
     entity_to_device = {e["entity_id"]: e.get("device_id") for e in entity_reg}
 
     device_reg = (
-        load_registry("core.device_registry", config_path).get("data", {}).get("devices", [])  # type: ignore[arg-type]
+        load_registry("core.device_registry", config_path).get("data", {}).get("devices", [])
     )
     device_map = {}
     entry_domain_map = {}
     try:
-        ce_data = load_registry("core.config_entries", config_path)  # type: ignore[arg-type]
+        ce_data = load_registry("core.config_entries", config_path)
         for e in ce_data.get("data", {}).get("entries", []):
             entry_domain_map[e.get("entry_id", "")] = e.get("domain", "unknown")
     except Exception:
@@ -1232,7 +1243,7 @@ def _do_diagnose_person_tracking(
                     "severity": "error" if staleness == "stale_days" else "warning",
                     "tracker": tracker_id,
                     "message": (
-                        f"Tracker stale {round(age_seconds / 3600, 1)}h "  # type: ignore[operator]
+                        f"Tracker stale {round((age_seconds or 0) / 3600, 1)}h "
                         f"— last update {last_updated}"
                     ),
                 }
@@ -1242,31 +1253,34 @@ def _do_diagnose_person_tracking(
                 {
                     "severity": "info",
                     "tracker": tracker_id,
-                    "message": f"Tracker aging ({round(age_seconds / 60, 1)}min)",  # type: ignore[operator]
+                    "message": f"Tracker aging ({round((age_seconds or 0) / 60, 1)}min)",
                 }
             )
 
-    related_automations = []
+    related_automations: list[dict[str, Any]] = []
     try:
-        auto_path = Path(config_path) / "automations.yaml"  # type: ignore[arg-type]
-        if auto_path.exists():
-            with open(auto_path, encoding="utf-8") as f:
-                auto_data = yaml.safe_load(f) or []
-            for auto in auto_data:
-                auto_str = str(auto)
-                if person_entity in auto_str:
-                    alias = auto.get("alias", "Unknown")
-                    auto_id = auto.get("id")
-                    usage = []
-                    if person_entity in str(auto.get("trigger", "")):
-                        usage.append("trigger")
-                    if person_entity in str(auto.get("condition", "")):
-                        usage.append("condition")
-                    if person_entity in str(auto.get("action", "")):
-                        usage.append("action")
-                    if not usage:
-                        usage.append("config")
-                    related_automations.append({"alias": alias, "id": auto_id, "usage": usage})
+        if config_path is not None:
+            auto_path = Path(config_path) / "automations.yaml"
+            if auto_path.exists():
+                with open(auto_path, encoding="utf-8") as f:
+                    auto_data = yaml.safe_load(f) or []
+                    for auto in auto_data:
+                        auto_str = str(auto)
+                        if person_entity in auto_str:
+                            alias = auto.get("alias", "Unknown")
+                            auto_id = auto.get("id")
+                            usage = []
+                            if person_entity in str(auto.get("trigger", "")):
+                                usage.append("trigger")
+                            if person_entity in str(auto.get("condition", "")):
+                                usage.append("condition")
+                            if person_entity in str(auto.get("action", "")):
+                                usage.append("action")
+                            if not usage:
+                                usage.append("config")
+                            related_automations.append(
+                                {"alias": alias, "id": auto_id, "usage": usage}
+                            )
     except Exception:
         pass
 
@@ -1861,22 +1875,22 @@ def _do_diagnose_post_update_integrations(
 
         per = result["per_integration"].get(
             domain,
-            {  # type: ignore[attr-defined]
+            {
                 "total": 0,
                 "loaded": 0,
                 "failed": 0,
                 "entries": [],
             },
         )
-        per["total"] += 1  # type: ignore[operator]
+        per["total"] += 1
         if entry_state == "loaded":
-            per["loaded"] += 1  # type: ignore[operator]
-            result["loaded"] += 1  # type: ignore[operator]
+            per["loaded"] += 1
+            result["loaded"] += 1
         else:
-            per["failed"] += 1  # type: ignore[operator]
-            result["failed"] += 1  # type: ignore[operator]
-        per["entries"].append({"entry_id": entry_id, "title": title, "state": entry_state})  # type: ignore[attr-defined]
-        result["per_integration"][domain] = per  # type: ignore[attr-defined]
+            per["failed"] += 1
+            result["failed"] += 1
+        per["entries"].append({"entry_id": entry_id, "title": title, "state": entry_state})
+        result["per_integration"][domain] = per
 
     if fragile_found:
         result["fragile_highlighted"] = fragile_found

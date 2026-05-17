@@ -22,10 +22,10 @@ _logger = logging.getLogger(__name__)
 def collect_system_metrics(ha_url: str, ha_token: str | None, config_path: str) -> dict[str, Any]:
     """Collect basic system metrics from HA API (lightweight)"""
     try:
-        metrics = {"timestamp": datetime.now().isoformat()}
+        metrics: dict[str, Any] = {"timestamp": datetime.now().isoformat()}
 
         try:
-            response = make_ha_request(ha_url, ha_token, "/api/config")  # type: ignore[arg-type]
+            response = make_ha_request(ha_url, ha_token, "/api/config")
 
             if response["success"]:
                 config = response["data"]
@@ -34,24 +34,24 @@ def collect_system_metrics(ha_url: str, ha_token: str | None, config_path: str) 
 
                 components = config.get("components", [])
                 if isinstance(components, list):
-                    metrics["integration_count"] = len(components)  # type: ignore[assignment]
-                    metrics["integrations_sample"] = sorted(components)[:30]  # type: ignore[assignment]
+                    metrics["integration_count"] = len(components)
+                    metrics["integrations_sample"] = sorted(components)[:30]
                 else:
-                    metrics["integration_count"] = 0  # type: ignore[assignment]
-                    metrics["integrations_sample"] = []  # type: ignore[assignment]
+                    metrics["integration_count"] = 0
+                    metrics["integrations_sample"] = []
             else:
                 metrics["core_version"] = "unknown"
-                metrics["integration_count"] = 0  # type: ignore[assignment]
-                metrics["integrations_sample"] = []  # type: ignore[assignment]
+                metrics["integration_count"] = 0
+                metrics["integrations_sample"] = []
                 metrics["config_error"] = response.get("error", "Unknown error")
 
         except Exception as e:
             metrics["core_version"] = "unknown"
-            metrics["integration_count"] = 0  # type: ignore[assignment]
+            metrics["integration_count"] = 0
             metrics["config_error"] = str(e)[:100]
 
         try:
-            supervisor = make_ha_request(ha_url, ha_token, "/api/hassio/supervisor/info")  # type: ignore[arg-type]
+            supervisor = make_ha_request(ha_url, ha_token, "/api/hassio/supervisor/info")
             if supervisor["success"] and isinstance(supervisor["data"], dict):
                 metrics["supervisor_version"] = (
                     supervisor["data"].get("data", {}).get("version", "not_available")
@@ -60,11 +60,11 @@ def collect_system_metrics(ha_url: str, ha_token: str | None, config_path: str) 
             metrics["supervisor_version"] = "not_available"
 
         try:
-            core = make_ha_request(ha_url, ha_token, "/api/hassio/core/info")  # type: ignore[arg-type]
+            core = make_ha_request(ha_url, ha_token, "/api/hassio/core/info")
             if core["success"] and isinstance(core["data"], dict):
                 metrics["uptime_seconds"] = core["data"].get("data", {}).get("uptime", 0)
         except Exception:
-            metrics["uptime_seconds"] = 0  # type: ignore[assignment]
+            metrics["uptime_seconds"] = 0
 
         return metrics
 
@@ -83,7 +83,7 @@ def collect_log_summary_optimized(
 
         uptime_seconds = 0
         try:
-            core = make_ha_request(ha_url, ha_token, "/api/hassio/core/info")  # type: ignore[arg-type]
+            core = make_ha_request(ha_url, ha_token, "/api/hassio/core/info")
             if core["success"] and isinstance(core["data"], dict):
                 uptime_seconds = core["data"].get("data", {}).get("uptime", 0)
         except Exception:
@@ -126,8 +126,8 @@ def collect_log_summary_optimized(
             msg = re.sub(r"\d+", "N", msg)
             return msg[:200]
 
-        error_groups = Counter()  # type: ignore[var-annotated]
-        warning_groups = Counter()  # type: ignore[var-annotated]
+        error_groups: Counter[str] = Counter()
+        warning_groups: Counter[str] = Counter()
         error_examples = {}
 
         for err in errors_raw:
@@ -140,7 +140,7 @@ def collect_log_summary_optimized(
             normalized = normalize_message(warn)
             warning_groups[normalized] += 1
 
-        component_errors = Counter()  # type: ignore[var-annotated]
+        component_errors: Counter[str] = Counter()
         for err in errors_raw:
             match = re.search(r"\[([^\]]+)\]", err)
             if match:
@@ -176,7 +176,7 @@ def collect_log_summary_optimized(
 def collect_entity_health(ha_url: str, ha_token: str | None) -> dict[str, Any]:
     """Analyze entity states - OPTIMIZED version"""
     try:
-        response = make_ha_request(ha_url, ha_token, "/api/states")  # type: ignore[arg-type]
+        response = make_ha_request(ha_url, ha_token, "/api/states")
 
         if not response["success"]:
             return {"error": f"API error: {response.get('error')}"}
@@ -187,8 +187,8 @@ def collect_entity_health(ha_url: str, ha_token: str | None) -> dict[str, Any]:
         unavailable = []
         unknown = []
 
-        unavailable_by_domain = Counter()  # type: ignore[var-annotated]
-        unknown_by_domain = Counter()  # type: ignore[var-annotated]
+        unavailable_by_domain: Counter[str] = Counter()
+        unknown_by_domain: Counter[str] = Counter()
 
         for entity in states:
             if not isinstance(entity, dict):
@@ -222,7 +222,7 @@ def collect_entity_health(ha_url: str, ha_token: str | None) -> dict[str, Any]:
 def collect_automation_health(ha_url: str, ha_token: str | None) -> dict[str, Any]:
     """Check automation states - OPTIMIZED version"""
     try:
-        response = make_ha_request(ha_url, ha_token, "/api/states")  # type: ignore[arg-type]
+        response = make_ha_request(ha_url, ha_token, "/api/states")
 
         if not response["success"]:
             return {"error": f"API error: {response.get('error')}"}
@@ -383,8 +383,8 @@ def _do_trigger_health_report(ha_url: str, ha_token: str | None, config_path: st
     return _success_response(report)
 
 
-def register_health_reporter_tools(  # type: ignore[no-untyped-def]
-    mcp, ha_url: str, ha_token: str | None, config_path: str
+def register_health_reporter_tools(
+    mcp: Any, ha_url: str, ha_token: str | None, config_path: str
 ) -> None:
     """Register health reporter as MCP tool for manual triggering"""
 
