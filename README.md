@@ -1,5 +1,5 @@
 ---
-description: Read-only MCP server for Home Assistant — 120 tools for AI observability and context generation
+description: Read-only MCP server for Home Assistant — 121 tools for AI observability and context generation
 ---
 
 # HA-MCP-Readonly
@@ -128,7 +128,7 @@ curl -X POST http://localhost:9093/api/context/generate \
   -d '{"mode": "hybrid"}'
 ```
 
-## Available Tools (120 total)
+## Available Tools (121 total)
 
 Tools are organized by category (53 shown in table below). All are **read-only** — no state changes, no service calls, no modifications.
 
@@ -170,7 +170,7 @@ Add the following to your Claude Desktop config:
 }
 ```
 
-After restarting Claude Desktop, the 120 Home Assistant tools will be available.
+After restarting Claude Desktop, the 121 Home Assistant tools will be available.
 
 ### LibreChat
 

@@ -22,6 +22,12 @@ MCP_UNSAFE_PUBLIC_ACCESS_CONFIRMED = os.getenv(
 ).lower() in ("1", "true", "yes")
 MCP_BIND_HOST = "0.0.0.0" if MCP_UNSAFE_PUBLIC_ACCESS_CONFIRMED else "127.0.0.1"
 
+# Security: REST API CORS allowed origins (comma-separated). Default localhost
+# only -- a wildcard "*" would let any site call the REST bridge in a browser.
+CORS_ALLOWED_ORIGINS = [
+    o.strip() for o in os.getenv("CORS_ALLOWED_ORIGINS", "http://localhost").split(",") if o.strip()
+]
+
 # Context generator
 OUTPUT_PATH = os.getenv("OUTPUT_PATH", "/app/output/ha-ai-context.md")
 

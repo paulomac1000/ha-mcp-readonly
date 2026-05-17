@@ -123,6 +123,58 @@ def _do_test_templates_batch(templates, ha_url, ha_token):  # type: ignore[no-un
     return results
 
 
+def _do_eval_templates_batch(templates_str, mock_variables, ha_url, ha_token):  # type: ignore[no-untyped-def]
+    try:
+        templates_data = json.loads(templates_str)
+    except json.JSONDecodeError as e:
+        return {"success": False, "error": f"Invalid templates JSON: {str(e)}"}
+
+    if isinstance(templates_data, list):
+        templates_dict = {f"template_{i}": t for i, t in enumerate(templates_data)}
+    elif isinstance(templates_data, dict):
+        templates_dict = templates_data
+    else:
+        return {"success": False, "error": "templates must be a JSON array or object"}
+
+    mock_prefix = ""
+    if mock_variables:
+        try:
+            mock_dict = (
+                json.loads(mock_variables) if isinstance(mock_variables, str) else mock_variables
+            )
+            if isinstance(mock_dict, dict):
+                mock_parts = []
+                for k, v in mock_dict.items():
+                    if isinstance(v, str):
+                        mock_parts.append(f"{{% set {k} = '{v}' %}}")
+                    elif isinstance(v, bool):
+                        mock_parts.append(f"{{% set {k} = {'true' if v else 'false'} %}}")
+                    else:
+                        mock_parts.append(f"{{% set {k} = {v} %}}")
+                mock_prefix = "\n".join(mock_parts) + "\n"
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+    results = {"success": True, "total": 0, "successful": 0, "failed": 0, "results": {}}
+
+    for name, template in templates_dict.items():
+        full_template = mock_prefix + template
+        site_result = make_ha_request(
+            ha_url, ha_token, "/api/template", method="POST", data={"template": full_template}
+        )
+
+        if site_result["success"]:
+            results["successful"] += 1
+            results["results"][name] = {"result": site_result["data"], "error": None}
+        else:
+            results["failed"] += 1
+            results["results"][name] = {"result": None, "error": site_result["error"]}
+
+        results["total"] += 1
+
+    return results
+
+
 def _do_get_template_performance(template, iterations, ha_url, ha_token):  # type: ignore[no-untyped-def]
     iterations = min(max(int(iterations), 1), 20)
     times = []
@@ -1244,6 +1296,29 @@ def register_dev_tools(mcp, ha_url: str, ha_token: str, config_path: str | None 
             return _success_response(result)
         except Exception as exc:
             _logger.exception("test_templates_batch failed")
+            return _error_response(str(exc))
+
+    @mcp.tool()
+    def eval_templates_batch(templates: str, mock_variables: str | None = None) -> str:
+        """[READ] Evaluate multiple Jinja2 templates at once, optionally injecting mock variables for deterministic testing.
+
+        Args:
+            templates: JSON array of template strings or dict of name->template mappings.
+            mock_variables: Optional JSON object of variable name->value pairs to inject into all templates via {% set %} statements.
+
+        Returns:
+            JSON with total/successful/failed counts and per-template results dict.
+
+        Example:
+            eval_templates_batch('["{{ 2 + 2 }}", "{{ states(\"sensor.temp\") }}"]')
+            eval_templates_batch('{"calc": "{{ 2 + 2 }}", "temp": "{{ states(\"sensor.temp\") }}"}')
+            eval_templates_batch('{"greeting": "{{ name }}"}', '{"name": "World"}')
+        """
+        try:
+            result = _do_eval_templates_batch(templates, mock_variables, ha_url, ha_token)  # type: ignore[no-untyped-call]
+            return _success_response(result)
+        except Exception as exc:
+            _logger.exception("eval_templates_batch failed")
             return _error_response(str(exc))
 
     @mcp.tool()

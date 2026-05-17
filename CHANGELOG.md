@@ -9,6 +9,70 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.0] - 2026-05-17
+
+### Added
+- Tool manifest system (`tools/manifests.py`) — `TOOL_MANIFESTS`, `register_manifest()`,
+  `get_manifest()`, `get_all_manifests()`, `_make_manifest()`, `_make_write_manifest()`,
+  `_make_destructive_manifest()` factory functions, `auto_register_all_read_tools()`
+- Dynamic risk prefix injection — `_inject_risk_prefixes()` strips existing `[READ]`
+  annotations from tool docstrings and re-applies the correct prefix from manifests.
+  Activated at server startup for all 133 registered tools.
+- `_success_response()` extended with optional `_meta` envelope param and automatic
+  `sanitize_response_data()` on the response payload (redacts JWTs, Bearer tokens,
+  passwords, IPs before they reach the agent).
+- `build_meta(tool_name, start_time)` — builds `_meta` envelope with `duration_ms`
+  and `tool_version`.
+- `sanitize_response_data()` — recursive data sanitizer (separate trust boundary
+  from log sanitization, Canonical Template 4b).
+- `GET /api/tools/{tool_name}/manifest` REST endpoint — returns the tool's manifest
+  entry from `TOOL_MANIFESTS`.
+- Unit tests: 25 new tests for manifests, factories, consistency matrix, injection,
+  build_meta, sanitizer, and `_meta` envelope (798 total).
+- `describe_ha_capabilities` — zero-I/O MCP introspection tool exposing the full
+  tool catalog with capability manifests over the MCP/SSE transport (standard
+  rule 2b, L3+). New module `tools/capabilities.py`.
+- `tools/observability.py` — request-scoped `request_id` bound to a
+  `contextvars.ContextVar` (Observability-9), `RequestIdFilter` injecting it into
+  every log record, and a thread-safe per-tool invocation counter
+  (Canonical Template 4c).
+- `_inject_meta_envelope()` in `tools/manifests.py` — single central wrapper that
+  injects a `_meta` envelope (`request_id`, `duration_ms`, `tool_version`) into
+  every tool response. `build_meta()` now includes `request_id`.
+- `_error_response_extended()` / `_error_dict_extended()` — structured error
+  contract helpers (`code`, `retryable`, `suggestion`, `available_names`).
+- `make_ha_request()` failures now return `error_code` (`TIMEOUT` / `HTTP_ERROR`)
+  and `retryable` siblings (the `error` string is preserved for compatibility).
+- Health endpoints now report `tools` / `tools_version` and per-tool `invocations`.
+- `CORS_ALLOWED_ORIGINS` environment variable.
+
+### Changed
+- Version SSOT — `version.py` is the single source of truth; `tools/__init__.py`
+  (`TOOLS_VERSION`) imports from it and `pyproject.toml` is aligned to `1.4.0`.
+- REST API CORS no longer uses a `*` wildcard; origins come from
+  `CORS_ALLOWED_ORIGINS` (default `http://localhost`).
+- pytest configuration consolidated into `pyproject.toml`; the duplicate
+  `pytest.ini` was removed.
+
+### Fixed
+- Thread-safety: `threading.Lock()` added to all shared cache dictionaries in
+  `tools/utils.py` (`_REGISTRY_CACHE`), `tools/diagnostics.py` (`_DIAGNOSTICS_CACHE`),
+  `tools/logs.py` (`_LOG_CACHE`), `context_generator/utils.py` (`_registry_cache`).
+  Prevents race conditions on concurrent tool invocations.
+- Blocking I/O in async tools: 11 `async def` wrappers in `tools/states.py` now
+  delegate sync `_do_*` calls via `await asyncio.to_thread()`, preventing event
+  loop blocking during `make_ha_request` (sync HTTP calls).
+- stdout pollution: `run_startup_tests()` in `server.py` — all `print()` calls
+  replaced with `_logger.info()/error()`, `stdout=sys.stdout` → `subprocess.DEVNULL`.
+- Dead fixtures removed from `tests/__init__.py` — fixtures were duplicated in
+  `tests/conftest.py` (the correct location). Cleaned `__init__.py` to minimal
+  `sys.path` setup.
+- Missing `_meta` envelope in `_success_response()` — added optional `_meta` param
+  so response metadata can be included without breaking existing callers.
+- `diagnose_automation_aliases` — `_load_automations()` returns a list (not a dict);
+  the caller incorrectly called `.get("success")` on the list, causing
+  `AttributeError`. Fixed by iterating the list directly.
+
 ## [1.3.0] - 2026-05-11
 
 ### Added

@@ -1210,6 +1210,77 @@ class TestDiagnoseEnergySetup:
         assert data["statistics"]["total_power_sensors"] >= 1
         assert len(data["recommendations"]) > 0
 
+
+class TestEvalTemplatesBatch:
+    """Tests for eval_templates_batch tool."""
+
+    def test_basic_array_success(self, mock_mcp, ha_url, ha_token):
+        register_dev_tools(mock_mcp, ha_url, ha_token)
+        with patch("tools.dev_tools.make_ha_request") as mock_req:
+            mock_req.return_value = {"success": True, "data": "hello"}
+            data = json.loads(
+                mock_mcp._tools["eval_templates_batch"](
+                    templates=json.dumps(["{{ 1+1 }}", "{{ 2+2 }}"])
+                )
+            )
+            assert data["success"] is True
+            assert data["total"] == 2
+            assert data["successful"] == 2
+            assert data["failed"] == 0
+
+    def test_dict_with_names(self, mock_mcp, ha_url, ha_token):
+        register_dev_tools(mock_mcp, ha_url, ha_token)
+        with patch("tools.dev_tools.make_ha_request") as mock_req:
+            mock_req.return_value = {"success": True, "data": "42"}
+            data = json.loads(
+                mock_mcp._tools["eval_templates_batch"](
+                    templates=json.dumps({"greeting": "{{ 1+1 }}", "farewell": "{{ 2+2 }}"})
+                )
+            )
+            assert data["success"] is True
+            assert data["total"] == 2
+            assert "greeting" in data["results"]
+            assert "farewell" in data["results"]
+            assert data["results"]["greeting"]["result"] == "42"
+
+    def test_partial_failure(self, mock_mcp, ha_url, ha_token):
+        register_dev_tools(mock_mcp, ha_url, ha_token)
+        with patch("tools.dev_tools.make_ha_request") as mock_req:
+            mock_req.side_effect = [
+                {"success": True, "data": "ok"},
+                {"success": False, "error": "syntax error"},
+            ]
+            data = json.loads(
+                mock_mcp._tools["eval_templates_batch"](
+                    templates=json.dumps(["{{ 1+1 }}", "{{ invalid }}"])
+                )
+            )
+            assert data["success"] is True
+            assert data["total"] == 2
+            assert data["successful"] == 1
+            assert data["failed"] == 1
+            assert data["results"]["template_1"]["error"] is not None
+
+    def test_with_mock_variables(self, mock_mcp, ha_url, ha_token):
+        register_dev_tools(mock_mcp, ha_url, ha_token)
+        with patch("tools.dev_tools.make_ha_request") as mock_req:
+            mock_req.return_value = {"success": True, "data": "10"}
+            mock_mcp._tools["eval_templates_batch"](
+                templates=json.dumps(["{{ x }}"]),
+                mock_variables=json.dumps({"x": 10}),
+            )
+            assert "{% set x = 10 %}" in mock_req.call_args[1]["data"]["template"]
+
+    def test_exception_handler(self, mock_mcp, ha_url, ha_token):
+        register_dev_tools(mock_mcp, ha_url, ha_token)
+        with patch("tools.dev_tools._do_eval_templates_batch") as mock_do:
+            mock_do.side_effect = RuntimeError("batch failed")
+            data = json.loads(
+                mock_mcp._tools["eval_templates_batch"](templates=json.dumps(["{{ 1+1 }}"]))
+            )
+            assert data["success"] is False
+            assert "batch failed" in data["error"]
+
     def test_diagnose_energy_g12w_detected(self, mock_mcp, ha_url, ha_token, config_path):  # noqa: F841
         """Tariff entity should be detected."""
         states = [
