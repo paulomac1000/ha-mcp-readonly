@@ -69,7 +69,6 @@ jobs:
             --cov-report=xml
 
       - name: Upload coverage to Codecov
-        if: ${{ secrets.CODECOV_TOKEN != '' }}
         uses: codecov/codecov-action@v6
         with:
           files: ./coverage.xml
