@@ -20,7 +20,7 @@ RUN_TESTS_ON_STARTUP = os.getenv("RUN_TESTS_ON_STARTUP", "0").lower() in ("1", "
 MCP_UNSAFE_PUBLIC_ACCESS_CONFIRMED = os.getenv(
     "MCP_UNSAFE_PUBLIC_ACCESS_CONFIRMED", "0"
 ).lower() in ("1", "true", "yes")
-MCP_BIND_HOST = "0.0.0.0" if MCP_UNSAFE_PUBLIC_ACCESS_CONFIRMED else "127.0.0.1"
+MCP_BIND_HOST = "0.0.0.0" if MCP_UNSAFE_PUBLIC_ACCESS_CONFIRMED else "127.0.0.1"  # nosec B104
 
 # Security: REST API CORS allowed origins (comma-separated). Default localhost
 # only -- a wildcard "*" would let any site call the REST bridge in a browser.

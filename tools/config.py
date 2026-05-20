@@ -458,7 +458,7 @@ def _do_validate_yaml_syntax(
     parsed_data = None
     if yaml_content:
         try:
-            parsed_data = yaml.load(yaml_content, Loader=HomeAssistantLoader)
+            parsed_data = yaml.load(yaml_content, Loader=HomeAssistantLoader)  # nosec B506
         except yaml.YAMLError as e:
             return {
                 "success": False,

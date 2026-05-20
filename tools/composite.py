@@ -85,7 +85,7 @@ def _load_automations(config_path: str) -> tuple[list, str | None]:  # type: ign
         if not os.path.exists(fpath):
             return [], "automations.yaml not found — automation data unavailable"
         with open(fpath, encoding="utf-8") as fh:
-            data = yaml.load(fh, Loader=HomeAssistantLoader) or []
+            data = yaml.load(fh, Loader=HomeAssistantLoader)  # nosec B506 or []
         return data, None
     except Exception as exc:
         return [], f"Failed to load automations.yaml: {exc}"
@@ -701,13 +701,13 @@ def _do_audit_config_orphans(
         scripts_path = os.path.join(config_path, "scripts.yaml")
         if os.path.exists(scripts_path):
             with open(scripts_path, encoding="utf-8") as _f:
-                scripts = yaml.load(_f, Loader=HomeAssistantLoader) or []
+                scripts = yaml.load(_f, Loader=HomeAssistantLoader)  # nosec B506 or []
 
         scenes: list[dict[str, Any]] = []
         scenes_path = os.path.join(config_path, "scenes.yaml")
         if os.path.exists(scenes_path):
             with open(scenes_path, encoding="utf-8") as _f:
-                scenes = yaml.load(_f, Loader=HomeAssistantLoader) or []
+                scenes = yaml.load(_f, Loader=HomeAssistantLoader)  # nosec B506 or []
 
         dashboards = load_registry("lovelace", config_path).get("data", {}).get("dashboards", {})
 

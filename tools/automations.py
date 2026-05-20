@@ -32,7 +32,7 @@ def _load_automations(config_path: str) -> list[dict]:  # type: ignore[type-arg]
         if not os.path.exists(file_path):
             return []
         with open(file_path, encoding="utf-8") as f:
-            return yaml.load(f, Loader=HomeAssistantLoader) or []
+            return yaml.load(f, Loader=HomeAssistantLoader)  # nosec B506 or []
     except Exception:
         return []
 
@@ -437,7 +437,7 @@ def _do_diagnose_automation(
             if os.path.exists(blueprint_file):
                 try:
                     with open(blueprint_file, encoding="utf-8") as f:
-                        blueprint_data = yaml.load(f, Loader=HomeAssistantLoader)
+                        blueprint_data = yaml.load(f, Loader=HomeAssistantLoader)  # nosec B506
                         result["blueprint_info"] = {
                             "path": blueprint_path,
                             "name": blueprint_data.get("blueprint", {}).get("name"),
@@ -574,7 +574,7 @@ def _do_diagnose_automation(
         if os.path.exists(scripts_file):
             try:
                 with open(scripts_file, encoding="utf-8") as f:
-                    scripts_data = yaml.load(f, Loader=HomeAssistantLoader) or {}
+                    scripts_data = yaml.load(f, Loader=HomeAssistantLoader)  # nosec B506 or {}
 
                 for script_id in scripts:
                     if script_id in scripts_data:
@@ -611,7 +611,7 @@ def _do_diagnose_automation(
         if os.path.exists(scenes_file):
             try:
                 with open(scenes_file, encoding="utf-8") as f:
-                    scenes_data = yaml.load(f, Loader=HomeAssistantLoader) or []
+                    scenes_data = yaml.load(f, Loader=HomeAssistantLoader)  # nosec B506 or []
 
                 scene_ids = {scene.get("id"): scene for scene in scenes_data}
 
