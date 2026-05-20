@@ -125,7 +125,7 @@ tools/
 
 context_generator/
 ├── constants.py             # Configuration, patterns, YAML loader
-├── analyzers.py             # Data collectors (RegistryCollector, AutomationAnalyzer, etc.)
+├── analyzers.py             # Data collectors (RegistryCollector, AutomationAnalyzer, and others)
 ├── formatters.py            # ReportGenerator — markdown output
 ├── core.py                  # main() and generate_context_file() entry points
 └── utils.py                 # Registry cache, HA API client, YAML helpers
@@ -156,7 +156,7 @@ context_generator/
 
 ### Risk Prefix (L2+)
 
-- Risk prefix (`[READ]`, `[WRITE]`, etc.) is dynamically injected from `TOOL_MANIFESTS`
+- Risk prefix (`[READ]`, `[WRITE]`, among others) is dynamically injected from `TOOL_MANIFESTS`
   by `_inject_risk_prefixes()` in `tools/manifests.py`.
 - DO NOT manually write `[READ]` in tool docstrings — the injection layer handles it.
 - To set a tool's risk level, add an entry to `TOOL_MANIFESTS` via `register_manifest()`

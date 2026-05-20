@@ -1,5 +1,6 @@
 ---
 description: Release history for HA-MCP-Readonly following Keep a Changelog
+last_verified: 2026-05-20
 ---
 
 # Changelog
@@ -168,7 +169,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`entity_context.py` dead code** — orphaned dict literal (lines 73-78) prevented
   `filter_entity_id` from being sent to history API.
 - **Context Generator constants** — `HA_URL`/`HA_TOKEN`/`HA_CONFIG_PATH` now
-  re-read from environment at `main()` runtime, not just at import time.
+  re-read from environment at `main()` runtime, not only at import time.
 - **`tests/integration/__init__.py`** — 171 lines of dead code removed (fixtures in
   `__init__.py` are not auto-discovered by pytest).
 - **Polish text removed** from ~25 places in tool descriptions, comments, test data.
