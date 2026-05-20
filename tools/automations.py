@@ -8,7 +8,7 @@ import os
 import re
 from collections import defaultdict
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, cast
 
 import yaml
 
@@ -32,7 +32,7 @@ def _load_automations(config_path: str) -> list[dict]:  # type: ignore[type-arg]
         if not os.path.exists(file_path):
             return []
         with open(file_path, encoding="utf-8") as f:
-            return yaml.load(f, Loader=HomeAssistantLoader)  # nosec B506 or []
+            return cast(list[dict[str, Any]], yaml.load(f, Loader=HomeAssistantLoader) or [])  # nosec B506
     except Exception:
         return []
 
