@@ -85,9 +85,9 @@ markers = [
 
 [tool.mypy]
 strict = true
-python_version = "3.11"
+python_version = "3.14"
 ignore_missing_imports = true
-warn_unused_ignores = false
+warn_unused_ignores = true
 exclude = [
     "tests/",
     "build/",

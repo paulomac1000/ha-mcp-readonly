@@ -18,4 +18,4 @@ package_ecosystems: ["github-actions", "pip"]
 use_docs_validation: true
 docs_paths: ["docs/", "*.md"]
 docs_validation_script: "scripts/validate_docs.py"
-services: null
+services: {}

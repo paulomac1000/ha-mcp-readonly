@@ -238,6 +238,8 @@ _generation_state = {
     "error": None,
     "stats": {},
 }
+_generation_lock = threading.Lock()
+_GENERATION_TIMEOUT = 300  # seconds
 
 
 def _run_context_generation(config_path: str, output_path: str, mode: str):
@@ -253,14 +255,16 @@ def _run_context_generation(config_path: str, output_path: str, mode: str):
             ha_token=HA_TOKEN if mode in ("online", "hybrid") else None,
             mode=mode,
         )
-        _generation_state["status"] = "completed"
-        _generation_state["completed_at"] = time.time()
-        _generation_state["stats"] = stats
+        with _generation_lock:
+            _generation_state["status"] = "completed"
+            _generation_state["completed_at"] = time.time()
+            _generation_state["stats"] = stats
         _logger.info("Context generation completed: %s", output_path)
     except Exception as exc:
-        _generation_state["status"] = "error"
-        _generation_state["error"] = str(exc)
-        _generation_state["completed_at"] = time.time()
+        with _generation_lock:
+            _generation_state["status"] = "error"
+            _generation_state["error"] = str(exc)
+            _generation_state["completed_at"] = time.time()
         _logger.error("Context generation failed: %s", exc)
 
 
@@ -419,15 +423,16 @@ def create_rest_app():
     async def context_generate(request):
         """Generate HA context file."""
         global _generation_state
-        if _generation_state["status"] == "running":
-            return JSONResponse(
-                {
-                    "success": False,
-                    "error": "Generation already in progress",
-                    "started_at": _generation_state["started_at"],
-                },
-                status_code=409,
-            )
+        with _generation_lock:
+            if _generation_state["status"] == "running":
+                return JSONResponse(
+                    {
+                        "success": False,
+                        "error": "Generation already in progress",
+                        "started_at": _generation_state["started_at"],
+                    },
+                    status_code=409,
+                )
 
         try:
             body = await request.body()
@@ -459,11 +464,12 @@ def create_rest_app():
                 status_code=403,
             )
 
-        _generation_state["status"] = "running"
-        _generation_state["started_at"] = time.time()
-        _generation_state["output_path"] = output_path
-        _generation_state["error"] = None
-        _generation_state["stats"] = {}
+        with _generation_lock:
+            _generation_state["status"] = "running"
+            _generation_state["started_at"] = time.time()
+            _generation_state["output_path"] = output_path
+            _generation_state["error"] = None
+            _generation_state["stats"] = {}
 
         thread = threading.Thread(
             target=_run_context_generation,
@@ -485,16 +491,17 @@ def create_rest_app():
 
     async def context_status(request):
         """Get context generation status."""
-        return JSONResponse(
-            {
-                "status": _generation_state["status"],
-                "started_at": _generation_state["started_at"],
-                "completed_at": _generation_state["completed_at"],
-                "output_path": _generation_state["output_path"],
-                "error": _generation_state["error"],
-                "stats": _generation_state["stats"],
-            }
-        )
+        with _generation_lock:
+            return JSONResponse(
+                {
+                    "status": _generation_state["status"],
+                    "started_at": _generation_state["started_at"],
+                    "completed_at": _generation_state["completed_at"],
+                    "output_path": _generation_state["output_path"],
+                    "error": _generation_state["error"],
+                    "stats": _generation_state["stats"],
+                }
+            )
 
     async def context_download(request):
         """Download generated context file."""

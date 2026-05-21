@@ -10,7 +10,7 @@ import logging
 from typing import Any
 
 from tools import TOOLS_VERSION
-from tools.manifests import _make_manifest, get_all_manifests, register_manifest
+from tools.manifests import get_all_manifests, make_manifest, register_manifest
 from tools.utils import _error_response, _success_response
 
 _logger = logging.getLogger(__name__)
@@ -42,7 +42,7 @@ def register_capability_tools(mcp: Any) -> None:
 
     register_manifest(
         "describe_ha_capabilities",
-        _make_manifest("describe_ha_capabilities", timeout_ms=1000, latency="instant"),
+        make_manifest("describe_ha_capabilities", timeout_ms=1000, latency="instant"),
     )
 
     @mcp.tool()

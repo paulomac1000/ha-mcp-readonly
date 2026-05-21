@@ -124,7 +124,7 @@ def load_yaml_file(filepath: str) -> Any:
         with open(path, encoding="utf-8") as f:
             return yaml.load(f, Loader=HomeAssistantLoader)
     except Exception as e:
-        print(f"   YAML error {filepath}: {e}")
+        _logger.warning("YAML error %s: %s", filepath, e)
         return None
 
 

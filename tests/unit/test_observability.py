@@ -66,10 +66,11 @@ class TestInvocationCounter:
     """Tests for the thread-safe per-tool invocation counter."""
 
     def test_increment_and_read(self):
-        before = get_invocation_counts().get("obs_test_tool", 0)
-        increment_invocation("obs_test_tool")
-        increment_invocation("obs_test_tool")
-        assert get_invocation_counts()["obs_test_tool"] == before + 2
+        key = f"obs_test_{id(self)}"
+        before = get_invocation_counts().get(key, 0)
+        increment_invocation(key)
+        increment_invocation(key)
+        assert get_invocation_counts()[key] == before + 2
 
     def test_get_invocation_counts_returns_copy(self):
         snapshot = get_invocation_counts()

@@ -510,5 +510,60 @@ class TestMakeHaRequestErrorCode:
         assert result["retryable"] is True
 
 
+class TestSanitizeResponseData:
+    """Tests for the recursive response data sanitizer."""
+
+    def test_sanitizes_jwt_in_string(self):
+        from tools.utils import sanitize_response_data
+
+        result = sanitize_response_data("Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dummy")
+        assert "eyJhbGciOi" not in str(result)
+        assert "JWT_REDACTED" in str(result)
+
+    def test_sanitizes_bearer_token_in_string(self):
+        from tools.utils import sanitize_response_data
+
+        result = sanitize_response_data("Authorization: Bearer abcdef123456")
+        assert "abcdef123456" not in str(result)
+        assert "[REDACTED]" in str(result)
+
+    def test_sanitizes_token_value_in_string(self):
+        from tools.utils import sanitize_response_data
+
+        result = sanitize_response_data("token=my-secret-key")
+        assert "my-secret-key" not in str(result)
+        assert "REDACTED" in str(result)
+
+    def test_sanitizes_nested_dict_values(self):
+        from tools.utils import sanitize_response_data
+
+        data = {"logs": ["token=abc123", {"msg": "Bearer xyz789"}]}
+        result = sanitize_response_data(data)
+        assert "abc123" not in str(result["logs"][0])
+        assert "xyz789" not in str(result["logs"][1]["msg"])
+
+    def test_sanitizes_ip_in_string(self):
+        from tools.utils import sanitize_response_data
+
+        result = sanitize_response_data("Host: 192.168.1.100 connected")
+        assert "192.168.1.100" not in str(result)
+        assert "IP_REDACTED" in str(result)
+
+    def test_preserves_non_string_types(self):
+        from tools.utils import sanitize_response_data
+
+        assert sanitize_response_data(42) == 42
+        assert sanitize_response_data(True) is True
+        assert sanitize_response_data(None) is None
+        assert sanitize_response_data(3.14) == 3.14
+
+    def test_sanitizes_password_in_string(self):
+        from tools.utils import sanitize_response_data
+
+        result = sanitize_response_data("password=supersecret")
+        assert "supersecret" not in str(result)
+        assert "REDACTED" in str(result)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

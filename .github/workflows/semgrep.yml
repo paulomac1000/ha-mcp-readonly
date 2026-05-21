@@ -55,12 +55,12 @@ jobs:
         if: always() && github.event_name == 'pull_request'
         uses: actions/github-script@v9
         env:
-          SEMGREP_EXIT_CODE: ${{ steps.semgrep.outcome }}
+          SEMGREP_OUTCOME: ${{ steps.semgrep.outcome }}
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             const marker = '<!-- semgrep-bot -->';
-            const exitCode = process.env.SEMGREP_EXIT_CODE;
+            const exitCode = process.env.SEMGREP_OUTCOME;
             const prNumber = context.issue.number;
 
             const body = exitCode === 'success'

@@ -34,7 +34,7 @@ def get_all_manifests() -> dict[str, dict[str, Any]]:
     return dict(_TOOL_MANIFESTS)
 
 
-def _make_manifest(name: str, timeout_ms: int = 15000, latency: str = "moderate") -> dict[str, Any]:
+def make_manifest(name: str, timeout_ms: int = 15000, latency: str = "moderate") -> dict[str, Any]:
     """Factory for READ tool manifests."""
     return {
         "name": name,
@@ -105,7 +105,7 @@ def auto_register_all_read_tools(tool_names: set[str]) -> None:
     """Register a default READ manifest for every tool not already in TOOL_MANIFESTS."""
     for name in sorted(tool_names):
         if name not in _TOOL_MANIFESTS:
-            register_manifest(name, _make_manifest(name))
+            register_manifest(name, make_manifest(name))
 
 
 def _inject_risk_prefixes(registered_tools: dict[str, Any]) -> None:
@@ -208,4 +208,4 @@ def _inject_meta_envelope(registered_tools: dict[str, Any]) -> None:
                 inner = getattr(tool, attr)
                 if callable(inner) and not getattr(inner, "_meta_wrapped", False):
                     setattr(tool, attr, _make_meta_wrapper(inner, name))
-                break
+                    break

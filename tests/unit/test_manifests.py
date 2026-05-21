@@ -5,24 +5,31 @@ import json
 import pytest
 
 from tools.manifests import (
+    _TOOL_MANIFESTS,
     _inject_meta_envelope,
     _inject_risk_prefixes,
     _make_destructive_manifest,
-    _make_manifest,
     _make_write_manifest,
     auto_register_all_read_tools,
     get_all_manifests,
     get_manifest,
+    make_manifest,
     register_manifest,
 )
 from tools.utils import _success_response, build_meta, sanitize_response_data
 
 
-class TestManifestFactories:
-    """Tests for _make_manifest, _make_write_manifest, _make_destructive_manifest."""
+@pytest.fixture(autouse=True)
+def _clear_manifests():
+    """Reset TOOL_MANIFESTS before each test to ensure isolation."""
+    _TOOL_MANIFESTS.clear()
 
-    def test_make_manifest_defaults(self):
-        m = _make_manifest("test_tool")
+
+class TestManifestFactories:
+    """Tests for make_manifest, _make_write_manifest, _make_destructive_manifest."""
+
+    def testmake_manifest_defaults(self):
+        m = make_manifest("test_tool")
         assert m["name"] == "test_tool"
         assert m["risk"] == "READ"
         assert m["side_effects"] == "read"
@@ -55,7 +62,7 @@ class TestRiskConsistencyMatrix:
     """Verify each factory satisfies the Risk Consistency Matrix."""
 
     def test_read_factory_consistency(self):
-        m = _make_manifest("x")
+        m = make_manifest("x")
         assert m["risk"] == "READ"
         assert m["side_effects"] in ("none", "read")
         assert m["idempotent"] is True
@@ -89,7 +96,7 @@ class TestManifestRegistry:
     """Tests for register_manifest, get_manifest, get_all_manifests."""
 
     def test_register_and_get(self):
-        register_manifest("demo_tool", _make_manifest("demo_tool"))
+        register_manifest("demo_tool", make_manifest("demo_tool"))
         m = get_manifest("demo_tool")
         assert m is not None
         assert m["name"] == "demo_tool"
@@ -99,7 +106,7 @@ class TestManifestRegistry:
         assert get_manifest("does_not_exist") is None
 
     def test_get_all_returns_copy(self):
-        register_manifest("a", _make_manifest("a"))
+        register_manifest("a", make_manifest("a"))
         all_m = get_all_manifests()
         assert "a" in all_m
         assert isinstance(all_m, dict)
@@ -129,7 +136,7 @@ class TestInjectRiskPrefixes:
 
     def test_injects_prefix_when_none_present(self):
         tool = self._make_tool("Fetches data from Home Assistant.")
-        register_manifest("test_inject", _make_manifest("test_inject"))
+        register_manifest("test_inject", make_manifest("test_inject"))
 
         registered = {"test_inject": tool}
         _inject_risk_prefixes(registered)
@@ -150,7 +157,7 @@ class TestInjectRiskPrefixes:
 
     def test_handles_empty_docstring(self):
         tool = self._make_tool("")
-        register_manifest("test_empty", _make_manifest("test_empty"))
+        register_manifest("test_empty", make_manifest("test_empty"))
 
         registered = {"test_empty": tool}
         _inject_risk_prefixes(registered)
@@ -172,7 +179,7 @@ class TestInjectRiskPrefixes:
 
         tool = ToolWrapper(inner)
 
-        register_manifest("test_wrapped", _make_manifest("test_wrapped"))
+        register_manifest("test_wrapped", make_manifest("test_wrapped"))
 
         registered = {"test_wrapped": tool}
         _inject_risk_prefixes(registered)
