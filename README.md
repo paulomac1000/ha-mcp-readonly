@@ -1,19 +1,15 @@
----
-description: Read-only MCP server for Home Assistant — 120 tools for AI observability and context generation
----
-
 # HA-MCP-Readonly
 
 [![CI](https://github.com/paulomac1000/ha-mcp-readonly/actions/workflows/ci.yml/badge.svg)](https://github.com/paulomac1000/ha-mcp-readonly/actions/workflows/ci.yml)
 [![Docker](https://github.com/paulomac1000/ha-mcp-readonly/actions/workflows/publish.yml/badge.svg)](https://github.com/paulomac1000/ha-mcp-readonly/actions/workflows/publish.yml)
-[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)](https://www.python.org/)
+[![Python 3.14+](https://img.shields.io/badge/python-3.14%2B-blue)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 Read-only MCP (Model Context Protocol) server for Home Assistant. Gives AI assistants (Claude Desktop, LibreChat, Cline) full observability into your smart home — entity states, automations, scripts, devices, logs, diagnostics — without any write access. Also generates static AI context snapshots for RAG systems, ChatGPT Projects, Qwen, and other tools that accept custom knowledge files. Built in Python, runs anywhere — locally, in Docker, or as an MCP integration.
 
 ## Requirements
 
-- Python 3.11+ (for local use) or Docker
+- Python 3.14+ (for local use) or Docker
 - A Home Assistant instance with a [long-lived access token](https://www.home-assistant.io/docs/configuration/secrets/#long-lived-access-token)
   - Create one in your HA profile: **Settings → Security → Long-Lived Access Tokens**
 - Access to your Home Assistant config directory (for filesystem tools)
@@ -98,7 +94,7 @@ docker build -t ha-mcp-readonly .
 docker compose -f docker-compose.build.yml up -d
 ```
 
-### 3. Run locally (Python 3.11+)
+### 3. Run locally (Python 3.14+)
 
 ```bash
 pip install -r requirements.txt
@@ -128,7 +124,7 @@ curl -X POST http://localhost:9093/api/context/generate \
   -d '{"mode": "hybrid"}'
 ```
 
-## Available Tools (120 total)
+## Available Tools (122 total)
 
 Tools are organized by category (53 shown in table below). All are **read-only** — no state changes, no service calls, no modifications.
 
@@ -170,7 +166,7 @@ Add the following to your Claude Desktop config:
 }
 ```
 
-After restarting Claude Desktop, the 120 Home Assistant tools will be available.
+After restarting Claude Desktop, the 122 Home Assistant tools will be available.
 
 ### LibreChat
 

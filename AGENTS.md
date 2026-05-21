@@ -125,7 +125,7 @@ tools/
 
 context_generator/
 ├── constants.py             # Configuration, patterns, YAML loader
-├── analyzers.py             # Data collectors (RegistryCollector, AutomationAnalyzer, etc.)
+├── analyzers.py             # Data collectors (RegistryCollector, AutomationAnalyzer, and others)
 ├── formatters.py            # ReportGenerator — markdown output
 ├── core.py                  # main() and generate_context_file() entry points
 └── utils.py                 # Registry cache, HA API client, YAML helpers
@@ -154,12 +154,14 @@ context_generator/
 - `sanitize_log_line()` redacts JWTs, tokens, passwords, IPs from log output
 - Path traversal blocked in `filesystem_explorer.py` — `..` and `~` rejected
 
-### [READ] Risk Prefix
+### Risk Prefix (L2+)
 
-- Every `@mcp.tool()` docstring MUST begin with `[READ]` as the first text.
-- Tools without the prefix will fail MCP standards compliance checks.
-- Reference: `ref.mcp-server-standards`, Section "Risk Annotations (L1+)".
-- Exception: dev tools gated behind `MCP_DEV_TOOLS_ENABLED` flag.
+- Risk prefix (`[READ]`, `[WRITE]`, among others) is dynamically injected from `TOOL_MANIFESTS`
+  by `_inject_risk_prefixes()` in `tools/manifests.py`.
+- DO NOT manually write `[READ]` in tool docstrings — the injection layer handles it.
+- To set a tool's risk level, add an entry to `TOOL_MANIFESTS` via `register_manifest()`
+  or `auto_register_all_read_tools()`.
+- Reference: `ref.mcp-server-standards`, Canonical Template 5a.
 
 ### Exception Handler Tests [TEST-REG-3]
 

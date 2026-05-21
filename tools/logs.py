@@ -11,6 +11,7 @@ Optimizations:
 
 import logging
 import re
+import threading
 import time
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta
@@ -26,20 +27,23 @@ TOOLS_VERSION = "1.0.0"
 # Simple in-memory cache for log analysis results
 _LOG_CACHE: dict[str, tuple[Any, float]] = {}
 _CACHE_TTL = 60  # seconds
+_CACHE_LOCK = threading.Lock()
 
 
 def _get_cached_result(key: str) -> Any | None:
     """Returns cached result if valid, None otherwise."""
-    if key in _LOG_CACHE:
-        data, timestamp = _LOG_CACHE[key]
-        if time.time() - timestamp < _CACHE_TTL:
-            return data
+    with _CACHE_LOCK:
+        if key in _LOG_CACHE:
+            data, timestamp = _LOG_CACHE[key]
+            if time.time() - timestamp < _CACHE_TTL:
+                return data
     return None
 
 
 def _set_cache_result(key: str, data: Any) -> None:
     """Sets cache result with current timestamp."""
-    _LOG_CACHE[key] = (data, time.time())
+    with _CACHE_LOCK:
+        _LOG_CACHE[key] = (data, time.time())
 
 
 # Pre-compiled regex patterns for performance

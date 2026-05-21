@@ -1,0 +1,43 @@
+name: Auto-tag on merge to main
+
+on:
+  pull_request:
+    branches: [main]
+    types: [closed]
+
+concurrency:
+  group: auto-tag-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  tag:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Extract version from pyproject.toml
+        id: version
+        run: |
+          VERSION=$(grep 'version = ' pyproject.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Found version: $VERSION"
+
+      - name: Create and push tag
+        run: |
+          git config user.name "ha-mcp-readonly-bot"
+          git config user.email "bot@ha-mcp-readonly.local"
+          if git rev-parse "v${{ steps.version.outputs.version }}" >/dev/null 2>&1; then
+            echo "Tag v${{ steps.version.outputs.version }} already exists — skipping"
+            exit 0
+          fi
+          git tag "v${{ steps.version.outputs.version }}"
+          git push origin "v${{ steps.version.outputs.version }}"

@@ -1,8 +1,10 @@
 """Utility functions for context generation."""
 
 import json
+import logging
 import os
 import re
+import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -22,17 +24,21 @@ from .constants import (
     HomeAssistantLoader,
 )
 
+_logger = logging.getLogger(__name__)
+
 # --- REGISTRY CACHE (based on conftest.py) ---
 _registry_cache: dict[str, dict] = {}
 _registry_cache_timestamps: dict[str, float] = {}
 CACHE_TTL = 300  # 5 minutes
+_CACHE_LOCK = threading.Lock()
 
 
 def invalidate_registry_cache():
     """Clears registry cache."""
     global _registry_cache, _registry_cache_timestamps
-    _registry_cache.clear()
-    _registry_cache_timestamps.clear()
+    with _CACHE_LOCK:
+        _registry_cache.clear()
+        _registry_cache_timestamps.clear()
 
 
 def load_registry(name: str, use_cache: bool = True) -> dict:
@@ -46,20 +52,22 @@ def load_registry(name: str, use_cache: bool = True) -> dict:
     now = datetime.now().timestamp()
 
     # Check cache
-    if use_cache and cache_key in _registry_cache:
-        if now - _registry_cache_timestamps.get(cache_key, 0) < CACHE_TTL:
-            return _registry_cache[cache_key]
+    with _CACHE_LOCK:
+        if use_cache and cache_key in _registry_cache:
+            if now - _registry_cache_timestamps.get(cache_key, 0) < CACHE_TTL:
+                return _registry_cache[cache_key]
 
     try:
         path = Path(HA_CONFIG_PATH) / ".storage" / name
         if path.exists():
             with open(path, encoding="utf-8") as f:
                 data = json.load(f)
-                _registry_cache[cache_key] = data
-                _registry_cache_timestamps[cache_key] = now
+                with _CACHE_LOCK:
+                    _registry_cache[cache_key] = data
+                    _registry_cache_timestamps[cache_key] = now
                 return data
     except Exception as e:
-        print(f"   Error loading registry {name}: {e}")
+        _logger.warning("Error loading registry %s: %s", name, e)
 
     return {}
 
@@ -116,7 +124,7 @@ def load_yaml_file(filepath: str) -> Any:
         with open(path, encoding="utf-8") as f:
             return yaml.load(f, Loader=HomeAssistantLoader)
     except Exception as e:
-        print(f"   YAML error {filepath}: {e}")
+        _logger.warning("YAML error %s: %s", filepath, e)
         return None
 
 

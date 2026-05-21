@@ -1580,3 +1580,411 @@ class TestPersonTrackingExtras:
         home_zone = next((z for z in nearby if z["name"] == "Home Zone"), None)
         assert home_zone is not None
         assert home_zone["in_zone"] is True
+
+
+class TestDiagnoseConnectivity:
+    """Tests for diagnose_connectivity tool."""
+
+    def test_healthy(self, mock_mcp, config_path, ha_url, ha_token):
+        with patch("tools.diagnostics.make_ha_request") as mock_req:
+            mock_req.return_value = {"success": True, "data": {}}
+
+            register_diagnostics_tools(mock_mcp, ha_url, ha_token, config_path)
+            tool = mock_mcp._tools["diagnose_connectivity"]
+            result = json.loads(tool())
+
+        assert result["success"] is True
+        assert result["overall_status"] == "healthy"
+        assert result["connectivity_issues"] == []
+
+    def test_with_issues(self, mock_mcp, config_path, ha_url, ha_token):
+        health_data = {
+            "mqtt": {"connected": "error: Connection refused"},
+            "hue": {"reachable": False},
+        }
+        with patch("tools.diagnostics.make_ha_request") as mock_req:
+            mock_req.return_value = {"success": True, "data": health_data}
+
+            register_diagnostics_tools(mock_mcp, ha_url, ha_token, config_path)
+            tool = mock_mcp._tools["diagnose_connectivity"]
+            result = json.loads(tool())
+
+        assert result["success"] is True
+        assert result["overall_status"] == "degraded"
+        assert len(result["connectivity_issues"]) >= 1
+
+    def test_exception_handler(self, mock_mcp, config_path, ha_url, ha_token):
+        with patch(
+            "tools.diagnostics._do_diagnose_connectivity",
+            side_effect=RuntimeError("connectivity check failed"),
+        ):
+            register_diagnostics_tools(mock_mcp, ha_url, ha_token, config_path)
+            tool = mock_mcp._tools["diagnose_connectivity"]
+            result = json.loads(tool())
+
+        assert result["success"] is False
+
+
+class TestDiagnosePerformance:
+    """Tests for diagnose_performance tool."""
+
+    def test_with_data(self, mock_mcp, config_path, ha_url, ha_token):
+        states = [
+            {
+                "entity_id": "sensor.big",
+                "state": "42",
+                "attributes": {str(i): i for i in range(20)},
+            },
+            {"entity_id": "sensor.small", "state": "10", "attributes": {"a": 1}},
+            {
+                "entity_id": "automation.morning_routine",
+                "state": "on",
+                "attributes": {"last_triggered": "2024-01-01T08:00:00+00:00"},
+            },
+            {
+                "entity_id": "automation.evening_routine",
+                "state": "on",
+                "attributes": {"last_triggered": "2024-01-10T20:00:00+00:00"},
+            },
+        ]
+        logbook_data = [
+            {"entity_id": "automation.morning_routine", "when": "2024-01-01T08:00:00+00:00"},
+            {"entity_id": "automation.morning_routine", "when": "2024-01-02T08:00:00+00:00"},
+            {"entity_id": "automation.morning_routine", "when": "2024-01-03T08:00:00+00:00"},
+            {"entity_id": "automation.evening_routine", "when": "2024-01-10T20:00:00+00:00"},
+            {"entity_id": "sensor.big", "when": "2024-01-01T12:00:00+00:00"},
+        ]
+        auto_path = Path(config_path) / "automations.yaml"
+        auto_path.write_text('- id: "auto1"\n  alias: "Test"\n  trigger: []\n  action: []\n')
+
+        with patch("tools.diagnostics.make_ha_request") as mock_req:
+
+            def _side_effect(url, token, path):
+                if path == "/api/states":
+                    return {"success": True, "data": states}
+                return {"success": True, "data": logbook_data}
+
+            mock_req.side_effect = _side_effect
+
+            register_diagnostics_tools(mock_mcp, ha_url, ha_token, config_path)
+            tool = mock_mcp._tools["diagnose_performance"]
+            result = json.loads(tool())
+
+        assert result["success"] is True
+        assert "largest_entities" in result
+        assert len(result["largest_entities"]) >= 1
+        assert result["largest_entities"][0]["entity_id"] == "sensor.big"
+        assert "slowest_automations" in result
+        assert len(result["slowest_automations"]) >= 1
+        assert "most_triggered" in result
+        assert result["most_triggered"][0]["entity_id"] == "automation.morning_routine"
+        assert result["most_triggered"][0]["trigger_count"] == 3
+
+    def test_empty_response(self, mock_mcp, config_path, ha_url, ha_token):
+        with patch("tools.diagnostics.make_ha_request") as mock_req:
+            mock_req.return_value = {"success": True, "data": []}
+
+            register_diagnostics_tools(mock_mcp, ha_url, ha_token, config_path)
+            tool = mock_mcp._tools["diagnose_performance"]
+            result = json.loads(tool())
+
+        assert result["success"] is True
+
+    def test_exception_handler(self, mock_mcp, config_path, ha_url, ha_token):
+        with patch(
+            "tools.diagnostics._do_diagnose_performance",
+            side_effect=RuntimeError("perf fail"),
+        ):
+            register_diagnostics_tools(mock_mcp, ha_url, ha_token, config_path)
+            tool = mock_mcp._tools["diagnose_performance"]
+            result = json.loads(tool())
+
+        assert result["success"] is False
+
+
+class TestDiagnoseStartupProgress:
+    """Tests for diagnose_startup_progress tool."""
+
+    def test_ready(self, mock_mcp, config_path, ha_url, ha_token):
+        states = [
+            {"entity_id": "sensor.temp", "state": "20.5", "attributes": {}},
+        ]
+        config_res = {"components": ["sensor", "light"], "version": "2025.1"}
+        entries = {
+            "data": {
+                "entries": [
+                    {"entry_id": "e1", "domain": "sensor", "state": "loaded"},
+                    {"entry_id": "e2", "domain": "mqtt", "state": "loaded"},
+                ]
+            }
+        }
+        auto_path = Path(config_path) / "automations.yaml"
+        auto_path.write_text('- id: "auto1"\n  alias: "Test"\n  trigger: []\n  action: []\n')
+
+        req_results = [
+            {"success": True, "data": states},
+            {"success": True, "data": config_res},
+        ]
+
+        with (
+            patch("tools.diagnostics.make_ha_request") as mock_req,
+            patch("tools.diagnostics.load_registry") as mock_reg,
+        ):
+            mock_req.side_effect = req_results
+            mock_reg.return_value = entries
+
+            register_diagnostics_tools(mock_mcp, ha_url, ha_token, config_path)
+            tool = mock_mcp._tools["diagnose_startup_progress"]
+            result = json.loads(tool())
+
+        assert result["success"] is True
+        assert "status" in result
+        assert isinstance(result["progress_pct"], (int, float))
+
+    def test_exception_handler(self, mock_mcp, config_path, ha_url, ha_token):
+        with patch(
+            "tools.diagnostics._do_diagnose_startup_progress",
+            side_effect=RuntimeError("startup fail"),
+        ):
+            register_diagnostics_tools(mock_mcp, ha_url, ha_token, config_path)
+            tool = mock_mcp._tools["diagnose_startup_progress"]
+            result = json.loads(tool())
+
+        assert result["success"] is False
+
+
+class TestEntityHealthSnapshot:
+    """Tests for take_entity_health_snapshot and compare_entity_health_snapshot tools."""
+
+    def test_take_snapshot(self, mock_mcp, config_path, ha_url, ha_token, sample_entity_registry):
+        states = [
+            {"entity_id": "sensor.ok", "state": "20", "attributes": {}},
+            {"entity_id": "sensor.bad", "state": "unavailable", "attributes": {}},
+        ]
+        with (
+            patch("tools.diagnostics.make_ha_request") as mock_req,
+            patch("tools.diagnostics.load_registry") as mock_reg,
+        ):
+            mock_req.return_value = {"success": True, "data": states}
+            mock_reg.return_value = sample_entity_registry
+
+            register_diagnostics_tools(mock_mcp, ha_url, ha_token, config_path)
+            tool = mock_mcp._tools["take_entity_health_snapshot"]
+            result = json.loads(tool())
+
+        assert result["success"] is True
+        assert "snapshot_id" in result
+        assert result["unavailable_count"] >= 1
+
+    def test_compare_snapshot_found(
+        self, mock_mcp, config_path, ha_url, ha_token, sample_entity_registry
+    ):
+        from tools.diagnostics import _SNAPSHOTS
+
+        _SNAPSHOTS["snap_test123"] = {
+            "timestamp": 1700000000.0,
+            "total_entities": 3,
+            "unavailable_count": 2,
+            "unavailable_by_integration": {"tuya": 2},
+            "unavailable_entity_ids": ["sensor.still_bad", "sensor.old_bad"],
+        }
+        current_states = [
+            {"entity_id": "sensor.ok", "state": "20", "attributes": {}},
+            {"entity_id": "sensor.still_bad", "state": "unavailable", "attributes": {}},
+        ]
+        with (
+            patch("tools.diagnostics.make_ha_request") as mock_req,
+            patch("tools.diagnostics.load_registry") as mock_reg,
+        ):
+            mock_req.return_value = {"success": True, "data": current_states}
+            mock_reg.return_value = sample_entity_registry
+
+            register_diagnostics_tools(mock_mcp, ha_url, ha_token, config_path)
+            tool = mock_mcp._tools["compare_entity_health_snapshot"]
+            result = json.loads(tool("snap_test123"))
+
+        assert result["success"] is True
+        assert result["resolved_count"] >= 1
+
+    def test_compare_snapshot_not_found(self, mock_mcp, config_path, ha_url, ha_token):
+        register_diagnostics_tools(mock_mcp, ha_url, ha_token, config_path)
+        tool = mock_mcp._tools["compare_entity_health_snapshot"]
+        result = json.loads(tool("snap_nonexistent"))
+
+        assert result["success"] is False
+
+    def test_exception_handler_take(self, mock_mcp, config_path, ha_url, ha_token):
+        with patch(
+            "tools.diagnostics._do_take_entity_health_snapshot",
+            side_effect=RuntimeError("snapshot fail"),
+        ):
+            register_diagnostics_tools(mock_mcp, ha_url, ha_token, config_path)
+            tool = mock_mcp._tools["take_entity_health_snapshot"]
+            result = json.loads(tool())
+
+        assert result["success"] is False
+
+    def test_exception_handler_compare(self, mock_mcp, config_path, ha_url, ha_token):
+        with patch(
+            "tools.diagnostics._do_compare_entity_health_snapshot",
+            side_effect=RuntimeError("compare fail"),
+        ):
+            register_diagnostics_tools(mock_mcp, ha_url, ha_token, config_path)
+            tool = mock_mcp._tools["compare_entity_health_snapshot"]
+            result = json.loads(tool("snap_test"))
+
+        assert result["success"] is False
+
+
+class TestDiagnoseVoice:
+    """Tests for diagnose_voice tool."""
+
+    def test_with_data(self, mock_mcp, config_path, ha_url, ha_token):
+        states = [
+            {"entity_id": "stt.whisper", "state": "idle", "attributes": {}},
+            {"entity_id": "tts.google", "state": "idle", "attributes": {}},
+            {"entity_id": "conversation.homeassistant", "state": "ready", "attributes": {}},
+        ]
+        voice_data = {"data": {"pipelines": [{"id": "pipe1", "name": "Home"}]}}
+        with (
+            patch("tools.diagnostics.make_ha_request") as mock_req,
+            patch("tools.diagnostics.load_registry") as mock_reg,
+        ):
+            mock_req.side_effect = [
+                {"success": True, "data": states},
+                {"success": True, "data": {"exposed_entities": {"light.living_room": True}}},
+            ]
+            mock_reg.return_value = voice_data
+
+            register_diagnostics_tools(mock_mcp, ha_url, ha_token, config_path)
+            tool = mock_mcp._tools["diagnose_voice"]
+            result = json.loads(tool())
+
+        assert result["success"] is True
+        assert "assistants_available" in result
+        assert result["exposed_entities_count"] >= 1
+        assert len(result["pipelines"]) >= 1
+
+    def test_empty(self, mock_mcp, config_path, ha_url, ha_token):
+        with (
+            patch("tools.diagnostics.make_ha_request") as mock_req,
+            patch("tools.diagnostics.load_registry", return_value={"data": {}}),
+        ):
+            mock_req.return_value = {"success": True, "data": []}
+
+            register_diagnostics_tools(mock_mcp, ha_url, ha_token, config_path)
+            tool = mock_mcp._tools["diagnose_voice"]
+            result = json.loads(tool())
+
+        assert result["success"] is True
+        assert result["exposed_entities_count"] == 0
+
+    def test_exception_handler(self, mock_mcp, config_path, ha_url, ha_token):
+        with patch(
+            "tools.diagnostics._do_diagnose_voice",
+            side_effect=RuntimeError("voice fail"),
+        ):
+            register_diagnostics_tools(mock_mcp, ha_url, ha_token, config_path)
+            tool = mock_mcp._tools["diagnose_voice"]
+            result = json.loads(tool())
+
+        assert result["success"] is False
+
+
+class TestDiagnoseInstallationType:
+    """Tests for diagnose_installation_type tool."""
+
+    def test_supervised(self, mock_mcp, config_path, ha_url, ha_token):
+        with patch("tools.diagnostics.make_ha_request") as mock_req:
+            mock_req.return_value = {"success": True, "data": {"type": "os"}}
+
+            register_diagnostics_tools(mock_mcp, ha_url, ha_token, config_path)
+            tool = mock_mcp._tools["diagnose_installation_type"]
+            result = json.loads(tool())
+
+        assert result["success"] is True
+        assert result["type"] in ("supervised", "os")
+
+    def test_container(self, mock_mcp, config_path, ha_url, ha_token):
+        with patch("tools.diagnostics.make_ha_request") as mock_req:
+            mock_req.side_effect = [
+                {"success": False, "error": "not found"},
+                {"success": True, "data": {"version": "2025.1"}},
+            ]
+
+            register_diagnostics_tools(mock_mcp, ha_url, ha_token, config_path)
+            tool = mock_mcp._tools["diagnose_installation_type"]
+            result = json.loads(tool())
+
+        assert result["success"] is True
+        assert result["type"] in ("container", "core")
+
+    def test_exception_handler(self, mock_mcp, config_path, ha_url, ha_token):
+        with patch(
+            "tools.diagnostics._do_diagnose_installation_type",
+            side_effect=RuntimeError("install type fail"),
+        ):
+            register_diagnostics_tools(mock_mcp, ha_url, ha_token, config_path)
+            tool = mock_mcp._tools["diagnose_installation_type"]
+            result = json.loads(tool())
+
+        assert result["success"] is False
+
+
+class TestDiagnosePostUpdateIntegrations:
+    """Tests for diagnose_post_update_integrations tool."""
+
+    def test_with_custom_components(self, mock_mcp, config_path, ha_url, ha_token):
+        entries = {
+            "data": {
+                "entries": [
+                    {"entry_id": "e1", "domain": "sensor", "title": "Builtin", "state": "loaded"},
+                    {
+                        "entry_id": "e2",
+                        "domain": "tuya_local",
+                        "title": "Tuya Local",
+                        "state": "loaded",
+                    },
+                    {"entry_id": "e3", "domain": "gree", "title": "Gree", "state": "failed"},
+                ]
+            }
+        }
+        with patch("tools.diagnostics.load_registry") as mock_reg:
+            mock_reg.return_value = entries
+
+            register_diagnostics_tools(mock_mcp, ha_url, ha_token, config_path)
+            tool = mock_mcp._tools["diagnose_post_update_integrations"]
+            result = json.loads(tool())
+
+        assert result["success"] is True
+        assert result["custom_components_total"] > 0
+
+    def test_no_custom_components(self, mock_mcp, config_path, ha_url, ha_token):
+        entries = {
+            "data": {
+                "entries": [
+                    {"entry_id": "e1", "domain": "sensor", "title": "Builtin", "state": "loaded"},
+                    {"entry_id": "e2", "domain": "light", "title": "Light", "state": "loaded"},
+                ]
+            }
+        }
+        with patch("tools.diagnostics.load_registry") as mock_reg:
+            mock_reg.return_value = entries
+
+            register_diagnostics_tools(mock_mcp, ha_url, ha_token, config_path)
+            tool = mock_mcp._tools["diagnose_post_update_integrations"]
+            result = json.loads(tool())
+
+        assert result["success"] is True
+        assert result["custom_components_total"] == 0
+
+    def test_exception_handler(self, mock_mcp, config_path, ha_url, ha_token):
+        with patch(
+            "tools.diagnostics._do_diagnose_post_update_integrations",
+            side_effect=RuntimeError("post-update fail"),
+        ):
+            register_diagnostics_tools(mock_mcp, ha_url, ha_token, config_path)
+            tool = mock_mcp._tools["diagnose_post_update_integrations"]
+            result = json.loads(tool())
+
+        assert result["success"] is False

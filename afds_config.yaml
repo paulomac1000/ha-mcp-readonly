@@ -81,6 +81,8 @@ excluded_dirs:
   - archived
   - archive
   - __pycache__
+  - .pytest_cache
+  - .opencode
 
 exempt_files:
   - README.md
@@ -89,6 +91,7 @@ exempt_files:
   - SECURITY.md
   - INSTRUCTIONS.md
   - AGENTS.md
+  - IMPLEMENTATION_NOTES.md
 
 normative_sections:
   - RULES

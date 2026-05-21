@@ -21,6 +21,7 @@ import logging
 import os
 import re
 import subprocess
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -37,6 +38,7 @@ _REGISTRY_CACHE: dict[str, tuple[Any, float]] = {}
 _REGISTRY_TTL = 300  # seconds -- 5 minutes
 
 _REGISTRY_CACHE_STATS: dict[str, int] = {"hits": 0, "misses": 0, "blocked": 0}
+_CACHE_LOCK = threading.Lock()
 
 # =============================================================================
 # SECURITY: BLOCKED REGISTRIES
@@ -95,16 +97,17 @@ def get_registry_cache_stats() -> dict[str, Any]:
 
     Useful for verifying the 70%+ hit rate target in production.
     """
-    total = _REGISTRY_CACHE_STATS["hits"] + _REGISTRY_CACHE_STATS["misses"]
-    hit_rate = (_REGISTRY_CACHE_STATS["hits"] / total * 100) if total > 0 else 0.0
-    return {
-        "hits": _REGISTRY_CACHE_STATS["hits"],
-        "misses": _REGISTRY_CACHE_STATS["misses"],
-        "blocked": _REGISTRY_CACHE_STATS["blocked"],
-        "total": total,
-        "hit_rate_percent": round(hit_rate, 1),
-        "cached_keys": len(_REGISTRY_CACHE),
-    }
+    with _CACHE_LOCK:
+        total = _REGISTRY_CACHE_STATS["hits"] + _REGISTRY_CACHE_STATS["misses"]
+        hit_rate = (_REGISTRY_CACHE_STATS["hits"] / total * 100) if total > 0 else 0.0
+        return {
+            "hits": _REGISTRY_CACHE_STATS["hits"],
+            "misses": _REGISTRY_CACHE_STATS["misses"],
+            "blocked": _REGISTRY_CACHE_STATS["blocked"],
+            "total": total,
+            "hit_rate_percent": round(hit_rate, 1),
+            "cached_keys": len(_REGISTRY_CACHE),
+        }
 
 
 # =============================================================================
@@ -113,8 +116,8 @@ def get_registry_cache_stats() -> dict[str, Any]:
 
 
 def make_ha_request(
-    ha_url: str,
-    ha_token: str,
+    ha_url: str | None,
+    ha_token: str | None,
     endpoint: str,
     method: str = "GET",
     data: dict[str, Any] | None = None,
@@ -128,6 +131,14 @@ def make_ha_request(
     Returns ``{"success": True, "data": ...}`` on success,
     ``{"success": False, "error": "..."}`` on failure.
     """
+    if ha_url is None or ha_token is None:
+        return {
+            "success": False,
+            "error": "HA_URL or HA_TOKEN not configured",
+            "error_code": "CONFIG_ERROR",
+            "retryable": False,
+        }
+
     url = f"{ha_url}{endpoint}"
     headers = {
         "Authorization": f"Bearer {ha_token}",
@@ -135,6 +146,8 @@ def make_ha_request(
     }
 
     last_error: str | None = None
+    last_code = "HTTP_ERROR"
+    last_retryable = True
 
     for attempt in range(retries):
         try:
@@ -152,10 +165,27 @@ def make_ha_request(
 
         except requests.exceptions.RequestException as exc:
             last_error = str(exc)
+            if isinstance(exc, requests.exceptions.Timeout):
+                last_code = "TIMEOUT"
+                last_retryable = True
+            elif isinstance(exc, requests.exceptions.HTTPError):
+                last_code = "HTTP_ERROR"
+                status = getattr(getattr(exc, "response", None), "status_code", None)
+                last_retryable = status is None or (isinstance(status, int) and status >= 500)
+            else:
+                last_code = "HTTP_ERROR"
+                last_retryable = True
             if attempt < retries - 1:
                 time.sleep(backoff * (2**attempt))
 
-    return {"success": False, "error": last_error}
+    # ``error`` stays a string for backward compatibility; ``error_code`` and
+    # ``retryable`` are the structured (extended error contract) siblings.
+    return {
+        "success": False,
+        "error": last_error,
+        "error_code": last_code,
+        "retryable": last_retryable,
+    }
 
 
 # =============================================================================
@@ -165,7 +195,7 @@ def make_ha_request(
 
 def load_registry(
     registry_name: str,
-    config_path: str,
+    config_path: str | None,
     use_cache: bool = True,
 ) -> dict[str, Any]:
     """
@@ -175,19 +205,24 @@ def load_registry(
     ``onboarding``) silently return ``{}`` to prevent credential leaks.
     """
     if registry_name in BLOCKED_REGISTRIES:
-        _REGISTRY_CACHE_STATS["blocked"] += 1
+        with _CACHE_LOCK:
+            _REGISTRY_CACHE_STATS["blocked"] += 1
+        return {}
+
+    if config_path is None:
         return {}
 
     cache_key = f"{config_path}/{registry_name}"
     now = time.time()
 
-    if use_cache and cache_key in _REGISTRY_CACHE:
-        data, timestamp = _REGISTRY_CACHE[cache_key]
-        if now - timestamp < _REGISTRY_TTL:
-            _REGISTRY_CACHE_STATS["hits"] += 1
-            return data  # type: ignore[no-any-return]
+    with _CACHE_LOCK:
+        if use_cache and cache_key in _REGISTRY_CACHE:
+            data, timestamp = _REGISTRY_CACHE[cache_key]
+            if now - timestamp < _REGISTRY_TTL:
+                _REGISTRY_CACHE_STATS["hits"] += 1
+                return data  # type: ignore[no-any-return]
 
-    _REGISTRY_CACHE_STATS["misses"] += 1
+        _REGISTRY_CACHE_STATS["misses"] += 1
 
     try:
         path = Path(config_path) / ".storage" / registry_name
@@ -197,12 +232,14 @@ def load_registry(
         with open(path, encoding="utf-8") as fh:
             data = json.load(fh)
 
-        _REGISTRY_CACHE[cache_key] = (data, now)
+        with _CACHE_LOCK:
+            _REGISTRY_CACHE[cache_key] = (data, now)
         return data  # type: ignore[no-any-return]
 
     except (OSError, json.JSONDecodeError, KeyError) as exc:
         logger.warning(f"Error loading registry {registry_name}: {exc}")
-        _REGISTRY_CACHE.pop(cache_key, None)
+        with _CACHE_LOCK:
+            _REGISTRY_CACHE.pop(cache_key, None)
         return {}
 
 
@@ -217,19 +254,20 @@ def invalidate_registry_cache(
     """
     global _REGISTRY_CACHE
 
-    if registry_name is None and config_path is None:
-        _REGISTRY_CACHE.clear()
-    else:
-        keys_to_remove = []
-        for key in list(_REGISTRY_CACHE):
-            key_str = str(key)
-            if registry_name and registry_name in key_str:
-                keys_to_remove.append(key)
-            elif config_path and key_str.startswith(f"{config_path}/"):
-                keys_to_remove.append(key)
+    with _CACHE_LOCK:
+        if registry_name is None and config_path is None:
+            _REGISTRY_CACHE.clear()
+        else:
+            keys_to_remove = []
+            for key in list(_REGISTRY_CACHE):
+                key_str = str(key)
+                if registry_name and registry_name in key_str:
+                    keys_to_remove.append(key)
+                elif config_path and key_str.startswith(f"{config_path}/"):
+                    keys_to_remove.append(key)
 
-        for key in keys_to_remove:
-            del _REGISTRY_CACHE[key]
+            for key in keys_to_remove:
+                del _REGISTRY_CACHE[key]
 
 
 def get_registry_entities(config_path: str) -> list[dict[str, Any]]:
@@ -329,20 +367,133 @@ def sanitize_for_json(obj: Any) -> Any:
     return obj
 
 
-def _success_response(data: dict[str, Any] | None = None) -> str:
-    """Format a successful tool response. All tools MUST use this."""
+def _success_response(
+    data: dict[str, Any] | None = None,
+    _meta: dict[str, object] | None = None,
+) -> str:
+    """Format a successful tool response. All tools MUST use this.
+
+    Args:
+        data: Result data dict or any serializable value.
+        _meta: Optional metadata envelope (build_meta output).
+    """
     response: dict[str, Any] = {"success": True}
+
     if data is not None:
-        if isinstance(data, dict):
-            response.update(data)
+        sanitized = sanitize_response_data(data)
+        if isinstance(sanitized, dict):
+            response.update(sanitized)
         else:
-            response["data"] = data
+            response["data"] = sanitized
+
+    if _meta is not None:
+        response["_meta"] = _meta
+
     return json.dumps(response, indent=2, ensure_ascii=False)
 
 
 def _error_response(error: str) -> str:
     """Format an error tool response. All tools MUST use this."""
     return json.dumps({"success": False, "error": str(error)}, indent=2, ensure_ascii=False)
+
+
+def _error_dict_extended(
+    code: str,
+    message: str,
+    retryable: bool,
+    suggestion: str | None = None,
+    available_names: list[str] | None = None,
+) -> dict[str, Any]:
+    """Return a structured error dict (extended L2+ error contract).
+
+    For internal function composition before JSON serialization.
+
+    Args:
+        code: Machine-readable UPPER_SNAKE_CASE identifier (e.g. ``TIMEOUT``).
+        message: Human-readable error message.
+        retryable: Whether the agent SHOULD retry with backoff.
+        suggestion: Optional one-sentence actionable next step.
+        available_names: Optional list of valid alternatives (capped at 50).
+
+    Returns:
+        Dict of the form ``{"success": False, "error": {...}}``.
+    """
+    error: dict[str, Any] = {"code": code, "message": message, "retryable": retryable}
+    if suggestion:
+        error["suggestion"] = suggestion
+    if available_names:
+        error["available_names"] = available_names[:50]
+    return {"success": False, "error": error}
+
+
+def _error_response_extended(
+    code: str,
+    message: str,
+    retryable: bool,
+    suggestion: str | None = None,
+    available_names: list[str] | None = None,
+) -> str:
+    """Format a structured error tool response (extended L2+ error contract).
+
+    Args:
+        code: Machine-readable UPPER_SNAKE_CASE identifier (e.g. ``TIMEOUT``).
+        message: Human-readable error message.
+        retryable: Whether the agent SHOULD retry with backoff.
+        suggestion: Optional one-sentence actionable next step.
+        available_names: Optional list of valid alternatives (capped at 50).
+
+    Returns:
+        JSON string with a structured ``error`` object.
+    """
+    return json.dumps(
+        _error_dict_extended(code, message, retryable, suggestion, available_names),
+        indent=2,
+        ensure_ascii=False,
+    )
+
+
+# =============================================================================
+# RESPONSE ENVELOPE — build_meta + sanitize_response_data
+# =============================================================================
+
+
+def build_meta(tool_name: str, start_time: float) -> dict[str, object]:
+    """Build _meta envelope dict with request_id, duration_ms and tool_version.
+
+    The request_id is read from the current observability context so it is
+    the SAME id written to that invocation's log lines (Observability-10).
+
+    Args:
+        tool_name: Name of the tool being invoked.
+        start_time: Time.monotonic() value captured at tool entry.
+
+    Returns:
+        Dict with request_id, duration_ms and tool_version for _meta envelope.
+    """
+    from tools import TOOLS_VERSION as _tools_ver
+    from tools.observability import get_request_id
+
+    return {
+        "request_id": get_request_id(),
+        "duration_ms": int((time.monotonic() - start_time) * 1000),
+        "tool_version": _tools_ver,
+    }
+
+
+def sanitize_response_data(data: object) -> object:
+    """Recursively sanitize response data before returning to the agent.
+
+    Applies sanitize_log_line() to every string value in the structure.
+    This is a SEPARATE trust boundary from log sanitization — a credential
+    read from a backend would reach the agent even if logging is clean.
+    """
+    if isinstance(data, str):
+        return sanitize_log_line(data)
+    if isinstance(data, dict):
+        return {k: sanitize_response_data(v) for k, v in data.items()}
+    if isinstance(data, list):
+        return [sanitize_response_data(item) for item in data]
+    return data
 
 
 # Backward-compatible aliases

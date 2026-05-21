@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ha-mcp-readonly"
-version = "1.2.0"
+version = "1.4.0"
 description = "Read-only MCP server for Home Assistant observation by AI assistants"
 readme = "README.md"
 license = { text = "MIT" }
@@ -72,8 +72,10 @@ extra-standard-library = ["starlette", "fastmcp"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = "test_*.py"
+python_classes = "Test*"
+python_functions = "test_*"
 asyncio_mode = "auto"
-addopts = "-v --tb=short"
+addopts = "-v --tb=short -W ignore::authlib.deprecate.AuthlibDeprecationWarning"
 markers = [
     "unit: Unit tests (fast, mocked, no I/O)",
     "integration: Integration tests (slow, requires real backend)",
@@ -83,7 +85,7 @@ markers = [
 
 [tool.mypy]
 strict = true
-python_version = "3.11"
+python_version = "3.14"
 ignore_missing_imports = true
 warn_unused_ignores = true
 exclude = [

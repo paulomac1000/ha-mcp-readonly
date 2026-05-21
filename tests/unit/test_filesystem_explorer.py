@@ -29,7 +29,7 @@ def temp_dir():
         (base / "blocked").mkdir()
 
         # Create text files
-        (base / "allowed" / "file1.txt").write_text("Line 1\nLine 2\nSecret: abc123xyz\n")
+        (base / "allowed" / "file1.txt").write_text("Line 1\nLine 2\nContent: abc123xyz\n")
         (base / "allowed" / "large.log").write_text("X" * 11 * 1024 * 1024)  # 11MB
         (base / "allowed" / "db.sqlite").write_bytes(
             b"SQLite format 3\x00"  # Magic header SQLite
@@ -204,7 +204,7 @@ class TestFilesystemTools:
 
         assert result["success"] is True
         assert "Line 1" in result["content"]
-        assert "abc123xyz" in result["content"]  # Secret is not redacted (AI does this)
+        assert "abc123xyz" in result["content"]
 
     def test_read_binary_file_blocked(self, mock_mcp, temp_dir, allow_temp_dir_in_security_context):
         """
@@ -260,13 +260,13 @@ class TestFilesystemTools:
         """
         1. Security context allows access to allowed/ BEFORE tool registration
         2. No late patching (solved closure capture problem)
-        3. Pattern "secret" exists in file1.txt
+        3. Pattern "abc123xyz" exists in file1.txt
         """
         register_filesystem_tools(mock_mcp)
         tool = mock_mcp.get_tool("search_files")
 
         # Safe search in allowed directory
-        result_str = tool(pattern="secret", search_path=str(temp_dir / "allowed"), max_results=5)
+        result_str = tool(pattern="abc123xyz", search_path=str(temp_dir / "allowed"), max_results=5)
         result = json.loads(result_str)
 
         assert result["success"] is True

@@ -1,0 +1,21 @@
+# CI/CD Configuration Contract — ha-mcp-readonly
+language: "python"
+src_dir: "tools/"
+package: "tools"
+project: "ha-mcp-readonly"
+python_version: "3.14"
+image_name: "ha-mcp-readonly:test"
+smoke_name: "ha-mcp-smoke"
+health_port: 9091
+rest_port: 9100
+use_docker: true
+is_mcp: true
+expected_tools: 122
+use_codecov: true
+use_semgrep: true
+use_dependabot: true
+package_ecosystems: ["github-actions", "pip"]
+use_docs_validation: true
+docs_paths: ["docs/", "*.md"]
+docs_validation_script: "scripts/validate_docs.py"
+services: {}

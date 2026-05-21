@@ -25,12 +25,14 @@ from tools.areas import register_area_tools  # noqa: E402
 from tools.automations import register_automation_tools  # noqa: E402
 from tools.batch_operations import register_batch_operations_tools  # noqa: E402
 from tools.blueprints import register_blueprint_tools  # noqa: E402
+from tools.capabilities import register_capability_tools  # noqa: E402
 from tools.composite import register_composite_tools  # noqa: E402
 from tools.config import register_config_tools  # noqa: E402
 from tools.config_entries import register_config_entry_tools  # noqa: E402
 
 # Configuration (from tools.constants — single source of truth)
 from tools.constants import (
+    CORS_ALLOWED_ORIGINS,
     DEV_TOOLS_ENABLED,
     HA_CONFIG_PATH,
     HA_TOKEN,
@@ -53,6 +55,12 @@ from tools.health_reporter import register_health_reporter_tools  # noqa: E402
 from tools.history import register_history_tools  # noqa: E402
 from tools.integrations import register_integration_tools  # noqa: E402
 from tools.logs import register_log_tools  # noqa: E402
+from tools.manifests import (  # noqa: E402
+    _inject_meta_envelope,
+    _inject_risk_prefixes,
+    auto_register_all_read_tools,
+)
+from tools.observability import RequestIdFilter, get_invocation_counts  # noqa: E402
 from tools.scenes import register_scene_tools  # noqa: E402
 from tools.scripts import register_script_tools  # noqa: E402
 
@@ -64,9 +72,12 @@ from version import __version__  # noqa: E402
 # Logging: MUST target stderr (stdout corrupts MCP stdio transport)
 logging.basicConfig(
     level=getattr(logging, LOG_LEVEL.upper(), logging.INFO),
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    format="%(asctime)s [%(levelname)s] [%(request_id)s] %(name)s: %(message)s",
     stream=sys.stderr,
 )
+# Inject the request_id context into every log record (Observability-9/10).
+for _handler in logging.getLogger().handlers:
+    _handler.addFilter(RequestIdFilter())
 _logger = logging.getLogger("ha-mcp")
 
 # =============================================================================
@@ -79,10 +90,11 @@ HEALTH_STATE = {"status": "starting", "last_heartbeat": time.time()}
 class HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == "/health":
+            payload = {**HEALTH_STATE, "invocations": get_invocation_counts()}
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
-            self.wfile.write(json.dumps(HEALTH_STATE).encode())
+            self.wfile.write(json.dumps(payload).encode())
         else:
             self.send_response(404)
             self.end_headers()
@@ -162,6 +174,8 @@ register_integration_tools(mcp, HA_CONFIG_PATH, HA_URL, HA_TOKEN)
 
 register_batch_operations_tools(mcp, HA_CONFIG_PATH, HA_URL, HA_TOKEN)
 
+register_capability_tools(mcp)
+
 
 # =============================================================================
 # TOOL HELPERS
@@ -192,7 +206,24 @@ def get_tool_count() -> int:
     return len(get_all_tools())
 
 
+# =============================================================================
+# AUTO-REGISTER TOOL MANIFESTS + INJECT RISK PREFIXES
+# =============================================================================
+
+_all_tool_names = set(get_all_tools().keys())
+auto_register_all_read_tools(_all_tool_names)
+_inject_risk_prefixes(get_all_tools())
+_inject_meta_envelope(get_all_tools())
+_logger.info(
+    "Injected risk prefixes + _meta envelope from manifests for %d tools",
+    len(_all_tool_names),
+)
+
 tool_count = get_tool_count()
+
+# Populate the lightweight health payload now that registration is complete.
+HEALTH_STATE["tools"] = tool_count
+HEALTH_STATE["tools_version"] = __version__
 
 
 # =============================================================================
@@ -207,6 +238,8 @@ _generation_state = {
     "error": None,
     "stats": {},
 }
+_generation_lock = threading.Lock()
+_GENERATION_TIMEOUT = 300  # seconds
 
 
 def _run_context_generation(config_path: str, output_path: str, mode: str):
@@ -222,14 +255,16 @@ def _run_context_generation(config_path: str, output_path: str, mode: str):
             ha_token=HA_TOKEN if mode in ("online", "hybrid") else None,
             mode=mode,
         )
-        _generation_state["status"] = "completed"
-        _generation_state["completed_at"] = time.time()
-        _generation_state["stats"] = stats
+        with _generation_lock:
+            _generation_state["status"] = "completed"
+            _generation_state["completed_at"] = time.time()
+            _generation_state["stats"] = stats
         _logger.info("Context generation completed: %s", output_path)
     except Exception as exc:
-        _generation_state["status"] = "error"
-        _generation_state["error"] = str(exc)
-        _generation_state["completed_at"] = time.time()
+        with _generation_lock:
+            _generation_state["status"] = "error"
+            _generation_state["error"] = str(exc)
+            _generation_state["completed_at"] = time.time()
         _logger.error("Context generation failed: %s", exc)
 
 
@@ -240,25 +275,30 @@ def _run_context_generation(config_path: str, output_path: str, mode: str):
 
 def run_startup_tests():
     """Run all tests on startup."""
-    print("\n" + "=" * 60)
-    print("RUNNING STARTUP SELF-TESTS")
-    print("=" * 60)
+    _logger.info("=" * 60)
+    _logger.info("RUNNING STARTUP SELF-TESTS")
+    _logger.info("=" * 60)
 
     try:
         result = subprocess.run(
             [sys.executable, "-m", "pytest", "tests/", "-v", "-p", "no:cacheprovider"],
             check=False,
-            stdout=sys.stdout,
-            stderr=sys.stderr,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
         )
-        print("=" * 60)
-        print(
-            "ALL TESTS PASSED" if result.returncode == 0 else f"TESTS FAILED ({result.returncode})"
-        )
-        print("=" * 60 + "\n")
+        _logger.info("=" * 60)
+        if result.returncode == 0:
+            _logger.info("ALL TESTS PASSED")
+        else:
+            _logger.error(
+                "TESTS FAILED (%d): %s",
+                result.returncode,
+                result.stderr.decode("utf-8", errors="replace")[:500],
+            )
+        _logger.info("=" * 60)
         return result.returncode == 0
     except Exception as e:
-        print(f"Error running tests: {e}")
+        _logger.error("Error running tests: %s", e)
         return False
 
 
@@ -283,6 +323,8 @@ def create_rest_app():
                 "server": "HA-Observer",
                 "version": __version__,
                 "tools_registered": get_tool_count(),
+                "tools_version": __version__,
+                "invocations": get_invocation_counts(),
                 "endpoints": {
                     "mcp_sse": f"http://{MCP_BIND_HOST}:{MCP_SSE_PORT}/sse",
                     "mcp_messages": f"http://{MCP_BIND_HOST}:{MCP_SSE_PORT}/messages",
@@ -381,15 +423,16 @@ def create_rest_app():
     async def context_generate(request):
         """Generate HA context file."""
         global _generation_state
-        if _generation_state["status"] == "running":
-            return JSONResponse(
-                {
-                    "success": False,
-                    "error": "Generation already in progress",
-                    "started_at": _generation_state["started_at"],
-                },
-                status_code=409,
-            )
+        with _generation_lock:
+            if _generation_state["status"] == "running":
+                return JSONResponse(
+                    {
+                        "success": False,
+                        "error": "Generation already in progress",
+                        "started_at": _generation_state["started_at"],
+                    },
+                    status_code=409,
+                )
 
         try:
             body = await request.body()
@@ -421,11 +464,12 @@ def create_rest_app():
                 status_code=403,
             )
 
-        _generation_state["status"] = "running"
-        _generation_state["started_at"] = time.time()
-        _generation_state["output_path"] = output_path
-        _generation_state["error"] = None
-        _generation_state["stats"] = {}
+        with _generation_lock:
+            _generation_state["status"] = "running"
+            _generation_state["started_at"] = time.time()
+            _generation_state["output_path"] = output_path
+            _generation_state["error"] = None
+            _generation_state["stats"] = {}
 
         thread = threading.Thread(
             target=_run_context_generation,
@@ -447,16 +491,17 @@ def create_rest_app():
 
     async def context_status(request):
         """Get context generation status."""
-        return JSONResponse(
-            {
-                "status": _generation_state["status"],
-                "started_at": _generation_state["started_at"],
-                "completed_at": _generation_state["completed_at"],
-                "output_path": _generation_state["output_path"],
-                "error": _generation_state["error"],
-                "stats": _generation_state["stats"],
-            }
-        )
+        with _generation_lock:
+            return JSONResponse(
+                {
+                    "status": _generation_state["status"],
+                    "started_at": _generation_state["started_at"],
+                    "completed_at": _generation_state["completed_at"],
+                    "output_path": _generation_state["output_path"],
+                    "error": _generation_state["error"],
+                    "stats": _generation_state["stats"],
+                }
+            )
 
     async def context_download(request):
         """Download generated context file."""
@@ -582,11 +627,25 @@ def create_rest_app():
             }
         )
 
+    async def get_tool_manifest(request):
+        """Return manifest for a specific tool."""
+        tool_name = request.path_params.get("tool_name", "")
+        from tools.manifests import get_manifest as _get_manifest
+
+        manifest = _get_manifest(tool_name)
+        if manifest is None:
+            return JSONResponse(
+                {"success": False, "error": f"Manifest not found for tool '{tool_name}'"},
+                status_code=404,
+            )
+        return JSONResponse({"success": True, "manifest": manifest})
+
     routes = [
         Route("/health", endpoint=health, methods=["GET"]),
         Route("/api/health", endpoint=health, methods=["GET"]),
         Route("/api/tools", endpoint=list_tools_endpoint, methods=["GET"]),
         Route("/api/tools/{tool_name}", endpoint=call_tool_endpoint, methods=["POST"]),
+        Route("/api/tools/{tool_name}/manifest", endpoint=get_tool_manifest, methods=["GET"]),
         Route("/api/openapi.json", endpoint=openapi_schema, methods=["GET"]),
         Route("/api/context/generate", endpoint=context_generate, methods=["POST"]),
         Route("/api/context/status", endpoint=context_status, methods=["GET"]),
@@ -597,7 +656,7 @@ def create_rest_app():
     middleware = [
         Middleware(
             CORSMiddleware,
-            allow_origins=["*"],
+            allow_origins=CORS_ALLOWED_ORIGINS,
             allow_methods=["*"],
             allow_headers=["*"],
         )

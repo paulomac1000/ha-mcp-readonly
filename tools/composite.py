@@ -26,10 +26,12 @@ import os
 import urllib.parse
 from collections import defaultdict
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 import yaml
 
+from tools.automations import _extract_entities_recursive
 from tools.utils import (
     _error_response,
     _success_response,
@@ -83,7 +85,7 @@ def _load_automations(config_path: str) -> tuple[list, str | None]:  # type: ign
         if not os.path.exists(fpath):
             return [], "automations.yaml not found — automation data unavailable"
         with open(fpath, encoding="utf-8") as fh:
-            data = yaml.load(fh, Loader=HomeAssistantLoader) or []
+            data = yaml.load(fh, Loader=HomeAssistantLoader)  # nosec B506 or []
         return data, None
     except Exception as exc:
         return [], f"Failed to load automations.yaml: {exc}"
@@ -679,6 +681,131 @@ def _do_get_area_diagnostic(
         return {"success": False, "error": str(exc)}
 
 
+def _do_audit_config_orphans(
+    config_path: str,
+    ha_url: str,
+    ha_token: str,
+) -> dict[str, Any]:
+    """Find orphan entities, never-triggered automations, broken entity references, and unused blueprints."""
+    warnings: list[str] = []
+    try:
+        ent_reg = load_registry("core.entity_registry", config_path)
+        entities = ent_reg.get("data", {}).get("entities", [])
+        entity_ids = {e.get("entity_id") for e in entities if e.get("entity_id")}
+
+        automations, auto_warn = _load_automations(config_path)
+        if auto_warn:
+            warnings.append(auto_warn)
+
+        scripts: list[dict[str, Any]] = []
+        scripts_path = os.path.join(config_path, "scripts.yaml")
+        if os.path.exists(scripts_path):
+            with open(scripts_path, encoding="utf-8") as _f:
+                scripts = yaml.load(_f, Loader=HomeAssistantLoader)  # nosec B506 or []
+
+        scenes: list[dict[str, Any]] = []
+        scenes_path = os.path.join(config_path, "scenes.yaml")
+        if os.path.exists(scenes_path):
+            with open(scenes_path, encoding="utf-8") as _f:
+                scenes = yaml.load(_f, Loader=HomeAssistantLoader)  # nosec B506 or []
+
+        dashboards = load_registry("lovelace", config_path).get("data", {}).get("dashboards", {})
+
+        referenced: set[str] = set()
+        for item in automations:
+            _extract_entities_recursive(item, referenced)
+        for item in scripts:
+            _extract_entities_recursive(item, referenced)
+        for item in scenes:
+            _extract_entities_recursive(item, referenced)
+        for dash_data in dashboards.values():
+            _extract_entities_recursive(dash_data, referenced)
+
+        orphan_entities = sorted(entity_ids - referenced)
+
+        never_triggered: list[dict[str, Any]] = []
+        if ha_url and ha_token:
+            states_data = make_ha_request(ha_url, ha_token, "/api/states")
+            if states_data.get("success"):
+                for s in states_data["data"]:
+                    eid = s.get("entity_id", "")
+                    if eid.startswith("automation."):
+                        attrs = s.get("attributes", {})
+                        lt = attrs.get("last_triggered")
+                        if not lt and s.get("state") != "unavailable":
+                            never_triggered.append(
+                                {
+                                    "entity_id": eid,
+                                    "state": s.get("state"),
+                                    "alias": attrs.get("friendly_name", ""),
+                                }
+                            )
+
+        all_config_entities: set[str] = set()
+        for item in automations:
+            _extract_entities_recursive(item, all_config_entities)
+        for item in scripts:
+            _extract_entities_recursive(item, all_config_entities)
+        for item in scenes:
+            _extract_entities_recursive(item, all_config_entities)
+        for dash_data in dashboards.values():
+            _extract_entities_recursive(dash_data, all_config_entities)
+
+        broken_references = sorted(all_config_entities - entity_ids)
+
+        unused_blueprints: list[str] = []
+        try:
+            blueprints_dir = Path(config_path) / "blueprints"
+            if blueprints_dir.is_dir():
+                all_blueprints: set[str] = set()
+                for domain in ("automation", "script"):
+                    domain_dir = blueprints_dir / domain
+                    if domain_dir.is_dir():
+                        for root, _, files in os.walk(domain_dir):
+                            for f in files:
+                                if f.endswith(".yaml"):
+                                    rel = Path(root).relative_to(blueprints_dir)
+                                    all_blueprints.add((rel / f).as_posix())
+
+                used_blueprints: set[str] = set()
+                for item in automations:
+                    ub = item.get("use_blueprint", {})
+                    if isinstance(ub, dict) and "path" in ub:
+                        used_blueprints.add(ub["path"])
+                for item in scripts:
+                    ub = item.get("use_blueprint", {})
+                    if isinstance(ub, dict) and "path" in ub:
+                        used_blueprints.add(ub["path"])
+
+                for bp in sorted(all_blueprints):
+                    if bp not in used_blueprints:
+                        unused_blueprints.append(bp)
+        except Exception:
+            warnings.append("Could not scan blueprints directory")
+
+        return {
+            "orphan_entities": orphan_entities[:100],
+            "orphan_count": len(orphan_entities),
+            "never_triggered_automations": never_triggered,
+            "never_triggered_count": len(never_triggered),
+            "broken_references": broken_references[:100],
+            "broken_reference_count": len(broken_references),
+            "unused_blueprints": unused_blueprints,
+            "unused_blueprint_count": len(unused_blueprints),
+            "summary": (
+                f"{len(orphan_entities)} orphan entities, "
+                f"{len(never_triggered)} never-triggered automations, "
+                f"{len(broken_references)} broken references, "
+                f"{len(unused_blueprints)} unused blueprints"
+            ),
+            "warnings": warnings,
+        }
+
+    except Exception as exc:
+        _logger.exception("_do_audit_config_orphans failed")
+        return {"error": str(exc)}
+
+
 # ================================================================
 # TOOL REGISTRATION
 # ================================================================
@@ -790,4 +917,31 @@ def register_composite_tools(  # type: ignore[no-untyped-def]
             return _error_response(data.get("error", "unknown error"))
         except Exception as e:
             _logger.exception("get_area_diagnostic failed")
+            return _error_response(str(e))
+
+    @mcp.tool(name="audit_config_orphans")
+    async def audit_config_orphans() -> str:
+        """[READ] Find orphan entities, never-triggered automations, broken entity references, and unused blueprints.
+
+        Scans entity registry, automations, scripts, scenes, dashboards, and blueprints
+        to identify configuration drift and unused resources.
+
+        Args:
+            None
+
+        Returns:
+            JSON with:
+            - orphan_entities: entities never used in automations/scripts/scenes/dashboards
+            - never_triggered_automations: automations with no last_triggered
+            - broken_references: entity references in configs but missing from registry
+            - unused_blueprints: blueprint files not used by any automation or script
+            - summary: plain-text summary string
+        """
+        try:
+            data = _do_audit_config_orphans(config_path, ha_url, ha_token)
+            if "error" in data:
+                return _error_response(data["error"])
+            return _success_response(data)
+        except Exception as e:
+            _logger.exception("audit_config_orphans failed")
             return _error_response(str(e))

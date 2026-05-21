@@ -210,6 +210,7 @@ def _do_search_config_entries(
     state: str | None,
     disabled_only: bool,
     with_entities: bool,
+    summary_only: bool,
     ha_url: str,
     ha_token: str,
     config_path: str,
@@ -230,26 +231,32 @@ def _do_search_config_entries(
         if disabled_only and not entry.get("disabled_by"):
             continue
 
-        entity_count = None
-        if with_entities or state:
-            entry_entities = [
-                e for e in all_entities if e.get("config_entry_id") == entry.get("entry_id")
-            ]
-            entity_count = len(entry_entities)
+        entry_entities = [
+            e for e in all_entities if e.get("config_entry_id") == entry.get("entry_id")
+        ]
+        entity_count = len(entry_entities) if (with_entities or state) and entry_entities else None
 
+        resolved_state: str | None = None
         if state:
-            entry_entities = [
-                e for e in all_entities if e.get("config_entry_id") == entry.get("entry_id")
-            ]
             state_info = _get_entry_state(entry, entry_entities, ha_url, ha_token)
-            if state_info.get("state") != state:
+            resolved_state = state_info.get("state")
+            if resolved_state != state:
                 continue
+
+        if resolved_state is None:
+            if entry.get("disabled_by"):
+                resolved_state = "not_loaded"
+            elif entry_entities:
+                resolved_state = "loaded"
+            else:
+                resolved_state = "unknown"
 
         result_entry = {
             "entry_id": entry.get("entry_id"),
             "domain": entry.get("domain"),
             "title": entry.get("title"),
             "source": entry.get("source"),
+            "state": resolved_state,
             "disabled_by": entry.get("disabled_by"),
             "created_at": entry.get("created_at"),
             "modified_at": entry.get("modified_at"),
@@ -260,6 +267,26 @@ def _do_search_config_entries(
 
         results.append(result_entry)
 
+    if summary_only and len(results) > 50:
+        loaded_count = sum(1 for r in results if r.get("state") != "not_loaded")
+        not_loaded_count = len(results) - loaded_count
+        return _success_response(
+            {
+                "filters": {
+                    "domain": domain,
+                    "title": title,
+                    "state": state,
+                    "disabled_only": disabled_only,
+                    "summary_only": True,
+                },
+                "total_entries": len(entries),
+                "matched_count": len(results),
+                "loaded": loaded_count,
+                "not_loaded": not_loaded_count,
+                "sample_entries": results[:20],
+            }
+        )
+
     return _success_response(
         {
             "filters": {
@@ -267,6 +294,7 @@ def _do_search_config_entries(
                 "title": title,
                 "state": state,
                 "disabled_only": disabled_only,
+                "summary_only": summary_only,
             },
             "total_entries": len(entries),
             "matched_count": len(results),
@@ -524,6 +552,7 @@ def register_config_entry_tools(mcp: Any, config_path: str, ha_url: str, ha_toke
         state: str | None = None,
         disabled_only: bool = False,
         with_entities: bool = False,
+        summary_only: bool = False,
     ) -> str:
         """[READ] Search config entries with optional filters.
 
@@ -533,6 +562,7 @@ def register_config_entry_tools(mcp: Any, config_path: str, ha_url: str, ha_toke
             state: Filter by entry state ("loaded", "not_loaded", "failed", "partial").
             disabled_only: Only return disabled entries.
             with_entities: Include entity count per entry.
+            summary_only: Return summary counts instead of full entry list when True.
 
         Returns:
             JSON with matched entries, filter summary, and result counts.
@@ -544,6 +574,7 @@ def register_config_entry_tools(mcp: Any, config_path: str, ha_url: str, ha_toke
                 state,
                 disabled_only,
                 with_entities,
+                summary_only,
                 ha_url,
                 ha_token,
                 config_path,

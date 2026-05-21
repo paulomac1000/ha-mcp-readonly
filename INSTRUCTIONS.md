@@ -29,7 +29,7 @@ session cookie and will return `404` or `401` when accessed with an LLAT.
    ```
    If it returns `404` or `401`, the endpoint is not accessible via LLAT.
 
-3. **Never assume** an endpoint exists just because you saw it in:
+3. **Never assume** an endpoint exists only because you saw it in:
    - WebSocket API docs (different transport)
    - Frontend network tab (uses cookie auth)
    - Other Home Assistant API wrappers (may use different auth)
@@ -47,5 +47,5 @@ After implementing any new HA API tool:
 
 - [ ] Endpoint verified in [official HA REST API docs](https://developers.home-assistant.io/docs/api/rest/)
 - [ ] Endpoint tested with `curl` + LLAT on a real HA instance
-- [ ] At least one test uses a recorded VCR cassette (not just a mock)
+- [ ] At least one test uses a recorded VCR cassette (not only a mock)
 - [ ] CI smoke test confirms the tool count is correct

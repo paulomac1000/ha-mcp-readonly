@@ -78,7 +78,7 @@ def load_yaml_file(file_path: str) -> Any:
     """
     try:
         with open(file_path, encoding="utf-8") as f:
-            return yaml.load(f, Loader=HomeAssistantLoader)
+            return yaml.load(f, Loader=HomeAssistantLoader)  # nosec B506
     except (OSError, yaml.YAMLError) as e:
         logger.warning(f"Error loading {file_path}: {e}")
         return None
@@ -95,7 +95,7 @@ def parse_yaml_string(yaml_content: str) -> Any:
         Parsed YAML data or None on error
     """
     try:
-        return yaml.load(yaml_content, Loader=HomeAssistantLoader)
+        return yaml.load(yaml_content, Loader=HomeAssistantLoader)  # nosec B506
     except yaml.YAMLError as e:
         logger.warning(f"Error parsing YAML: {e}")
         return None

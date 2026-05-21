@@ -12,6 +12,7 @@ Optimizations:
 import logging
 import math
 import re
+import threading
 import time
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta
@@ -32,25 +33,29 @@ TOOLS_VERSION = "1.0.0"
 
 _DIAGNOSTICS_CACHE: dict[str, tuple[Any, float]] = {}
 _CACHE_TTL = 60  # seconds
+_CACHE_LOCK = threading.Lock()
 
 
 def _get_cached(key: str) -> Any | None:
     """Returns data from cache if it is current."""
-    if key in _DIAGNOSTICS_CACHE:
-        data, timestamp = _DIAGNOSTICS_CACHE[key]
-        if time.time() - timestamp < _CACHE_TTL:
-            return data
+    with _CACHE_LOCK:
+        if key in _DIAGNOSTICS_CACHE:
+            data, timestamp = _DIAGNOSTICS_CACHE[key]
+            if time.time() - timestamp < _CACHE_TTL:
+                return data
     return None
 
 
 def _set_cache(key: str, data: Any) -> None:
     """Writes data to cache with timestamp."""
-    _DIAGNOSTICS_CACHE[key] = (data, time.time())
+    with _CACHE_LOCK:
+        _DIAGNOSTICS_CACHE[key] = (data, time.time())
 
 
 def _clear_cache() -> None:
     """Clears entire cache (used in tests)."""
-    _DIAGNOSTICS_CACHE.clear()
+    with _CACHE_LOCK:
+        _DIAGNOSTICS_CACHE.clear()
 
 
 # ========================================
@@ -59,7 +64,7 @@ def _clear_cache() -> None:
 
 
 def _get_log_errors_with_patterns(
-    config_path: str,
+    config_path: str | None,
     hours: int = 1,
     max_patterns: int = 10,
 ) -> dict[str, Any]:
@@ -67,6 +72,15 @@ def _get_log_errors_with_patterns(
     Counts errors in logs from last N hours and groups them into patterns.
     Also returns affected entities for each pattern.
     """
+    if config_path is None:
+        return {
+            "errors": 0,
+            "warnings": 0,
+            "top_error_patterns": [],
+            "api_errors": [],
+            "slow_entities": [],
+        }
+
     log_path = Path(config_path) / "home-assistant.log"
     if not log_path.exists():
         return {
@@ -377,17 +391,17 @@ def _do_diagnose_system_health(
 
     hours_back = min(max(int(hours_back), 1), 24)
 
-    states_res = make_ha_request(ha_url, ha_token, "/api/states")  # type: ignore[arg-type]
+    states_res = make_ha_request(ha_url, ha_token, "/api/states")
     if not states_res["success"]:
         return {"success": False, "error": "Cannot fetch system states"}
 
     states = states_res["data"]
 
     entity_reg = (
-        load_registry("core.entity_registry", config_path).get("data", {}).get("entities", [])  # type: ignore[arg-type]
+        load_registry("core.entity_registry", config_path).get("data", {}).get("entities", [])
     )
     device_reg = (
-        load_registry("core.device_registry", config_path).get("data", {}).get("devices", [])  # type: ignore[arg-type]
+        load_registry("core.device_registry", config_path).get("data", {}).get("devices", [])
     )
 
     total_entities = len(states)
@@ -400,7 +414,7 @@ def _do_diagnose_system_health(
 
     unavailable = [s for s in unavailable_raw if not is_ignorable(s["entity_id"])]
 
-    log_analysis = {
+    log_analysis: dict[str, Any] = {
         "errors": 0,
         "warnings": 0,
         "top_error_patterns": [],
@@ -408,7 +422,7 @@ def _do_diagnose_system_health(
         "slow_entities": [],
     }
     if include_log_analysis or include_performance:
-        log_analysis = _get_log_errors_with_patterns(config_path=config_path, hours=hours_back)  # type: ignore[arg-type]
+        log_analysis = _get_log_errors_with_patterns(config_path=config_path, hours=hours_back)
 
     unavailable_breakdown = {}
     if include_unavailable_breakdown:
@@ -419,9 +433,9 @@ def _do_diagnose_system_health(
 
     score = 100
     score -= min(len(unavailable) * 2, 40)
-    score -= min(log_analysis["errors"] * 3, 30)  # type: ignore[operator]
+    score -= min(log_analysis["errors"] * 3, 30)
     score -= min(len(notifications) * 10, 20)
-    score -= min(len(log_analysis.get("api_errors", [])) * 5, 10)  # type: ignore[arg-type]
+    score -= min(len(log_analysis.get("api_errors", [])) * 5, 10)
     score = max(0, score)
 
     if score >= 80:
@@ -456,7 +470,7 @@ def _do_diagnose_system_health(
             )
 
     if log_analysis.get("api_errors"):
-        for api_err in log_analysis["api_errors"][:2]:  # type: ignore[index]
+        for api_err in log_analysis["api_errors"][:2]:
             if api_err.get("error_type") == "rate_limit":
                 recommendations.append(
                     {
@@ -473,7 +487,7 @@ def _do_diagnose_system_health(
                 )
 
     if log_analysis.get("top_error_patterns"):
-        top_pattern = log_analysis["top_error_patterns"][0]  # type: ignore[index]
+        top_pattern = log_analysis["top_error_patterns"][0]
         if top_pattern["count"] > 10:
             recommendations.append(
                 {
@@ -483,7 +497,7 @@ def _do_diagnose_system_health(
             )
 
     if log_analysis.get("slow_entities"):
-        slow = log_analysis["slow_entities"][0]  # type: ignore[index]
+        slow = log_analysis["slow_entities"][0]
         if slow.get("max_time", 0) > 2.0:
             recommendations.append(
                 {
@@ -492,7 +506,7 @@ def _do_diagnose_system_health(
                 }
             )
 
-    if log_analysis["errors"] > 20:  # type: ignore[operator]
+    if log_analysis["errors"] > 20:
         recommendations.append(
             {
                 "priority": "medium",
@@ -564,17 +578,17 @@ def _do_get_unavailable_entities_grouped(
     if cached:
         return cached  # type: ignore[no-any-return]
 
-    states_res = make_ha_request(ha_url, ha_token, "/api/states")  # type: ignore[arg-type]
+    states_res = make_ha_request(ha_url, ha_token, "/api/states")
     if not states_res["success"]:
         return {"success": False, "error": "Cannot fetch states"}
 
     states = states_res["data"]
 
     entity_reg = (
-        load_registry("core.entity_registry", config_path).get("data", {}).get("entities", [])  # type: ignore[arg-type]
+        load_registry("core.entity_registry", config_path).get("data", {}).get("entities", [])
     )
     device_reg = (
-        load_registry("core.device_registry", config_path).get("data", {}).get("devices", [])  # type: ignore[arg-type]
+        load_registry("core.device_registry", config_path).get("data", {}).get("devices", [])
     )
 
     if group_by == "integration":
@@ -612,11 +626,11 @@ def _do_get_integration_health(
     ha_token: str | None = None,
     config_path: str | None = None,
 ) -> dict[str, Any]:
-    states_res = make_ha_request(ha_url, ha_token, "/api/states")  # type: ignore[arg-type]
+    states_res = make_ha_request(ha_url, ha_token, "/api/states")
     if not states_res["success"]:
         return {"success": False, "error": "API error"}
 
-    entity_reg_data = load_registry("core.entity_registry", config_path)  # type: ignore[arg-type]
+    entity_reg_data = load_registry("core.entity_registry", config_path)
     entity_reg = entity_reg_data.get("data", {}).get("entities", [])
 
     platform_entity_ids = {e["entity_id"] for e in entity_reg if e.get("platform") == domain}
@@ -638,7 +652,8 @@ def _do_get_integration_health(
     unavailable = [e for e in domain_entities if e["state"] in ["unavailable", "unknown"]]
 
     log_issues = []
-    log_path = Path(config_path) / "home-assistant.log"  # type: ignore[arg-type]
+    if config_path is not None:
+        log_path = Path(config_path) / "home-assistant.log"
     if log_path.exists():
         try:
             with open(log_path, encoding="utf-8", errors="ignore") as f:
@@ -700,9 +715,9 @@ def _do_get_area_automation_summary(
     ha_token: str | None = None,
     config_path: str | None = None,
 ) -> dict[str, Any]:
-    area_reg = load_registry("core.area_registry", config_path).get("data", {}).get("areas", [])  # type: ignore[arg-type]
-    dev_reg = load_registry("core.device_registry", config_path).get("data", {}).get("devices", [])  # type: ignore[arg-type]
-    ent_reg = load_registry("core.entity_registry", config_path).get("data", {}).get("entities", [])  # type: ignore[arg-type]
+    area_reg = load_registry("core.area_registry", config_path).get("data", {}).get("areas", [])
+    dev_reg = load_registry("core.device_registry", config_path).get("data", {}).get("devices", [])
+    ent_reg = load_registry("core.entity_registry", config_path).get("data", {}).get("entities", [])
 
     area = None
     for a in area_reg:
@@ -728,35 +743,36 @@ def _do_get_area_automation_summary(
             "error": f"No entities found in area '{area.get('name')}'",
         }
 
-    automations = []
+    automations: list[dict[str, Any]] = []
     try:
-        auto_path = Path(config_path) / "automations.yaml"  # type: ignore[arg-type]
-        if auto_path.exists():
-            with open(auto_path, encoding="utf-8") as f:
-                auto_data = yaml.safe_load(f) or []
+        if config_path is not None:
+            auto_path = Path(config_path) / "automations.yaml"
+            if auto_path.exists():
+                with open(auto_path, encoding="utf-8") as f:
+                    auto_data = yaml.safe_load(f) or []
 
-                for auto in auto_data:
-                    auto_str = str(auto)
-                    related_entities = []
+                    for auto in auto_data:
+                        auto_str = str(auto)
+                        related_entities = []
 
-                    for entity_id in area_ents:
-                        if re.search(rf"\b{re.escape(entity_id)}\b", auto_str):
-                            related_entities.append(entity_id)
+                        for entity_id in area_ents:
+                            if re.search(rf"\b{re.escape(entity_id)}\b", auto_str):
+                                related_entities.append(entity_id)
 
-                    if related_entities:
-                        automations.append(
-                            {
-                                "alias": auto.get("alias", "Unknown"),
-                                "id": auto.get("id"),
-                                "related_entities_count": len(related_entities),
-                                "sample_related": related_entities[:3],
-                            }
-                        )
+                        if related_entities:
+                            automations.append(
+                                {
+                                    "alias": auto.get("alias", "Unknown"),
+                                    "id": auto.get("id"),
+                                    "related_entities_count": len(related_entities),
+                                    "sample_related": related_entities[:3],
+                                }
+                            )
     except Exception:
         pass
 
     live_states = []
-    states_res = make_ha_request(ha_url, ha_token, "/api/states")  # type: ignore[arg-type]
+    states_res = make_ha_request(ha_url, ha_token, "/api/states")
     if states_res["success"]:
         live_states = [s for s in states_res["data"] if s["entity_id"] in area_ents]
 
@@ -820,7 +836,7 @@ def _do_get_notification_history(
     ha_url: str | None = None,
     ha_token: str | None = None,
 ) -> dict[str, Any]:
-    states_res = make_ha_request(ha_url, ha_token, "/api/states")  # type: ignore[arg-type]
+    states_res = make_ha_request(ha_url, ha_token, "/api/states")
     active = []
     if states_res["success"]:
         for s in states_res["data"]:
@@ -841,8 +857,8 @@ def _do_get_notification_history(
         start_time = end_time - timedelta(hours=24)
 
         logbook_res = make_ha_request(
-            ha_url,  # type: ignore[arg-type]
-            ha_token,  # type: ignore[arg-type]
+            ha_url,
+            ha_token,
             f"/api/logbook/{start_time.isoformat()}?end_time={end_time.isoformat()}",
         )
 
@@ -872,7 +888,7 @@ def _do_get_energy_dashboard_data(
     ha_url: str | None = None,
     ha_token: str | None = None,
 ) -> dict[str, Any]:
-    states_res = make_ha_request(ha_url, ha_token, "/api/states")  # type: ignore[arg-type]
+    states_res = make_ha_request(ha_url, ha_token, "/api/states")
     if not states_res["success"]:
         return {"success": False, "error": "API error"}
 
@@ -1043,7 +1059,7 @@ def _do_diagnose_person_tracking(
     if not person_entity.startswith("person."):
         person_entity = f"person.{person_entity}"
 
-    person_res = make_ha_request(ha_url, ha_token, f"/api/states/{person_entity}")  # type: ignore[arg-type]
+    person_res = make_ha_request(ha_url, ha_token, f"/api/states/{person_entity}")
     if not person_res["success"]:
         return {
             "success": False,
@@ -1062,7 +1078,7 @@ def _do_diagnose_person_tracking(
 
     zones_list = []
     try:
-        ce_data = load_registry("core.config_entries", config_path)  # type: ignore[arg-type]
+        ce_data = load_registry("core.config_entries", config_path)
         for entry in ce_data.get("data", {}).get("entries", []):
             if entry.get("domain") == "zone":
                 data = entry.get("data", {})
@@ -1077,7 +1093,7 @@ def _do_diagnose_person_tracking(
                     }
                 )
         if not zones_list:
-            zone_reg = load_registry("zone", config_path)  # type: ignore[arg-type]
+            zone_reg = load_registry("zone", config_path)
             for z in zone_reg.get("data", {}).get("items", []):
                 zones_list.append(
                     {
@@ -1120,24 +1136,24 @@ def _do_diagnose_person_tracking(
                     )
         nearby_zones.sort(key=lambda x: x["distance_m"])
 
-    states_result = make_ha_request(ha_url, ha_token, "/api/states")  # type: ignore[arg-type]
+    states_result = make_ha_request(ha_url, ha_token, "/api/states")
     states_map = {}
     if states_result.get("success"):
         states_map = {s["entity_id"]: s for s in states_result.get("data", [])}
 
     entity_reg = (
-        load_registry("core.entity_registry", config_path).get("data", {}).get("entities", [])  # type: ignore[arg-type]
+        load_registry("core.entity_registry", config_path).get("data", {}).get("entities", [])
     )
     entity_to_platform = {e["entity_id"]: e.get("platform", "unknown") for e in entity_reg}
     entity_to_device = {e["entity_id"]: e.get("device_id") for e in entity_reg}
 
     device_reg = (
-        load_registry("core.device_registry", config_path).get("data", {}).get("devices", [])  # type: ignore[arg-type]
+        load_registry("core.device_registry", config_path).get("data", {}).get("devices", [])
     )
     device_map = {}
     entry_domain_map = {}
     try:
-        ce_data = load_registry("core.config_entries", config_path)  # type: ignore[arg-type]
+        ce_data = load_registry("core.config_entries", config_path)
         for e in ce_data.get("data", {}).get("entries", []):
             entry_domain_map[e.get("entry_id", "")] = e.get("domain", "unknown")
     except Exception:
@@ -1227,7 +1243,7 @@ def _do_diagnose_person_tracking(
                     "severity": "error" if staleness == "stale_days" else "warning",
                     "tracker": tracker_id,
                     "message": (
-                        f"Tracker stale {round(age_seconds / 3600, 1)}h "  # type: ignore[operator]
+                        f"Tracker stale {round((age_seconds or 0) / 3600, 1)}h "
                         f"— last update {last_updated}"
                     ),
                 }
@@ -1237,31 +1253,34 @@ def _do_diagnose_person_tracking(
                 {
                     "severity": "info",
                     "tracker": tracker_id,
-                    "message": f"Tracker aging ({round(age_seconds / 60, 1)}min)",  # type: ignore[operator]
+                    "message": f"Tracker aging ({round((age_seconds or 0) / 60, 1)}min)",
                 }
             )
 
-    related_automations = []
+    related_automations: list[dict[str, Any]] = []
     try:
-        auto_path = Path(config_path) / "automations.yaml"  # type: ignore[arg-type]
-        if auto_path.exists():
-            with open(auto_path, encoding="utf-8") as f:
-                auto_data = yaml.safe_load(f) or []
-            for auto in auto_data:
-                auto_str = str(auto)
-                if person_entity in auto_str:
-                    alias = auto.get("alias", "Unknown")
-                    auto_id = auto.get("id")
-                    usage = []
-                    if person_entity in str(auto.get("trigger", "")):
-                        usage.append("trigger")
-                    if person_entity in str(auto.get("condition", "")):
-                        usage.append("condition")
-                    if person_entity in str(auto.get("action", "")):
-                        usage.append("action")
-                    if not usage:
-                        usage.append("config")
-                    related_automations.append({"alias": alias, "id": auto_id, "usage": usage})
+        if config_path is not None:
+            auto_path = Path(config_path) / "automations.yaml"
+            if auto_path.exists():
+                with open(auto_path, encoding="utf-8") as f:
+                    auto_data = yaml.safe_load(f) or []
+                    for auto in auto_data:
+                        auto_str = str(auto)
+                        if person_entity in auto_str:
+                            alias = auto.get("alias", "Unknown")
+                            auto_id = auto.get("id")
+                            usage = []
+                            if person_entity in str(auto.get("trigger", "")):
+                                usage.append("trigger")
+                            if person_entity in str(auto.get("condition", "")):
+                                usage.append("condition")
+                            if person_entity in str(auto.get("action", "")):
+                                usage.append("action")
+                            if not usage:
+                                usage.append("config")
+                            related_automations.append(
+                                {"alias": alias, "id": auto_id, "usage": usage}
+                            )
     except Exception:
         pass
 
@@ -1344,6 +1363,566 @@ def _do_diagnose_person_tracking(
         "issues": issues,
         "recommendations": recommendations[:5],
     }
+
+
+# ========================================
+# SNAPSHOT STORAGE (for take/compare entity health snapshot)
+# ========================================
+
+_SNAPSHOTS: dict[str, dict[str, Any]] = {}
+
+
+def _do_diagnose_connectivity(
+    ha_url: str | None = None,
+    ha_token: str | None = None,
+    config_path: str | None = None,
+) -> dict[str, Any]:
+    result: dict[str, Any] = {
+        "overall_status": "healthy",
+        "connectivity_issues": [],
+        "retry_patterns": [],
+        "recommendations": [],
+    }
+
+    health_res = make_ha_request(ha_url, ha_token, "/api/system_health")
+    if health_res["success"]:
+        health_data = health_res["data"]
+        issues = []
+        for integration, checks in health_data.items():
+            if isinstance(checks, dict):
+                for key, val in checks.items():
+                    if isinstance(val, str) and any(
+                        kw in val.lower() for kw in ["unavailable", "error", "fail", "retry"]
+                    ):
+                        issues.append({"integration": integration, "check": key, "detail": val})
+                    elif isinstance(val, bool) and not val:
+                        issues.append({"integration": integration, "check": key, "detail": "false"})
+        if issues:
+            result["overall_status"] = "degraded"
+            result["connectivity_issues"] = issues
+
+    if config_path:
+        log_path = Path(config_path) / "home-assistant.log"
+        if log_path.exists():
+            retries = []
+            try:
+                with open(log_path, encoding="utf-8", errors="ignore") as f:
+                    for line in f.readlines()[-5000:]:
+                        if "retrying" in line.lower() or "connection refused" in line.lower():
+                            retries.append(line.strip()[:200])
+                if retries:
+                    result["retry_patterns"] = retries[-20:]
+                    if not result["connectivity_issues"]:
+                        result["overall_status"] = "degraded"
+                    result["recommendations"].append(
+                        "Retry patterns detected — check network connectivity for affected integrations"
+                    )
+            except Exception:
+                pass
+
+    if not result["connectivity_issues"] and not result["retry_patterns"]:
+        result["recommendations"].append("No connectivity issues detected")
+
+    return result
+
+
+def _do_diagnose_performance(
+    ha_url: str | None = None,
+    ha_token: str | None = None,
+    config_path: str | None = None,
+) -> dict[str, Any]:
+    result: dict[str, Any] = {
+        "slowest_automations": [],
+        "most_triggered": [],
+        "largest_entities": [],
+        "summary": "",
+    }
+
+    states_res = make_ha_request(ha_url, ha_token, "/api/states")
+    if states_res["success"]:
+        entities_with_attrs = [
+            s
+            for s in states_res["data"]
+            if isinstance(s.get("attributes"), dict) and len(s["attributes"]) > 10
+        ]
+        entities_with_attrs.sort(key=lambda x: len(x.get("attributes", {})), reverse=True)
+        result["largest_entities"] = [
+            {
+                "entity_id": e["entity_id"],
+                "state": e.get("state"),
+                "attribute_count": len(e.get("attributes", {})),
+            }
+            for e in entities_with_attrs[:10]
+        ]
+
+        automation_states = [
+            s
+            for s in states_res["data"]
+            if s["entity_id"].startswith("automation.") and s.get("state") != "unavailable"
+        ]
+        automation_states.sort(
+            key=lambda x: x.get("attributes", {}).get("last_triggered") or "",
+        )
+        result["slowest_automations"] = [
+            {
+                "entity_id": a["entity_id"],
+                "state": a.get("state"),
+                "last_triggered": a.get("attributes", {}).get("last_triggered"),
+                "note": "Execution timing requires HA trace API; listed by stalest last_triggered",
+            }
+            for a in automation_states[:10]
+        ]
+
+    logbook_res = make_ha_request(
+        ha_url,
+        ha_token,
+        f"/api/logbook/{(datetime.now() - timedelta(hours=24)).isoformat()}",
+    )
+    if logbook_res.get("success"):
+        trigger_counts: Counter[str] = Counter()
+        for entry in logbook_res.get("data", []):
+            eid = entry.get("entity_id", "")
+            if isinstance(eid, str) and eid.startswith("automation."):
+                trigger_counts[eid] += 1
+        most_common = trigger_counts.most_common(10)
+        result["most_triggered"] = [
+            {"entity_id": eid, "trigger_count": count} for eid, count in most_common
+        ]
+
+    if config_path:
+        auto_path = Path(config_path) / "automations.yaml"
+        if auto_path.exists():
+            try:
+                with open(auto_path, encoding="utf-8") as f:
+                    auto_data = yaml.safe_load(f) or []
+                result["summary"] = f"Found {len(auto_data)} automations"
+            except Exception:
+                pass
+
+    if (
+        not result["slowest_automations"]
+        and not result["largest_entities"]
+        and not result["most_triggered"]
+    ):
+        result["summary"] = (
+            "Insufficient data for performance analysis. Enable tracing for automation timing."
+        )
+
+    return result
+
+
+def _do_diagnose_startup_progress(
+    ha_url: str | None = None,
+    ha_token: str | None = None,
+    config_path: str | None = None,
+) -> dict[str, Any]:
+    result: dict[str, Any] = {
+        "entity_count": 0,
+        "integrations_loaded": 0,
+        "integrations_total": 0,
+        "automations_on": 0,
+        "automations_total": 0,
+        "recent_errors": 0,
+        "progress_pct": 0.0,
+        "status": "unknown",
+    }
+
+    states_res = make_ha_request(ha_url, ha_token, "/api/states")
+    if states_res["success"]:
+        result["entity_count"] = len(states_res["data"])
+
+    config_res = make_ha_request(ha_url, ha_token, "/api/config")
+    if config_res["success"]:
+        components = config_res["data"].get("components", [])
+        result["integrations_loaded"] = len(components)
+
+    if config_path:
+        entries = load_registry("core.config_entries", config_path)
+        all_entries = entries.get("data", {}).get("entries", [])
+        result["integrations_total"] = len(all_entries)
+        loaded = sum(1 for e in all_entries if e.get("state") == "loaded")
+        result["integrations_loaded"] = max(result["integrations_loaded"], loaded)
+
+        auto_path = Path(config_path) / "automations.yaml"
+        if auto_path.exists():
+            try:
+                with open(auto_path, encoding="utf-8") as f:
+                    auto_data = yaml.safe_load(f) or []
+                result["automations_total"] = len(auto_data)
+            except Exception:
+                pass
+
+    if states_res["success"]:
+        result["automations_on"] = sum(
+            1
+            for s in states_res["data"]
+            if s["entity_id"].startswith("automation.") and s.get("state") == "on"
+        )
+
+    if config_path:
+        log_path = Path(config_path) / "home-assistant.log"
+        if log_path.exists():
+            try:
+                with open(log_path, encoding="utf-8", errors="ignore") as f:
+                    for line in f.readlines()[-1000:]:
+                        if "ERROR" in line:
+                            result["recent_errors"] += 1
+            except Exception:
+                pass
+
+    total = result["integrations_total"]
+    loaded = result["integrations_loaded"]
+    result["progress_pct"] = round(loaded / max(total, 1) * 100, 1)
+
+    if total == 0:
+        result["status"] = "starting"
+    elif result["progress_pct"] < 80:
+        result["status"] = "loading"
+    else:
+        result["status"] = "ready"
+
+    return result
+
+
+def _do_take_entity_health_snapshot(
+    ha_url: str | None = None,
+    ha_token: str | None = None,
+    config_path: str | None = None,
+) -> dict[str, Any]:
+    states_res = make_ha_request(ha_url, ha_token, "/api/states")
+    if not states_res["success"]:
+        return {"success": False, "error": "Cannot fetch states"}
+
+    all_states = states_res["data"]
+    unavailable = [s for s in all_states if s.get("state") in ("unavailable", "unknown")]
+
+    entity_reg_data = load_registry("core.entity_registry", config_path)
+    entity_reg = entity_reg_data.get("data", {}).get("entities", [])
+
+    by_integration: dict[str, int] = defaultdict(int)
+    for s in unavailable:
+        eid = s["entity_id"]
+        platform = "unknown"
+        for e in entity_reg:
+            if e.get("entity_id") == eid:
+                platform = e.get("platform", "unknown")
+                break
+        by_integration[platform] += 1
+
+    unavailable_entity_ids = [s["entity_id"] for s in unavailable]
+
+    snapshot_id = f"snap_{int(time.time())}"
+    _SNAPSHOTS[snapshot_id] = {
+        "timestamp": time.time(),
+        "total_entities": len(all_states),
+        "unavailable_count": len(unavailable),
+        "unavailable_by_integration": dict(by_integration),
+        "unavailable_entity_ids": unavailable_entity_ids,
+    }
+
+    return {
+        "success": True,
+        "snapshot_id": snapshot_id,
+        "total_entities": len(all_states),
+        "unavailable_count": len(unavailable),
+        "unavailable_by_integration": dict(by_integration),
+    }
+
+
+def _do_compare_entity_health_snapshot(
+    snapshot_id: str,
+    ha_url: str | None = None,
+    ha_token: str | None = None,
+    config_path: str | None = None,
+) -> dict[str, Any]:
+    snapshot = _SNAPSHOTS.get(snapshot_id)
+    if not snapshot:
+        return {"success": False, "error": f"Snapshot '{snapshot_id}' not found"}
+
+    states_res = make_ha_request(ha_url, ha_token, "/api/states")
+    if not states_res["success"]:
+        return {"success": False, "error": "Cannot fetch current states"}
+
+    prev_unavailable_ids = set(snapshot.get("unavailable_entity_ids", []))
+    current_state_map = {s["entity_id"]: s.get("state") for s in states_res["data"]}
+    current_unavailable_ids = {
+        eid for eid, state in current_state_map.items() if state in ("unavailable", "unknown")
+    }
+
+    new_unavailable = sorted(current_unavailable_ids - prev_unavailable_ids)
+    resolved = sorted(prev_unavailable_ids - current_unavailable_ids)
+    unchanged = sorted(prev_unavailable_ids & current_unavailable_ids)
+
+    return {
+        "success": True,
+        "snapshot_id": snapshot_id,
+        "snapshot_time": snapshot.get("timestamp"),
+        "new_unavailable": new_unavailable,
+        "new_unavailable_count": len(new_unavailable),
+        "resolved": resolved,
+        "resolved_count": len(resolved),
+        "unchanged": unchanged,
+        "unchanged_count": len(unchanged),
+    }
+
+
+def _do_diagnose_voice(
+    ha_url: str | None = None,
+    ha_token: str | None = None,
+    config_path: str | None = None,
+) -> dict[str, Any]:
+    result: dict[str, Any] = {
+        "exposed_entities_count": 0,
+        "assistants_available": [],
+        "pipelines": [],
+        "issues": [],
+        "recommendations": [],
+    }
+
+    states_res = make_ha_request(ha_url, ha_token, "/api/states")
+    if states_res["success"]:
+        stt = [s for s in states_res["data"] if s["entity_id"].startswith("stt.")]
+        tts = [s for s in states_res["data"] if s["entity_id"].startswith("tts.")]
+        conv = [s for s in states_res["data"] if s["entity_id"].startswith("conversation.")]
+
+        result["assistants_available"] = {
+            "stt": [s["entity_id"] for s in stt[:5]],
+            "tts": [t["entity_id"] for t in tts[:5]],
+            "conversation": [c["entity_id"] for c in conv[:5]],
+        }
+
+    exposure_res = make_ha_request(ha_url, ha_token, "/api/expose_entity")
+    if exposure_res["success"]:
+        exposed = exposure_res["data"]
+        if isinstance(exposed, dict):
+            result["exposed_entities_count"] = len(exposed.get("exposed_entities", {}))
+
+    if config_path:
+        pipe_data = load_registry("core.voice_assistant", config_path).get("data", {})
+        if pipe_data:
+            result["pipelines"] = pipe_data.get("pipelines", pipe_data.get("items", []))
+
+    if not result["assistants_available"].get("conversation"):
+        result["issues"].append("No conversation agents found — voice control may be unavailable")
+
+    return result
+
+
+def _do_diagnose_installation_type(
+    ha_url: str | None = None,
+    ha_token: str | None = None,
+) -> dict[str, Any]:
+    result: dict[str, Any] = {
+        "type": "unknown",
+        "version": "",
+        "constraints": [],
+        "available_features": [],
+    }
+
+    supervisor_res = make_ha_request(ha_url, ha_token, "/api/supervisor/info")
+    if supervisor_res["success"]:
+        info = supervisor_res["data"]
+        result["type"] = info.get("type", "os")
+        result["available_features"] = ["supervisor", "addons", "backups"]
+    else:
+        config_res = make_ha_request(ha_url, ha_token, "/api/config")
+        if config_res["success"]:
+            cfg = config_res["data"]
+            result["version"] = cfg.get("version", "")
+            result["type"] = "container"
+            result["constraints"].append("No Supervisor — addons and snapshots unavailable")
+        else:
+            result["type"] = "core"
+            result["constraints"].append("Minimal installation — manual updates required")
+
+    if result["type"] == "os":
+        result["available_features"] = [
+            "supervisor",
+            "addons",
+            "backups",
+            "OTA updates",
+            "full system control",
+        ]
+    elif result["type"] == "supervised":
+        result["available_features"] = ["supervisor", "addons", "backups", "managed by host OS"]
+    elif result["type"] == "container":
+        result["available_features"] = ["docker compose updates", "manual addons"]
+    elif result["type"] == "core":
+        result["available_features"] = ["pip/venv updates", "minimal footprint"]
+
+    if not result["version"]:
+        config_res = make_ha_request(ha_url, ha_token, "/api/config")
+        if config_res["success"]:
+            result["version"] = config_res["data"].get("version", "")
+
+    return result
+
+
+_KNOWN_FRAGILE_INTEGRATIONS = [
+    "tuya_local",
+    "gree",
+    "xiaomi_miot",
+    "googlefindmy",
+    "pstryk",
+    "kontomierz",
+]
+
+
+def _do_diagnose_post_update_integrations(
+    ha_url: str | None = None,
+    ha_token: str | None = None,
+    config_path: str | None = None,
+) -> dict[str, Any]:
+    result: dict[str, Any] = {
+        "custom_components_total": 0,
+        "loaded": 0,
+        "failed": 0,
+        "fragile_highlighted": [],
+        "per_integration": {},
+        "recent_errors": [],
+        "recommendations": [],
+    }
+
+    entries_data = load_registry("core.config_entries", config_path)
+    all_entries = entries_data.get("data", {}).get("entries", [])
+
+    builtin_domains = {
+        "homeassistant",
+        "automation",
+        "script",
+        "scene",
+        "group",
+        "input_boolean",
+        "input_number",
+        "input_select",
+        "input_text",
+        "input_datetime",
+        "input_button",
+        "counter",
+        "timer",
+        "schedule",
+        "template",
+        "zone",
+        "person",
+        "tag",
+        "sun",
+        "weather",
+        "sensor",
+        "binary_sensor",
+        "switch",
+        "light",
+        "climate",
+        "cover",
+        "lock",
+        "fan",
+        "vacuum",
+        "media_player",
+        "camera",
+        "alarm_control_panel",
+        "device_tracker",
+        "stt",
+        "tts",
+        "conversation",
+        "notify",
+        "update",
+        "system_log",
+        "persistent_notification",
+        "history",
+        "recorder",
+        "logbook",
+        "energy",
+        "mobile_app",
+        "default_config",
+        "dhcp",
+        "usb",
+        "zeroconf",
+        "ssdp",
+        "mqtt",
+        "http",
+        "api",
+        "config",
+        "frontend",
+        "lovelace",
+        "map",
+        "image",
+        "stream",
+        "ffmpeg",
+        "hls",
+        "generic",
+        "demo",
+        "discovery",
+        "system_health",
+    }
+
+    custom = [e for e in all_entries if e.get("domain") not in builtin_domains]
+    result["custom_components_total"] = len(custom)
+
+    fragile_found = []
+    for e in custom:
+        domain = e.get("domain", "unknown")
+        entry_state = e.get("state", "unknown")
+        entry_id = e.get("entry_id", "")
+        title = e.get("title", "")
+
+        if domain in _KNOWN_FRAGILE_INTEGRATIONS:
+            fragile_found.append(
+                {
+                    "domain": domain,
+                    "title": title,
+                    "state": entry_state,
+                }
+            )
+
+        per = result["per_integration"].get(
+            domain,
+            {
+                "total": 0,
+                "loaded": 0,
+                "failed": 0,
+                "entries": [],
+            },
+        )
+        per["total"] += 1
+        if entry_state == "loaded":
+            per["loaded"] += 1
+            result["loaded"] += 1
+        else:
+            per["failed"] += 1
+            result["failed"] += 1
+        per["entries"].append({"entry_id": entry_id, "title": title, "state": entry_state})
+        result["per_integration"][domain] = per
+
+    if fragile_found:
+        result["fragile_highlighted"] = fragile_found
+        result["recommendations"].append(
+            "Known-fragile integrations detected — check each after updates"
+        )
+
+    if config_path:
+        log_path = Path(config_path) / "home-assistant.log"
+        if log_path.exists():
+            try:
+                with open(log_path, encoding="utf-8", errors="ignore") as f:
+                    for line in f.readlines()[-2000:]:
+                        for e in custom:
+                            if e.get("domain", "") in line and (
+                                "ERROR" in line or "WARNING" in line
+                            ):
+                                result["recent_errors"].append(line.strip()[:200])
+                                break
+                result["recent_errors"] = result["recent_errors"][:20]
+            except Exception:
+                pass
+
+    if result["failed"] > 0:
+        result["recommendations"].append(
+            f"{result['failed']} integration(s) failed to load — may be incompatible with current HA version"
+        )
+
+    if not result["recommendations"]:
+        result["recommendations"].append("All custom integrations appear healthy")
+
+    return result
 
 
 # ========================================
@@ -1525,4 +2104,155 @@ def register_diagnostics_tools(mcp, ha_url, ha_token, config_path) -> None:  # t
             return _success_response(result)
         except Exception as exc:
             _logger.exception("diagnose_person_tracking failed")
+            return _error_response(str(exc))
+
+    @mcp.tool()
+    def diagnose_connectivity() -> str:
+        """[READ] Diagnose network and API connectivity issues across integrations. Checks system health and log retry patterns.
+
+        Args:
+            (none)
+
+        Returns:
+            JSON with overall_status, connectivity_issues list, retry_patterns, and recommendations.
+        """
+        try:
+            result = _do_diagnose_connectivity(
+                ha_url=ha_url, ha_token=ha_token, config_path=config_path
+            )
+            return _success_response(result)
+        except Exception as exc:
+            _logger.exception("diagnose_connectivity failed")
+            return _error_response(str(exc))
+
+    @mcp.tool()
+    def diagnose_performance() -> str:
+        """[READ] Analyze system performance: slow automations, entities with large attribute payloads, and trigger frequency.
+
+        Args:
+            (none)
+
+        Returns:
+            JSON with slowest_automations, largest_entities, and summary.
+        """
+        try:
+            result = _do_diagnose_performance(
+                ha_url=ha_url, ha_token=ha_token, config_path=config_path
+            )
+            return _success_response(result)
+        except Exception as exc:
+            _logger.exception("diagnose_performance failed")
+            return _error_response(str(exc))
+
+    @mcp.tool()
+    def diagnose_startup_progress() -> str:
+        """[READ] Estimate Home Assistant startup progress by counting entities, loaded integrations, and active automations.
+
+        Args:
+            (none)
+
+        Returns:
+            JSON with entity_count, integrations_loaded/total, automations_on/total, progress_pct, and status.
+        """
+        try:
+            result = _do_diagnose_startup_progress(
+                ha_url=ha_url, ha_token=ha_token, config_path=config_path
+            )
+            return _success_response(result)
+        except Exception as exc:
+            _logger.exception("diagnose_startup_progress failed")
+            return _error_response(str(exc))
+
+    @mcp.tool()
+    def take_entity_health_snapshot() -> str:
+        """[READ] Take a snapshot of current entity health (unavailable entities grouped by integration) for later comparison.
+
+        Args:
+            (none)
+
+        Returns:
+            JSON with snapshot_id, total_entities, unavailable_count, and unavailable_by_integration.
+        """
+        try:
+            result = _do_take_entity_health_snapshot(
+                ha_url=ha_url, ha_token=ha_token, config_path=config_path
+            )
+            return _success_response(result)
+        except Exception as exc:
+            _logger.exception("take_entity_health_snapshot failed")
+            return _error_response(str(exc))
+
+    @mcp.tool()
+    def compare_entity_health_snapshot(snapshot_id: str) -> str:
+        """[READ] Compare a previously taken health snapshot with the current state. Shows new and resolved unavailable entities.
+
+        Args:
+            snapshot_id: Snapshot ID from take_entity_health_snapshot (e.g. "snap_1705312800").
+
+        Returns:
+            JSON with new_unavailable_sample, new_unavailable_count, resolved_count, and unchanged_count.
+        """
+        try:
+            result = _do_compare_entity_health_snapshot(
+                snapshot_id=snapshot_id,
+                ha_url=ha_url,
+                ha_token=ha_token,
+                config_path=config_path,
+            )
+            return _success_response(result)
+        except Exception as exc:
+            _logger.exception("compare_entity_health_snapshot failed")
+            return _error_response(str(exc))
+
+    @mcp.tool()
+    def diagnose_voice() -> str:
+        """[READ] Diagnose voice assistant configuration: exposed entities, available STT/TTS/conversation agents, and pipelines.
+
+        Args:
+            (none)
+
+        Returns:
+            JSON with exposed_entities_count, assistants_available, pipelines, issues, and recommendations.
+        """
+        try:
+            result = _do_diagnose_voice(ha_url=ha_url, ha_token=ha_token, config_path=config_path)
+            return _success_response(result)
+        except Exception as exc:
+            _logger.exception("diagnose_voice failed")
+            return _error_response(str(exc))
+
+    @mcp.tool()
+    def diagnose_installation_type() -> str:
+        """[READ] Detect Home Assistant installation type (OS, Supervised, Container, or Core) and list feature constraints.
+
+        Args:
+            (none)
+
+        Returns:
+            JSON with type, version, constraints list, and available_features list.
+        """
+        try:
+            result = _do_diagnose_installation_type(ha_url=ha_url, ha_token=ha_token)
+            return _success_response(result)
+        except Exception as exc:
+            _logger.exception("diagnose_installation_type failed")
+            return _error_response(str(exc))
+
+    @mcp.tool()
+    def diagnose_post_update_integrations() -> str:
+        """[READ] Check custom integrations after a Home Assistant update. Highlights known-fragile integrations and load failures.
+
+        Args:
+            (none)
+
+        Returns:
+            JSON with custom_components_total, loaded/failed counts, fragile_highlighted, per_integration details, and recommendations.
+        """
+        try:
+            result = _do_diagnose_post_update_integrations(
+                ha_url=ha_url, ha_token=ha_token, config_path=config_path
+            )
+            return _success_response(result)
+        except Exception as exc:
+            _logger.exception("diagnose_post_update_integrations failed")
             return _error_response(str(exc))

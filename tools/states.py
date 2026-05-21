@@ -9,6 +9,7 @@ Optimizations:
 - Batch operations for many entities
 """
 
+import asyncio
 import json
 import logging
 import time
@@ -971,7 +972,9 @@ def register_state_tools(mcp, ha_url, ha_token, config_path: str | None = None) 
         if cached:
             return cached  # type: ignore[no-any-return]
         try:
-            data = _do_get_all_states(ha_url, ha_token, config_path, domain, include_attributes)
+            data = await asyncio.to_thread(
+                _do_get_all_states, ha_url, ha_token, config_path, domain, include_attributes
+            )
         except Exception as e:
             _logger.exception("get_all_states failed")
             return _error_response(str(e))
@@ -993,7 +996,9 @@ def register_state_tools(mcp, ha_url, ha_token, config_path: str | None = None) 
             JSON with full entity state object.
         """
         try:
-            data = _do_get_entity_state(ha_url, ha_token, config_path, entity_id)
+            data = await asyncio.to_thread(
+                _do_get_entity_state, ha_url, ha_token, config_path, entity_id
+            )
         except Exception as e:
             _logger.exception("get_entity_state failed")
             return _error_response(str(e))
@@ -1012,7 +1017,9 @@ def register_state_tools(mcp, ha_url, ha_token, config_path: str | None = None) 
             JSON with found entities and missing ids.
         """
         try:
-            data = _do_get_entity_state_batch(ha_url, ha_token, config_path, entity_ids)
+            data = await asyncio.to_thread(
+                _do_get_entity_state_batch, ha_url, ha_token, config_path, entity_ids
+            )
         except Exception as e:
             _logger.exception("get_entity_state_batch failed")
             return _error_response(str(e))
@@ -1043,7 +1050,8 @@ def register_state_tools(mcp, ha_url, ha_token, config_path: str | None = None) 
         if cached:
             return cached  # type: ignore[no-any-return]
         try:
-            data = _do_get_states_grouped(
+            data = await asyncio.to_thread(
+                _do_get_states_grouped,
                 ha_url,
                 ha_token,
                 config_path,
@@ -1074,7 +1082,7 @@ def register_state_tools(mcp, ha_url, ha_token, config_path: str | None = None) 
         if cached:
             return cached  # type: ignore[no-any-return]
         try:
-            data = _do_get_services(ha_url, ha_token, config_path, domain)
+            data = await asyncio.to_thread(_do_get_services, ha_url, ha_token, config_path, domain)
         except Exception as e:
             _logger.exception("get_services failed")
             return _error_response(str(e))
@@ -1097,8 +1105,8 @@ def register_state_tools(mcp, ha_url, ha_token, config_path: str | None = None) 
             max_results: Maximum results (default 50).
         """
         try:
-            data = _do_search_entities(
-                ha_url, ha_token, config_path, search_term, domain, max_results
+            data = await asyncio.to_thread(
+                _do_search_entities, ha_url, ha_token, config_path, search_term, domain, max_results
             )
         except Exception as e:
             _logger.exception("search_entities failed")
@@ -1117,7 +1125,7 @@ def register_state_tools(mcp, ha_url, ha_token, config_path: str | None = None) 
         if cached:
             return cached  # type: ignore[no-any-return]
         try:
-            data = _do_get_domains_summary(ha_url, ha_token, config_path)
+            data = await asyncio.to_thread(_do_get_domains_summary, ha_url, ha_token, config_path)
         except Exception as e:
             _logger.exception("get_domains_summary failed")
             return _error_response(str(e))
@@ -1151,7 +1159,8 @@ def register_state_tools(mcp, ha_url, ha_token, config_path: str | None = None) 
         if cached:
             return cached  # type: ignore[no-any-return]
         try:
-            data = _do_get_system_overview(
+            data = await asyncio.to_thread(
+                _do_get_system_overview,
                 ha_url,
                 ha_token,
                 config_path,
@@ -1197,7 +1206,8 @@ def register_state_tools(mcp, ha_url, ha_token, config_path: str | None = None) 
             List of entities matching criteria (optionally grouped).
         """
         try:
-            data = _do_get_states_filtered(
+            data = await asyncio.to_thread(
+                _do_get_states_filtered,
                 ha_url,
                 ha_token,
                 config_path,
@@ -1241,8 +1251,15 @@ def register_state_tools(mcp, ha_url, ha_token, config_path: str | None = None) 
             JSON with entities that changed, grouped by domain
         """
         try:
-            data = _do_get_entity_changes(
-                ha_url, ha_token, config_path, hours_back, domains, change_type, min_changes
+            data = await asyncio.to_thread(
+                _do_get_entity_changes,
+                ha_url,
+                ha_token,
+                config_path,
+                hours_back,
+                domains,
+                change_type,
+                min_changes,
             )
         except Exception as e:
             _logger.exception("get_entity_changes failed")
@@ -1266,8 +1283,8 @@ def register_state_tools(mcp, ha_url, ha_token, config_path: str | None = None) 
             JSON with history of changes for each entity.
         """
         try:
-            data = _do_get_history_batch(
-                ha_url, ha_token, config_path, entity_ids, hours_back, limit
+            data = await asyncio.to_thread(
+                _do_get_history_batch, ha_url, ha_token, config_path, entity_ids, hours_back, limit
             )
         except Exception as e:
             _logger.exception("get_history_batch failed")
@@ -1293,8 +1310,14 @@ def register_state_tools(mcp, ha_url, ha_token, config_path: str | None = None) 
             JSON with recent changes, automations, and issues
         """
         try:
-            data = _do_verify_recent_implementation(
-                ha_url, ha_token, config_path, hours_back, entity_pattern, automation_ids
+            data = await asyncio.to_thread(
+                _do_verify_recent_implementation,
+                ha_url,
+                ha_token,
+                config_path,
+                hours_back,
+                entity_pattern,
+                automation_ids,
             )
         except Exception as e:
             _logger.exception("verify_recent_implementation failed")

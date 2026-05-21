@@ -17,6 +17,7 @@ import statistics
 import unicodedata
 from collections import Counter
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 from tools.utils import (
@@ -1027,6 +1028,111 @@ def _do_get_hacs_data(config_path: str) -> dict[str, Any]:
     return data
 
 
+def _do_hacs_get_update_count(config_path: str) -> dict[str, Any]:
+    data = load_registry("hacs.data", config_path)
+    if not data:
+        return {"error": "HACS not installed or storage file not found"}
+
+    repos = data.get("data", {}).get("repositories", [])
+    total_installed = 0
+    updates_available = 0
+    critical_updates: list[dict[str, Any]] = []
+    major_version_bumps: list[dict[str, Any]] = []
+
+    for repo in repos:
+        installed = repo.get("installed", False)
+        if not installed:
+            continue
+        total_installed += 1
+
+        available = repo.get("available_updates", 0)
+        if available and int(available) > 0:
+            updates_available += 1
+
+            name = repo.get("full_name", repo.get("name", "unknown"))
+            installed_version = repo.get("installed_version", "")
+            available_version = repo.get("available_version", "")
+
+            if installed_version and available_version:
+                iv_parts = installed_version.lstrip("v").split(".")
+                av_parts = available_version.lstrip("v").split(".")
+                if iv_parts and av_parts and iv_parts[0] != av_parts[0]:
+                    major_version_bumps.append(
+                        {
+                            "name": name,
+                            "installed": installed_version,
+                            "available": available_version,
+                        }
+                    )
+
+            if repo.get("critical", False):
+                critical_updates.append(
+                    {
+                        "name": name,
+                        "installed": installed_version,
+                        "available": available_version,
+                    }
+                )
+
+    return {
+        "total_installed": total_installed,
+        "updates_available": updates_available,
+        "critical_updates": critical_updates,
+        "major_version_bumps": major_version_bumps,
+    }
+
+
+def _do_get_nfc_tags(config_path: str, ha_url: str | None, ha_token: str | None) -> dict[str, Any]:
+    tags: list[dict[str, Any]] = []
+
+    tag_registry = load_registry("core.tag", config_path)
+    if tag_registry.get("data", {}).get("tags"):
+        for t in tag_registry["data"]["tags"]:
+            tags.append(
+                {
+                    "tag_id": t.get("id"),
+                    "name": t.get("name"),
+                    "last_scanned": t.get("last_scanned"),
+                }
+            )
+
+    if not tags and ha_url and ha_token:
+        states_data = make_ha_request(ha_url, ha_token, "/api/states")
+        if states_data.get("success"):
+            for s in states_data["data"]:
+                if s.get("entity_id", "").startswith("tag."):
+                    tags.append(
+                        {
+                            "tag_id": s["entity_id"],
+                            "name": s.get("attributes", {}).get("friendly_name", s["entity_id"]),
+                            "last_scanned": s.get("attributes", {}).get("last_scanned"),
+                        }
+                    )
+
+    if not tags:
+        return {"tags": [], "total": 0, "unused_count": 0, "info": "No NFC tags found"}
+
+    automations_path = Path(config_path) / "automations.yaml"
+    automations_text = ""
+    if automations_path.exists():
+        automations_text = automations_path.read_text(encoding="utf-8")
+
+    for tag in tags:
+        tag_id = tag["tag_id"]
+        used_in = []
+        if tag_id and automations_text and tag_id in automations_text:
+            used_in.append(tag_id)
+        tag["used_in_automations"] = used_in
+
+    unused_count = sum(1 for t in tags if not t.get("used_in_automations"))
+
+    return {
+        "tags": tags,
+        "total": len(tags),
+        "unused_count": unused_count,
+    }
+
+
 def _do_get_timers(config_path: str) -> dict[str, Any]:
     data = load_registry("timer", config_path).get("data", {}).get("items", [])
     return {"total_timers": len(data), "timers": data}
@@ -1092,9 +1198,16 @@ def _do_get_template_entities(entity_id: str | None, config_path: str) -> dict[s
     return {"total_templates": len(templates), "templates": templates}
 
 
-def _do_get_template_entity_code(entity_id: str, config_path: str) -> dict[str, Any]:
+def _do_get_template_entity_code(
+    entity_id: str, config_path: str, force_reload: bool = False
+) -> dict[str, Any]:
     if not entity_id or not isinstance(entity_id, str) or not entity_id.strip():
         return {"error": "entity_id is required and must be a non-empty string"}
+
+    if force_reload:
+        from tools.utils import invalidate_registry_cache
+
+        invalidate_registry_cache("core.config_entries", config_path)
 
     data = load_registry("core.config_entries", config_path).get("data", {}).get("entries", [])
 
@@ -1135,6 +1248,7 @@ def _do_get_template_entity_code(entity_id: str, config_path: str) -> dict[str, 
             "entry_id": entry.get("entry_id"),
             "created_at": entry.get("created_at"),
             "modified_at": entry.get("modified_at"),
+            "source": "live" if force_reload else "cache",
         }
 
     return {"error": f"Template '{entity_id}' not found"}
@@ -1538,6 +1652,52 @@ def register_storage_tools(  # type: ignore[no-untyped-def]
             return _error_response(str(e))
 
     @mcp.tool()
+    async def hacs_get_update_count() -> str:
+        """[READ] Get HACS repository update counts, critical updates, and major version bumps.
+
+        Lightweight statistics from hacs.data — total installed, updates available,
+        critical updates, and major version bumps (e.g. v1.x -> v2.x).
+
+        Args:
+            None
+
+        Returns:
+            JSON with total_installed, updates_available, critical_updates list,
+            major_version_bumps list.
+        """
+        try:
+            result = _do_hacs_get_update_count(config_path=config_path)
+            if "error" in result:
+                return _error_response(result["error"])
+            return _success_response(result)
+        except Exception as e:
+            return _error_response(str(e))
+
+    @mcp.tool()
+    async def get_nfc_tags() -> str:
+        """[READ] List NFC tags with automation usage info.
+
+        Reads from .storage/core.tag registry, falls back to /api/states for tag.* entities.
+        Cross-references each tag against automations.yaml to determine usage.
+
+        Args:
+            None
+
+        Returns:
+            JSON with tags list (tag_id, name, last_scanned, used_in_automations),
+            total count, and unused_count.
+        """
+        try:
+            result = _do_get_nfc_tags(
+                config_path=config_path,
+                ha_url=ha_url,
+                ha_token=ha_token,
+            )
+            return _success_response(result)
+        except Exception as e:
+            return _error_response(str(e))
+
+    @mcp.tool()
     async def get_timers() -> str:
         """[READ] Fetches list of timers with their configuration."""
         try:
@@ -1577,20 +1737,22 @@ def register_storage_tools(  # type: ignore[no-untyped-def]
             return _error_response(str(e))
 
     @mcp.tool()
-    async def get_template_entity_code(entity_id: str) -> str:
+    async def get_template_entity_code(entity_id: str, force_reload: bool = False) -> str:
         """[READ] Returns full Jinja2 template code for a single template helper entity.
         ~95% token savings vs get_template_entities().
 
         Args:
             entity_id: Entity id of the template (e.g. "sensor.my_template").
+            force_reload: Read directly from storage instead of cache (default: False).
 
         Returns:
-            JSON with template metadata and full Jinja2 code.
+            JSON with template metadata, full Jinja2 code, and source indicator.
         """
         try:
             result = _do_get_template_entity_code(
                 entity_id=entity_id,
                 config_path=config_path,
+                force_reload=force_reload,
             )
             if "error" in result:
                 return _error_response(result["error"])
