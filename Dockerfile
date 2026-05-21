@@ -31,7 +31,8 @@ RUN chmod +x start.sh
 ENV PATH=/root/.local/bin:$PATH
 
 # Explicit USER: container runs as root (required for docker.sock, journal, dbus access)
-USER root  # nosemgrep: dockerfile.security.last-user-is-root.last-user-is-root
+# nosemgrep: dockerfile.security.last-user-is-root.last-user-is-root
+USER root
 
 # Ports: 9091 (health), 9092 (MCP SSE), 9093 (REST API)
 EXPOSE 9091 9092 9093
