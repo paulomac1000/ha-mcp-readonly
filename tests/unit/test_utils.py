@@ -516,7 +516,9 @@ class TestSanitizeResponseData:
     def test_sanitizes_jwt_in_string(self):
         from tools.utils import sanitize_response_data
 
-        result = sanitize_response_data("Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dummy")
+        result = sanitize_response_data(
+            "Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dummy"
+        )
         assert "eyJhbGciOi" not in str(result)
         assert "JWT_REDACTED" in str(result)
 
