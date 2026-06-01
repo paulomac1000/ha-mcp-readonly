@@ -220,6 +220,7 @@ def _do_get_entity_state(
     ha_token: str,
     config_path: str | None,
     entity_id: str,
+    compact: bool = False,
 ) -> dict[str, Any]:
     result = make_ha_request(ha_url, ha_token, f"/api/states/{entity_id}")
 
@@ -230,6 +231,16 @@ def _do_get_entity_state(
 
     entity_data = result["data"]
     entity_data.pop("context", None)
+
+    if compact:
+        attrs = entity_data.get("attributes", {})
+        entity_data = {
+            "entity_id": entity_data.get("entity_id"),
+            "state": entity_data.get("state"),
+            "friendly_name": attrs.get("friendly_name"),
+            "last_changed": entity_data.get("last_changed"),
+            "last_updated": entity_data.get("last_updated"),
+        }
 
     return {"success": True, "entity": entity_data}
 
@@ -986,18 +997,20 @@ def register_state_tools(mcp, ha_url, ha_token, config_path: str | None = None) 
         return response
 
     @mcp.tool()
-    async def get_entity_state(entity_id: str) -> str:
+    async def get_entity_state(entity_id: str, compact: bool = False) -> str:
         """[READ] Get detailed state of a single entity.
 
         Args:
             entity_id: Entity id (e.g., 'sensor.temperature_living_room').
+            compact: Strip attributes/context/last_reported, keep only state,
+                last_changed, last_updated, entity_id, friendly_name (default: False).
 
         Returns:
             JSON with full entity state object.
         """
         try:
             data = await asyncio.to_thread(
-                _do_get_entity_state, ha_url, ha_token, config_path, entity_id
+                _do_get_entity_state, ha_url, ha_token, config_path, entity_id, compact
             )
         except Exception as e:
             _logger.exception("get_entity_state failed")

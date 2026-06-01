@@ -26,6 +26,7 @@ from tools.automations import register_automation_tools  # noqa: E402
 from tools.batch_operations import register_batch_operations_tools  # noqa: E402
 from tools.blueprints import register_blueprint_tools  # noqa: E402
 from tools.capabilities import register_capability_tools  # noqa: E402
+from tools.categories import register_categories_tools  # noqa: E402
 from tools.composite import register_composite_tools  # noqa: E402
 from tools.config import register_config_tools  # noqa: E402
 from tools.config_entries import register_config_entry_tools  # noqa: E402
@@ -52,6 +53,7 @@ from tools.entity_context import register_entity_context_tools  # noqa: E402
 from tools.entity_dependencies import register_entity_dependency_tools  # noqa: E402
 from tools.filesystem_explorer import register_filesystem_tools  # noqa: E402
 from tools.health_reporter import register_health_reporter_tools  # noqa: E402
+from tools.helpers_health import register_helpers_health_tools  # noqa: E402
 from tools.history import register_history_tools  # noqa: E402
 from tools.integrations import register_integration_tools  # noqa: E402
 from tools.logs import register_log_tools  # noqa: E402
@@ -128,7 +130,7 @@ mcp = FastMCP("HA-Observer")
 # REGISTER ALL TOOLS
 # =============================================================================
 
-register_state_tools(mcp, HA_URL, HA_TOKEN)
+register_state_tools(mcp, HA_URL, HA_TOKEN, HA_CONFIG_PATH)
 
 register_automation_tools(mcp, HA_CONFIG_PATH, HA_URL, HA_TOKEN)
 
@@ -173,6 +175,10 @@ register_area_tools(mcp, HA_CONFIG_PATH, HA_URL, HA_TOKEN)
 register_integration_tools(mcp, HA_CONFIG_PATH, HA_URL, HA_TOKEN)
 
 register_batch_operations_tools(mcp, HA_CONFIG_PATH, HA_URL, HA_TOKEN)
+
+register_categories_tools(mcp, HA_CONFIG_PATH)
+
+register_helpers_health_tools(mcp, HA_URL, HA_TOKEN)
 
 register_capability_tools(mcp)
 
@@ -222,7 +228,7 @@ _logger.info(
 tool_count = get_tool_count()
 
 # Populate the lightweight health payload now that registration is complete.
-HEALTH_STATE["tools"] = tool_count
+HEALTH_STATE["tool_count"] = tool_count
 HEALTH_STATE["tools_version"] = __version__
 
 
@@ -322,7 +328,7 @@ def create_rest_app():
                 "status": "healthy",
                 "server": "HA-Observer",
                 "version": __version__,
-                "tools_registered": get_tool_count(),
+                "tool_count": get_tool_count(),
                 "tools_version": __version__,
                 "invocations": get_invocation_counts(),
                 "endpoints": {
@@ -347,6 +353,7 @@ def create_rest_app():
             {
                 "success": True,
                 "total": len(tool_list),
+                "tool_count": len(tool_list),
                 "tools": sorted(tool_list, key=lambda x: x["name"]),
             }
         )

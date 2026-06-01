@@ -19,6 +19,7 @@ from tools.utils import (
     get_registry_entities,
     make_ha_request,
 )
+from tools.manifests import register_manifest, make_manifest
 
 _logger = logging.getLogger(__name__)
 
@@ -463,6 +464,102 @@ def _do_device_get_wifi_status(device_id: str, config_path: str, ha_url: str, ha
     return _success_response({"wifi_status": wifi_data})
 
 
+def _do_get_device_triggers(
+    device_id: str | None,
+    entity_id: str | None,
+    config_path: str,
+    ha_url: str,
+    ha_token: str,
+) -> str:
+    """Retrieve available device triggers for a device.
+
+    Args:
+        device_id: Device ID to look up triggers for.
+        entity_id: Entity ID to resolve to device_id if device_id not provided.
+        config_path: Path to HA config directory.
+        ha_url: Home Assistant API URL.
+        ha_token: Authorization token.
+
+    Returns:
+        JSON with success, device_id, and triggers list.
+    """
+    if not device_id and not entity_id:
+        return _error_response("At least one of device_id or entity_id is required")
+
+    resolved_device_id = device_id
+
+    if not resolved_device_id and entity_id:
+        all_entities = get_registry_entities(config_path)
+        for ent in all_entities:
+            if ent.get("entity_id") == entity_id:
+                resolved_device_id = ent.get("device_id")
+                break
+
+    if not resolved_device_id:
+        return _error_response(
+            f"Could not resolve device_id from '{device_id or entity_id}'. "
+            "Use search_devices() to find valid device IDs."
+        )
+
+    device = _get_device_by_id(resolved_device_id, config_path)
+    if not device:
+        return _error_response(
+            f"Device '{resolved_device_id}' not found. Use search_devices() to find valid device_id"
+        )
+
+    all_entities = get_registry_entities(config_path)
+    device_entities = [e for e in all_entities if e.get("device_id") == resolved_device_id]
+
+    triggers: list[dict[str, Any]] = []
+
+    triggerable_domains = {
+        "binary_sensor": {"subtype": "state", "template": "{name} changed"},
+        "sensor": {"subtype": "numeric_state", "template": "{name} value change"},
+        "button": {"subtype": "pressed", "template": "{name} pressed"},
+        "event": {"subtype": "event", "template": "{name} event"},
+        "remote": {"subtype": "remote", "template": "{name} command"},
+        "device_tracker": {"subtype": "zone", "template": "{name} zone change"},
+        "update": {"subtype": "update", "template": "{name} update available"},
+    }
+
+    for entity in device_entities:
+        eid = entity.get("entity_id", "")
+        domain = eid.split(".")[0] if "." in eid else ""
+        name = entity.get("original_name") or entity.get("name") or eid
+
+        if domain in triggerable_domains:
+            info = triggerable_domains[domain]
+            triggers.append({
+                "type": f"device.{domain}",
+                "subtype": info["subtype"],
+                "name": info["template"].format(name=name),
+                "entity_id": eid,
+            })
+
+    for entry_id in device.get("config_entries", []):
+        config_entries = get_registry_config_entries(config_path)
+        for ce in config_entries:
+            if ce.get("entry_id") == entry_id:
+                domain = ce.get("domain", "")
+                if domain == "mqtt" or domain == "zigbee2mqtt":
+                    triggers.append({
+                        "type": f"device.{domain}",
+                        "subtype": "mqtt_discovery",
+                        "name": f"MQTT device trigger ({domain})",
+                        "entity_id": None,
+                    })
+                break
+
+    return _success_response({
+        "device_id": resolved_device_id,
+        "device_name": device.get("name_by_user") or device.get("name"),
+        "manufacturer": device.get("manufacturer"),
+        "model": device.get("model"),
+        "triggers": triggers,
+        "total_triggers": len(triggers),
+    })
+
+
 # =============================================================================
 # REGISTRATION
 # =============================================================================
@@ -600,5 +697,35 @@ def register_device_tools(mcp, config_path: str, ha_url: str, ha_token: str) -> 
         """
         try:
             return _do_device_get_wifi_status(device_id, config_path, ha_url, ha_token)
+        except Exception as e:
+            return _error_response(str(e))
+
+    register_manifest(
+        "get_device_triggers",
+        make_manifest("get_device_triggers", latency="moderate"),
+    )
+
+    @mcp.tool()
+    async def get_device_triggers(
+        device_id: str | None = None, entity_id: str | None = None
+    ) -> str:
+        """[READ] Retrieve available device triggers for a device.
+
+        Args:
+            device_id: Device ID to look up triggers for.
+            entity_id: Entity ID to resolve to device_id (e.g. "light.living_room").
+
+        Returns:
+            JSON with device info and triggers list (type, subtype, name).
+            Returns empty list if no triggers found (success remains true).
+        """
+        try:
+            return _do_get_device_triggers(
+                device_id=device_id,
+                entity_id=entity_id,
+                config_path=config_path,
+                ha_url=ha_url,
+                ha_token=ha_token,
+            )
         except Exception as e:
             return _error_response(str(e))

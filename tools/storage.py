@@ -20,6 +20,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from tools.manifests import make_manifest, register_manifest
 from tools.utils import (
     _error_response,
     _success_response,
@@ -565,8 +566,70 @@ def _do_get_entity_registry(config_path: str) -> dict[str, Any]:
                 "hidden_by": e.get("hidden_by"),
                 "unique_id": e.get("unique_id"),
                 "config_entry_id": e.get("config_entry_id"),
+                "categories": e.get("categories"),
+                "labels": e.get("labels"),
             }
         )
+    return {"total_entities": len(simplified), "entities": simplified}
+
+
+def _do_get_entity_registry_batch(
+    config_path: str, entity_ids: str | None = None, fields: str = "all"
+) -> dict[str, Any]:
+    """Fetch entity registry entries, optionally filtered by entity IDs and fields.
+
+    Args:
+        config_path: Path to HA config directory.
+        entity_ids: Comma-separated list of entity IDs, or None for all.
+        fields: Comma-separated list of field names, or "all".
+
+    Returns:
+        Dict with total_entities and filtered entities list.
+    """
+    data = load_registry("core.entity_registry", config_path).get("data", {}).get("entities", [])
+    all_fields = {
+        "entity_id", "name", "platform", "device_id", "area_id",
+        "disabled_by", "hidden_by", "unique_id", "config_entry_id",
+        "categories", "labels",
+    }
+    if fields != "all":
+        requested = {f.strip() for f in fields.split(",")}
+        selected = (requested | {"categories", "labels", "entity_id"}) & all_fields
+    else:
+        selected = all_fields
+
+    requested_ids = set()
+    if entity_ids:
+        requested_ids = {eid.strip() for eid in entity_ids.split(",")}
+
+    simplified = []
+    for e in data:
+        eid = e.get("entity_id")
+        if requested_ids and eid not in requested_ids:
+            continue
+        entry: dict[str, Any] = {"entity_id": eid}
+        if "name" in selected:
+            entry["name"] = get_best_name(e, "entity")
+        if "platform" in selected:
+            entry["platform"] = e.get("platform")
+        if "device_id" in selected:
+            entry["device_id"] = e.get("device_id")
+        if "area_id" in selected:
+            entry["area_id"] = e.get("area_id")
+        if "disabled_by" in selected:
+            entry["disabled_by"] = e.get("disabled_by")
+        if "hidden_by" in selected:
+            entry["hidden_by"] = e.get("hidden_by")
+        if "unique_id" in selected:
+            entry["unique_id"] = e.get("unique_id")
+        if "config_entry_id" in selected:
+            entry["config_entry_id"] = e.get("config_entry_id")
+        if "categories" in selected:
+            entry["categories"] = e.get("categories")
+        if "labels" in selected:
+            entry["labels"] = e.get("labels")
+        simplified.append(entry)
+
     return {"total_entities": len(simplified), "entities": simplified}
 
 
@@ -1251,7 +1314,46 @@ def _do_get_template_entity_code(
             "source": "live" if force_reload else "cache",
         }
 
-    return {"error": f"Template '{entity_id}' not found"}
+    # TODO: Fallback to YAML-based template scanning for templates defined
+    # in configuration.yaml, templates.yaml, or other YAML files.
+    # When implemented, return {"source": "yaml", ...} for YAML-defined templates.
+    return {"error": f"Template '{entity_id}' not found", "source": "yaml"}
+
+
+def _do_get_template_entities_batch(
+    entity_ids: str, config_path: str
+) -> dict[str, Any]:
+    """Batch fetch template entity code for multiple entities.
+
+    Args:
+        entity_ids: Comma-separated list of entity IDs.
+        config_path: Path to HA config directory.
+
+    Returns:
+        Dict keyed by entity_id with template code or error per entity.
+    """
+    ids_list = [eid.strip() for eid in entity_ids.split(",") if eid.strip()]
+    if not ids_list:
+        return {"error": "No entity_ids provided"}
+
+    results: dict[str, Any] = {}
+    errors_count = 0
+    found_count = 0
+
+    for entity_id in ids_list:
+        result = _do_get_template_entity_code(entity_id=entity_id, config_path=config_path)
+        results[entity_id] = result
+        if "error" in result:
+            errors_count += 1
+        else:
+            found_count += 1
+
+    return {
+        "total": len(ids_list),
+        "found": found_count,
+        "errors": errors_count,
+        "results": results,
+    }
 
 
 def _do_search_entity_by_name(
@@ -1760,6 +1862,32 @@ def register_storage_tools(  # type: ignore[no-untyped-def]
         except Exception as e:
             return _error_response(str(e))
 
+    register_manifest(
+        "get_template_entities_batch",
+        make_manifest("get_template_entities_batch", latency="moderate"),
+    )
+
+    @mcp.tool()
+    async def get_template_entities_batch(entity_ids: str) -> str:
+        """[READ] Batch fetch template entity code for multiple entities.
+
+        Args:
+            entity_ids: Comma-separated list of entity IDs (e.g. "sensor.my_tpl1,sensor.my_tpl2").
+
+        Returns:
+            JSON with results dict keyed by entity_id, plus total/found/errors counts.
+        """
+        try:
+            result = _do_get_template_entities_batch(
+                entity_ids=entity_ids,
+                config_path=config_path,
+            )
+            if "error" in result:
+                return _error_response(result["error"])
+            return _success_response(result)
+        except Exception as e:
+            return _error_response(str(e))
+
     # ========================================
     # COMPATIBILITY WRAPPERS
     # ========================================
@@ -1805,6 +1933,38 @@ def register_storage_tools(  # type: ignore[no-untyped-def]
             )
             if "error" in result:
                 return _error_response(result["error"])
+            return _success_response(result)
+        except Exception as e:
+            return _error_response(str(e))
+
+    # ========================================
+    # ENTITY REGISTRY BATCH
+    # ========================================
+
+    register_manifest(
+        "get_entity_registry_batch",
+        make_manifest("get_entity_registry_batch", latency="fast"),
+    )
+
+    @mcp.tool()
+    async def get_entity_registry_batch(
+        entity_ids: str | None = None, fields: str = "all"
+    ) -> str:
+        """[READ] Fetch entity registry entries with optional filtering by entity IDs and fields.
+
+        Args:
+            entity_ids: Comma-separated list of entity IDs, or None for all entities.
+            fields: Comma-separated field names or "all". Always includes categories and labels.
+
+        Returns:
+            JSON with total_entities and filtered entities list.
+        """
+        try:
+            result = _do_get_entity_registry_batch(
+                config_path=config_path,
+                entity_ids=entity_ids,
+                fields=fields,
+            )
             return _success_response(result)
         except Exception as e:
             return _error_response(str(e))

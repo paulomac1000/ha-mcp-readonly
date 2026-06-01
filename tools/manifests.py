@@ -34,7 +34,7 @@ def get_all_manifests() -> dict[str, dict[str, Any]]:
     return dict(_TOOL_MANIFESTS)
 
 
-def make_manifest(name: str, timeout_ms: int = 15000, latency: str = "moderate") -> dict[str, Any]:
+def make_manifest(name: str, timeout_ms: int = 15000, latency: str = "moderate", cost: str = "cheap") -> dict[str, Any]:
     """Factory for READ tool manifests."""
     return {
         "name": name,
@@ -48,7 +48,7 @@ def make_manifest(name: str, timeout_ms: int = 15000, latency: str = "moderate")
         "requires_confirmation": False,
         "determinism": "env-dependent",
         "latency": latency,
-        "cost": "cheap",
+        "cost": cost,
         "impact": "none",
         "privacy": "none",
         "reversible": True,

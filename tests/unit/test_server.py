@@ -27,7 +27,7 @@ class TestHealthEndpoint:
         data = response.json()
         assert data["status"] == "healthy"
         assert data["server"] == "HA-Observer"
-        assert "tools_registered" in data
+        assert "tool_count" in data
         assert "endpoints" in data
 
     def test_api_health_returns_200(self, client):
@@ -361,12 +361,12 @@ class TestToolCount:
     def test_tool_count_positive(self, client):
         response = client.get("/api/health")
         assert response.status_code == 200
-        assert response.json()["tools_registered"] > 0
+        assert response.json()["tool_count"] > 0
 
     def test_tool_count_matches_list(self, client):
         health_data = client.get("/api/health").json()
         tools_data = client.get("/api/tools").json()
-        assert health_data["tools_registered"] == tools_data["total"]
+        assert health_data["tool_count"] == tools_data["tool_count"]
 
     def test_list_tools_total_matches_items(self, client):
         tools_data = client.get("/api/tools").json()

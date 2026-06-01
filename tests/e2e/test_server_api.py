@@ -19,7 +19,7 @@ class TestRESTAPI:
         assert resp.status_code == 200
         data = resp.json()
         assert data["status"] == "healthy"
-        assert data["tools_registered"] > 100
+        assert data["tool_count"] > 100
 
     def test_api_health(self):
         """GET /api/health should also work."""
