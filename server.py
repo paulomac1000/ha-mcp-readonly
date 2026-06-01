@@ -405,9 +405,23 @@ def create_rest_app():
                 except json.JSONDecodeError:
                     pass
 
-            tool_success = result.get("success", True) if isinstance(result, dict) else True
+            if not isinstance(result, dict):
+                return JSONResponse(
+                    {"success": False, "error": "Tool returned non-dict result", "tool": tool_name},
+                    status_code=502,
+                )
+            if "success" not in result:
+                return JSONResponse(
+                    {"success": False, "error": "Tool result missing 'success' key", "tool": tool_name},
+                    status_code=502,
+                )
+            tool_success = result.get("success", False)
+            status_code = 200 if tool_success else 502
 
-            return JSONResponse({"success": tool_success, "tool": tool_name, "result": result})
+            return JSONResponse(
+                {"success": tool_success, "tool": tool_name, "result": result},
+                status_code=status_code,
+            )
 
         except TypeError as e:
             return JSONResponse(

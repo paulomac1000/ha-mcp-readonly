@@ -166,7 +166,7 @@ Add the following to your Claude Desktop config:
 }
 ```
 
-After restarting Claude Desktop, the 122 Home Assistant tools will be available.
+After restarting Claude Desktop, the 134 Home Assistant tools will be available (122 without dev tools enabled).
 
 ### LibreChat
 

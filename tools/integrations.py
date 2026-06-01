@@ -5,7 +5,6 @@ Provides tools for integration analysis:
 - get_integration_summary(domain)
 """
 
-# mypy: ignore-errors
 from collections import Counter
 from typing import Any
 
@@ -77,7 +76,7 @@ def _do_get_integration_entities(
 
         eid = entity.get("entity_id")
         state = states_map.get(eid, {}).get("state", "unknown")
-        if state in ["unavailable", "unknown"] and not entity.get("disabled_by"):
+        if state == "unavailable" and not entity.get("disabled_by"):
             unavailable_count += 1
 
         entity_info = {
@@ -93,12 +92,12 @@ def _do_get_integration_entities(
                 device = devices_map[device_id]
                 by_device[device_id] = {
                     "device_name": get_best_name(device, "device"),
-                    "model": device.get("model"),
+                    "model": device.get("model"),  # type: ignore[dict-item]
                     "entities": [],
                 }
-            by_device[device_id]["entities"].append(entity_info)
+            by_device[device_id]["entities"].append(entity_info)  # type: ignore[attr-defined]
         else:
-            by_device["no_device"]["entities"].append(entity_info)
+            by_device["no_device"]["entities"].append(entity_info)  # type: ignore[attr-defined]
 
     if not by_device["no_device"]["entities"]:
         del by_device["no_device"]
@@ -137,9 +136,9 @@ def _do_get_integration_summary(
 
     for entry in entries:
         if entry.get("disabled_by"):
-            entries_summary["disabled"] += 1
+            entries_summary["disabled"] += 1  # type: ignore[operator]
         else:
-            entries_summary["loaded"] += 1
+            entries_summary["loaded"] += 1  # type: ignore[operator]
 
     states_map = {}
     if ha_url and ha_token:

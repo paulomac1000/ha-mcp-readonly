@@ -2762,7 +2762,7 @@ def register_diagnostics_tools(mcp, ha_url, ha_token, config_path) -> None:  # t
         proximity_percent: int = 15,
         area_filter: str | None = None,
     ) -> str:
-        """[READ] Detect sensors approaching their input_number threshold limits.
+        """Detect sensors approaching their input_number threshold limits.
 
         Matches sensor.* entities to input_number.* threshold helpers by naming
         convention and flags pairs where the sensor value is within

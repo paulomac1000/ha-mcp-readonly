@@ -404,7 +404,7 @@ def _error_response(error: str | dict[str, Any]) -> str:
         error: Error message string or structured error dict with code/message/retryable.
     """
     return json.dumps(
-        {"success": False, "error": error},
+        {"success": False, "error": sanitize_response_data(error)},
         indent=2,
         ensure_ascii=False,
     )
@@ -519,7 +519,7 @@ def _error_response_extended(
     Prefer ``create_error_response()`` + ``_error_response(dict)`` in new code.
     """
     return json.dumps(
-        create_error_response(code, message, retryable, suggestion, available_names),
+        sanitize_response_data(create_error_response(code, message, retryable, suggestion, available_names)),
         indent=2,
         ensure_ascii=False,
     )

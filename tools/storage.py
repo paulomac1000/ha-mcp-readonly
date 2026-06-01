@@ -1534,11 +1534,17 @@ def _resolve_include_string(
     if not os.path.isabs(target):
         target = os.path.join(config_path, target)
 
-    if os.path.isdir(target) and not os.path.islink(target):
-        return _scan_yaml_template_directory(target, domain, obj_id, norm_obj_id, config_path)
+    resolved = Path(target).resolve()
+    try:
+        resolved.relative_to(Path(config_path).resolve())
+    except ValueError:
+        return None
 
-    if os.path.isfile(target) and not os.path.islink(target):
-        return _scan_yaml_template_payload(target, domain, obj_id, norm_obj_id, config_path)
+    if os.path.isdir(resolved) and not os.path.islink(resolved):
+        return _scan_yaml_template_directory(str(resolved), domain, obj_id, norm_obj_id, config_path)
+
+    if os.path.isfile(resolved) and not os.path.islink(resolved):
+        return _scan_yaml_template_payload(str(resolved), domain, obj_id, norm_obj_id, config_path)
 
     return None
 
@@ -2218,7 +2224,7 @@ def register_storage_tools(  # type: ignore[no-untyped-def]
 
     @mcp.tool()
     async def get_template_entities_batch(entity_ids: str) -> str:
-        """[READ] Batch fetch template entity code for multiple entities.
+        """Batch fetch template entity code for multiple entities.
 
         Args:
             entity_ids: Comma-separated list of entity IDs (e.g. "sensor.my_tpl1,sensor.my_tpl2").
@@ -2297,7 +2303,7 @@ def register_storage_tools(  # type: ignore[no-untyped-def]
 
     @mcp.tool()
     async def get_entity_registry_batch(entity_ids: str | None = None, fields: str = "all") -> str:
-        """[READ] Fetch entity registry entries with optional filtering by entity IDs and fields.
+        """Fetch entity registry entries with optional filtering by entity IDs and fields.
 
         Args:
             entity_ids: Comma-separated list of entity IDs, or None for all entities.

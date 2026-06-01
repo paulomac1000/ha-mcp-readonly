@@ -1588,15 +1588,15 @@ def _compute_overlap(
     if isinstance(actions, dict):
         actions = [actions]
 
-    trigger_entities: set[str] = set()
-    action_entities: set[str] = set()
+    primary_trigger_entities: set[str] = set()
+    primary_action_entities: set[str] = set()
 
     for trigger in triggers:
         entity_id = trigger.get("entity_id", "")
         if isinstance(entity_id, str):
-            trigger_entities.add(entity_id)
+            primary_trigger_entities.add(entity_id)
         elif isinstance(entity_id, list):
-            trigger_entities.update(entity_id)
+            primary_trigger_entities.update(entity_id)
 
     def _collect_action_targets(obj: Any, targets: set[str]) -> None:
         if isinstance(obj, dict):
@@ -1616,10 +1616,13 @@ def _compute_overlap(
             for item in obj:
                 _collect_action_targets(item, targets)
 
-    _collect_action_targets(actions, action_entities)
+    _collect_action_targets(actions, primary_action_entities)
 
-    trigger_entities.discard("")
-    action_entities.discard("")
+    primary_trigger_entities.discard("")
+    primary_action_entities.discard("")
+
+    other_trigger_entities: set[str] = set()
+    other_action_entities: set[str] = set()
 
     other_autos = _load_automations(config_path)
     for other in other_autos:
@@ -1646,8 +1649,11 @@ def _compute_overlap(
         _collect_action_targets(other_actions, other_action_set)
         other_action_set.discard("")
 
-        trigger_entities |= other_trigger_set
-        action_entities |= other_action_set
+        other_trigger_entities |= other_trigger_set
+        other_action_entities |= other_action_set
+
+    trigger_entities = primary_trigger_entities | other_trigger_entities
+    action_entities = primary_action_entities | other_action_entities
 
     for entry in entries:
         entity_id = entry.get("entity_id", "")
@@ -1663,18 +1669,19 @@ def _compute_overlap(
     trigger_overlap_list: list[str] = sorted(trigger_entities)
     action_overlap_list: list[str] = sorted(action_entities)
 
-    condition_entities: set[str] = set()
+    primary_condition_entities: set[str] = set()
     conditions = yaml_auto.get("condition", [])
     if isinstance(conditions, dict):
         conditions = [conditions]
     for cond in conditions:
         eid = cond.get("entity_id", "")
         if isinstance(eid, str):
-            condition_entities.add(eid)
+            primary_condition_entities.add(eid)
         elif isinstance(eid, list):
-            condition_entities.update(eid)
-    condition_entities.discard("")
+            primary_condition_entities.update(eid)
+    primary_condition_entities.discard("")
 
+    other_condition_entities: set[str] = set()
     for other in other_autos:
         other_alias = other.get("alias", "")
         if other_alias != dup_entry.get("alias"):
@@ -1690,11 +1697,32 @@ def _compute_overlap(
             elif isinstance(eid, list):
                 other_cond_set.update(eid)
         other_cond_set.discard("")
-        condition_entities |= other_cond_set
+        other_condition_entities |= other_cond_set
 
-    trigger_score = 40 if len(trigger_entities) > 0 else 0
-    action_score = 40 if len(action_entities) > 0 else 0
-    condition_score = 20 if len(condition_entities) > 0 else 0
+    condition_entities = primary_condition_entities | other_condition_entities
+
+    # Compute overlap scores based on intersection of entities shared between
+    # the primary automation and other automations with the same alias.
+    # Ratio-based scoring prevents inflating scores when entities only exist
+    # in a single automation within the duplicate group.
+    trigger_intersection = primary_trigger_entities & other_trigger_entities
+    if len(trigger_entities) > 0:
+        trigger_score = int(40 * len(trigger_intersection) / len(trigger_entities))
+    else:
+        trigger_score = 0
+
+    action_intersection = primary_action_entities & other_action_entities
+    if len(action_entities) > 0:
+        action_score = int(40 * len(action_intersection) / len(action_entities))
+    else:
+        action_score = 0
+
+    condition_intersection = primary_condition_entities & other_condition_entities
+    if len(condition_entities) > 0:
+        condition_score = int(20 * len(condition_intersection) / len(condition_entities))
+    else:
+        condition_score = 0
+
     overlap_score = trigger_score + action_score + condition_score
 
     stale_entities: list[dict[str, Any]] = []
@@ -1830,7 +1858,7 @@ _CANONICAL_PREFIXES = frozenset(
     }
 )
 
-_POLISH_CHARS = frozenset("ąęśćńółżź")
+_POLISH_CHARS = frozenset("\u0105\u0119\u015b\u0107\u0144\u00f3\u0142\u017c\u017a")
 _EMOJI_RANGE_RE = re.compile("[\U0001f300-\U0001f9ff]")
 
 _PREFIX_CATEGORY_MAP: dict[str, list[str]] = {
@@ -2446,7 +2474,7 @@ def register_automation_tools(mcp, config_path, ha_url=None, ha_token=None) -> N
 
     @mcp.tool()
     def diagnose_automation_aliases() -> str:
-        """[READ] Detect duplicate automation aliases from YAML and UI sources.
+        """Detect duplicate automation aliases from YAML and UI sources.
 
         Groups all automations by alias and flags groups of 2+ entries
         with the same display name, categorizing the impact as
@@ -2472,7 +2500,7 @@ def register_automation_tools(mcp, config_path, ha_url=None, ha_token=None) -> N
     def validate_automation_names(
         category_filter: str | None = None,
     ) -> str:
-        """[READ] Validate automation alias naming conventions against 7 quality rules.
+        """Validate automation alias naming conventions against 7 quality rules.
 
         Checks each automation alias for separator style, canonical prefix,
         Polish characters, emoji, title case, compound hyphens, and version casing.
@@ -2500,7 +2528,7 @@ def register_automation_tools(mcp, config_path, ha_url=None, ha_token=None) -> N
 
     @mcp.tool()
     def diagnose_category_alias_mismatch() -> str:
-        """[READ] Detect mismatches between automation alias prefixes and assigned categories.
+        """Detect mismatches between automation alias prefixes and assigned categories.
 
         For each automation, extracts the prefix from the alias and verifies
         that the assigned category matches the canonical prefix-to-category mapping.

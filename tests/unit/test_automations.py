@@ -44,7 +44,7 @@ AUTOMATIONS_YAML = """
 @pytest.fixture
 def config_path(tmp_path) -> str:
     """Override global config_path for this test module."""
-    # writesmy automations.yaml w directoryu tymczasowym
+    # writes automations.yaml to temporary directory
     (tmp_path / "automations.yaml").write_text(AUTOMATIONS_YAML, encoding="utf-8")
     return str(tmp_path)
 
@@ -269,7 +269,7 @@ class TestDiagnoseAutomation:
         assert data["success"] is True
         stats = data["statistics"]
         assert stats["total_entities"] >= 2
-        # Jedna entity unavailable
+        # One entity unavailable
         assert stats["unavailable_entities"] == 1
         # There should be recommendations
         assert len(data["recommendations"]) > 0

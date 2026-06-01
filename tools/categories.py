@@ -83,7 +83,7 @@ def register_categories_tools(mcp, config_path: str) -> None:  # type: ignore[no
 
     @mcp.tool()
     def list_automation_categories(include_entity_count: bool = True) -> str:
-        """[READ] Lists all Home Assistant categories with their IDs, names, and icons.
+        """Lists all Home Assistant categories with their IDs, names, and icons.
 
         Reads the category registry to discover organisational categories for
         automations, scripts, scenes, and helpers. Optionally counts how many

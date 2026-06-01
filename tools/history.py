@@ -165,7 +165,7 @@ def _do_get_entity_state_history_summary(
             try:
                 numeric_val = float(state_val)
             except (ValueError, TypeError):
-                numeric_val = 0.0
+                continue
             buckets.setdefault(bucket_key, []).append(numeric_val)
 
         grouped = {}

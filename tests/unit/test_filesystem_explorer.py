@@ -246,7 +246,7 @@ class TestFilesystemTools:
     def test_read_file_max_lines_truncation(
         self, mock_mcp, temp_dir, allow_temp_dir_in_security_context
     ):
-        """max_lines=1 dla fileu z 3 liniami → truncated: True."""
+        """max_lines=1 for a file with 3 lines → truncated: True."""
         register_filesystem_tools(mock_mcp)
         result = json.loads(
             mock_mcp.get_tool("read_file")(

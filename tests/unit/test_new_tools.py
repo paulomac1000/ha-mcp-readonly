@@ -4,9 +4,9 @@ diagnostics (new), devices (new), storage (new), dev_tools (new).
 """
 
 import json
-import os
 from datetime import UTC, datetime, timedelta
-from unittest.mock import patch
+from io import StringIO
+from unittest.mock import mock_open, patch
 
 import pytest
 
@@ -848,10 +848,7 @@ class TestGetDeviceTriggers:
 
 
 class TestDiagnoseTemplateNowDetection:
-    def _setup_template_files(self, config_path, entity_id, template_code, triggers=None):
-        """Create the registry files needed by _do_diagnose_template."""
-        storage_dir = os.path.join(config_path, ".storage")
-
+    def _mock_registry_files(self, entity_id, template_code, triggers):
         entity_registry = {
             "data": {
                 "entities": [
@@ -863,9 +860,6 @@ class TestDiagnoseTemplateNowDetection:
                 ]
             }
         }
-        with open(os.path.join(storage_dir, "core.entity_registry"), "w", encoding="utf-8") as f:
-            json.dump(entity_registry, f)
-
         entry_data = {
             "entry_id": "template_entry_001",
             "domain": "template",
@@ -875,12 +869,13 @@ class TestDiagnoseTemplateNowDetection:
                 "template_type": "sensor",
             },
             "data": {
-                "triggers": triggers or [],
+                "triggers": triggers,
             },
         }
         config_entries = {"data": {"entries": [entry_data]}}
-        with open(os.path.join(storage_dir, "core.config_entries"), "w", encoding="utf-8") as f:
-            json.dump(config_entries, f)
+        er_handle = mock_open(read_data=json.dumps(entity_registry)).return_value
+        ce_handle = mock_open(read_data=json.dumps(config_entries)).return_value
+        return entity_registry, config_entries, er_handle, ce_handle
 
     def _mock_make_ha_request(self, ha_url, ha_token, endpoint, method="GET", data=None, **kwargs):
         if endpoint == "/api/template":
@@ -890,13 +885,14 @@ class TestDiagnoseTemplateNowDetection:
         return {"success": True, "data": []}
 
     def test_template_with_now_and_no_triggers_warns(self, mock_mcp, config_path, ha_url, ha_token):
-        self._setup_template_files(
-            config_path,
-            "sensor.my_template",
-            "{{ now().hour }}",
-            triggers=[],
+        _, _, er_handle, ce_handle = self._mock_registry_files(
+            "sensor.my_template", "{{ now().hour }}", []
         )
-        with patch("tools.dev_tools.make_ha_request", side_effect=self._mock_make_ha_request):
+        with (
+            patch("pathlib.Path.exists", return_value=True),
+            patch("builtins.open", side_effect=[er_handle, ce_handle]),
+            patch("tools.dev_tools.make_ha_request", side_effect=self._mock_make_ha_request),
+        ):
             register_dev_tools(mock_mcp, ha_url, ha_token, config_path)
             tool = mock_mcp._tools["diagnose_template"]
             data = json.loads(tool("sensor.my_template"))
@@ -908,13 +904,16 @@ class TestDiagnoseTemplateNowDetection:
         assert "now()" in stale_issues[0]["message"]
 
     def test_template_with_now_and_triggers_no_warn(self, mock_mcp, config_path, ha_url, ha_token):
-        self._setup_template_files(
-            config_path,
+        _, _, er_handle, ce_handle = self._mock_registry_files(
             "sensor.my_triggered_template",
             "{{ now().hour }}",
-            triggers=[{"platform": "time_pattern", "minutes": "/5"}],
+            [{"platform": "time_pattern", "minutes": "/5"}],
         )
-        with patch("tools.dev_tools.make_ha_request", side_effect=self._mock_make_ha_request):
+        with (
+            patch("pathlib.Path.exists", return_value=True),
+            patch("builtins.open", side_effect=[er_handle, ce_handle]),
+            patch("tools.dev_tools.make_ha_request", side_effect=self._mock_make_ha_request),
+        ):
             register_dev_tools(mock_mcp, ha_url, ha_token, config_path)
             tool = mock_mcp._tools["diagnose_template"]
             data = json.loads(tool("sensor.my_triggered_template"))
@@ -925,13 +924,14 @@ class TestDiagnoseTemplateNowDetection:
         assert len(stale_issues) == 0
 
     def test_template_without_now_no_warn(self, mock_mcp, config_path, ha_url, ha_token):
-        self._setup_template_files(
-            config_path,
-            "sensor.simple_template",
-            "{{ states('sensor.temperature') }}",
-            triggers=[],
+        _, _, er_handle, ce_handle = self._mock_registry_files(
+            "sensor.simple_template", "{{ states('sensor.temperature') }}", []
         )
-        with patch("tools.dev_tools.make_ha_request", side_effect=self._mock_make_ha_request):
+        with (
+            patch("pathlib.Path.exists", return_value=True),
+            patch("builtins.open", side_effect=[er_handle, ce_handle]),
+            patch("tools.dev_tools.make_ha_request", side_effect=self._mock_make_ha_request),
+        ):
             register_dev_tools(mock_mcp, ha_url, ha_token, config_path)
             tool = mock_mcp._tools["diagnose_template"]
             data = json.loads(tool("sensor.simple_template"))
@@ -994,19 +994,19 @@ class TestGetTemplateEntitiesBatch:
             }
         }
 
-    def _write_storage_files(self, config_path):
-        storage_dir = os.path.join(config_path, ".storage")
-        with open(os.path.join(storage_dir, "core.entity_registry"), "w", encoding="utf-8") as f:
-            json.dump(self._entity_registry(), f)
-        with open(os.path.join(storage_dir, "core.config_entries"), "w", encoding="utf-8") as f:
-            json.dump(self._template_config_entries(), f)
+    def _mock_load_registry(self, name, config_path):
+        if "config_entries" in name:
+            return self._template_config_entries()
+        if "entity_registry" in name:
+            return self._entity_registry()
+        return {"data": {}}
 
     @pytest.mark.asyncio
     async def test_success_path(self, mock_mcp, config_path):
-        self._write_storage_files(config_path)
-        register_storage_tools(mock_mcp, config_path)
-        tool = mock_mcp._tools["get_template_entities_batch"]
-        data = json.loads(await tool(entity_ids="sensor.my_tpl1,sensor.my_tpl2"))
+        with patch("tools.storage.load_registry", side_effect=self._mock_load_registry):
+            register_storage_tools(mock_mcp, config_path)
+            tool = mock_mcp._tools["get_template_entities_batch"]
+            data = json.loads(await tool(entity_ids="sensor.my_tpl1,sensor.my_tpl2"))
 
         assert data["success"] is True
         assert data["total"] == 2
@@ -1162,10 +1162,11 @@ class TestSearchAutomationsByCategory:
         }
 
     def test_search_by_category_name(self, mock_mcp, config_path, ha_url, ha_token):
-        path = os.path.join(config_path, "automations.yaml")
-        with open(path, "w", encoding="utf-8") as f:
-            f.write(CATEGORY_AUTOS_YAML)
+        import yaml
 
+        from tools.yaml_utils import HomeAssistantLoader
+
+        parsed_autos = yaml.load(CATEGORY_AUTOS_YAML, Loader=HomeAssistantLoader) or []
         register_automation_tools(mock_mcp, config_path, ha_url, ha_token)
 
         def mock_load_registry(name, path_):
@@ -1175,7 +1176,10 @@ class TestSearchAutomationsByCategory:
                 return self._entity_registry()
             return {"data": {}}
 
-        with patch("tools.automations.load_registry", side_effect=mock_load_registry):
+        with (
+            patch("tools.automations._load_automations", return_value=parsed_autos),
+            patch("tools.automations.load_registry", side_effect=mock_load_registry),
+        ):
             tool = mock_mcp._tools["search_automations"]
             data = json.loads(tool(category="Lighting"))
 
@@ -1187,10 +1191,11 @@ class TestSearchAutomationsByCategory:
         assert "Security Alarm" not in aliases
 
     def test_search_by_category_id(self, mock_mcp, config_path, ha_url, ha_token):
-        path = os.path.join(config_path, "automations.yaml")
-        with open(path, "w", encoding="utf-8") as f:
-            f.write(CATEGORY_AUTOS_YAML)
+        import yaml
 
+        from tools.yaml_utils import HomeAssistantLoader
+
+        parsed_autos = yaml.load(CATEGORY_AUTOS_YAML, Loader=HomeAssistantLoader) or []
         register_automation_tools(mock_mcp, config_path, ha_url, ha_token)
 
         def mock_load_registry(name, path_):
@@ -1200,7 +1205,10 @@ class TestSearchAutomationsByCategory:
                 return self._entity_registry()
             return {"data": {}}
 
-        with patch("tools.automations.load_registry", side_effect=mock_load_registry):
+        with (
+            patch("tools.automations._load_automations", return_value=parsed_autos),
+            patch("tools.automations.load_registry", side_effect=mock_load_registry),
+        ):
             tool = mock_mcp._tools["search_automations"]
             data = json.loads(tool(category="security"))
 
@@ -1209,10 +1217,11 @@ class TestSearchAutomationsByCategory:
         assert data["results"][0]["alias"] == "Security Alarm"
 
     def test_search_by_nonexistent_category(self, mock_mcp, config_path, ha_url, ha_token):
-        path = os.path.join(config_path, "automations.yaml")
-        with open(path, "w", encoding="utf-8") as f:
-            f.write(CATEGORY_AUTOS_YAML)
+        import yaml
 
+        from tools.yaml_utils import HomeAssistantLoader
+
+        parsed_autos = yaml.load(CATEGORY_AUTOS_YAML, Loader=HomeAssistantLoader) or []
         register_automation_tools(mock_mcp, config_path, ha_url, ha_token)
 
         def mock_load_registry(name, path_):
@@ -1222,7 +1231,10 @@ class TestSearchAutomationsByCategory:
                 return self._entity_registry()
             return {"data": {}}
 
-        with patch("tools.automations.load_registry", side_effect=mock_load_registry):
+        with (
+            patch("tools.automations._load_automations", return_value=parsed_autos),
+            patch("tools.automations.load_registry", side_effect=mock_load_registry),
+        ):
             tool = mock_mcp._tools["search_automations"]
             data = json.loads(tool(category="Nonexistent"))
 
@@ -1260,18 +1272,27 @@ template:
         state: "{{ 42 }}"
 """
 
-    def _write_config_yaml(self, config_path: str, content: str) -> str:
-        """Write a configuration.yaml file and return its path."""
-        filepath = f"{config_path}/configuration.yaml"
-        with open(filepath, "w", encoding="utf-8") as f:
-            f.write(content)
-        return filepath
+    TEMPLATE_SUBDIR_YAML = """
+template:
+  - sensor:
+      - unique_id: dir_sensor
+        name: Directory Sensor
+        state: "{{ states('sensor.humidity') }}"
+"""
+
+    @staticmethod
+    def _yaml_opener(content):
+        def _open(*args, **kwargs):
+            return StringIO(content)
+        return _open
 
     @pytest.mark.asyncio
     async def test_yaml_template_found_by_unique_id(self, mock_mcp, config_path):
-        self._write_config_yaml(config_path, self.TEMPLATE_YAML)
-        with patch("tools.storage.load_registry") as mock_load:
-            mock_load.return_value = {"data": {"entries": [], "entities": []}}
+        with (
+            patch("tools.storage.load_registry", return_value={"data": {"entries": [], "entities": []}}),
+            patch("os.path.isfile", return_value=True),
+            patch("builtins.open", side_effect=self._yaml_opener(self.TEMPLATE_YAML)),
+        ):
             register_storage_tools(mock_mcp, config_path)
             tool = mock_mcp._tools["get_template_entity_code"]
             data = json.loads(await tool(entity_id="sensor.yaml_temp_sensor"))
@@ -1288,9 +1309,11 @@ template:
 
     @pytest.mark.asyncio
     async def test_yaml_template_found_by_name(self, mock_mcp, config_path):
-        self._write_config_yaml(config_path, self.TEMPLATE_YAML)
-        with patch("tools.storage.load_registry") as mock_load:
-            mock_load.return_value = {"data": {"entries": [], "entities": []}}
+        with (
+            patch("tools.storage.load_registry", return_value={"data": {"entries": [], "entities": []}}),
+            patch("os.path.isfile", return_value=True),
+            patch("builtins.open", side_effect=self._yaml_opener(self.TEMPLATE_YAML)),
+        ):
             register_storage_tools(mock_mcp, config_path)
             tool = mock_mcp._tools["get_template_entity_code"]
             data = json.loads(await tool(entity_id="binary_sensor.yaml_motion"))
@@ -1303,9 +1326,11 @@ template:
 
     @pytest.mark.asyncio
     async def test_yaml_template_not_found(self, mock_mcp, config_path):
-        self._write_config_yaml(config_path, self.TEMPLATE_YAML_NO_MATCH)
-        with patch("tools.storage.load_registry") as mock_load:
-            mock_load.return_value = {"data": {"entries": [], "entities": []}}
+        with (
+            patch("tools.storage.load_registry", return_value={"data": {"entries": [], "entities": []}}),
+            patch("os.path.isfile", return_value=True),
+            patch("builtins.open", side_effect=self._yaml_opener(self.TEMPLATE_YAML_NO_MATCH)),
+        ):
             register_storage_tools(mock_mcp, config_path)
             tool = mock_mcp._tools["get_template_entity_code"]
             data = json.loads(await tool(entity_id="sensor.nonexistent"))
@@ -1316,19 +1341,17 @@ template:
             assert err.get("code") == "NOT_FOUND"
 
     @pytest.mark.asyncio
-    async def test_yaml_template_in_subdirectory(self, mock_mcp, config_path, tmp_path):
-        templates_dir = f"{config_path}/templates"
-        os.makedirs(templates_dir, exist_ok=True)
-        filepath = f"{templates_dir}/sensors.yaml"
-        with open(filepath, "w", encoding="utf-8") as f:
-            f.write("""template:
-  - sensor:
-      - unique_id: dir_sensor
-        name: Directory Sensor
-        state: "{{ states('sensor.humidity') }}"
-""")
-        with patch("tools.storage.load_registry") as mock_load:
-            mock_load.return_value = {"data": {"entries": [], "entities": []}}
+    async def test_yaml_template_in_subdirectory(self, mock_mcp, config_path):
+        def _mock_isfile(path):
+            return path.endswith(".yaml") and "sensors" in path
+
+        with (
+            patch("tools.storage.load_registry", return_value={"data": {"entries": [], "entities": []}}),
+            patch("os.path.isfile", side_effect=_mock_isfile),
+            patch("os.path.isdir", return_value=True),
+            patch("os.listdir", return_value=["sensors.yaml"]),
+            patch("builtins.open", side_effect=self._yaml_opener(self.TEMPLATE_SUBDIR_YAML)),
+        ):
             register_storage_tools(mock_mcp, config_path)
             tool = mock_mcp._tools["get_template_entity_code"]
             data = json.loads(await tool(entity_id="sensor.dir_sensor"))
@@ -1340,12 +1363,14 @@ template:
 
     @pytest.mark.asyncio
     async def test_yaml_parse_error_handled_gracefully(self, mock_mcp, config_path):
-        filepath = f"{config_path}/configuration.yaml"
-        with open(filepath, "w", encoding="utf-8") as f:
-            f.write("template: [invalid: yaml: {{{")
-
-        with patch("tools.storage.load_registry") as mock_load:
-            mock_load.return_value = {"data": {"entries": [], "entities": []}}
+        with (
+            patch("tools.storage.load_registry", return_value={"data": {"entries": [], "entities": []}}),
+            patch("os.path.isfile", return_value=True),
+            patch(
+                "builtins.open",
+                side_effect=self._yaml_opener("template: [invalid: yaml: {{{"),
+            ),
+        ):
             register_storage_tools(mock_mcp, config_path)
             tool = mock_mcp._tools["get_template_entity_code"]
             data = json.loads(await tool(entity_id="sensor.anything"))
@@ -1364,24 +1389,25 @@ template:
 class TestYamlTemplateLineBoundaries:
     """Tests for _find_yaml_line_boundaries."""
 
-    def _write_yaml(self, config_path: str, filename: str, content: str) -> str:
-        filepath = os.path.join(config_path, filename)
-        with open(filepath, "w", encoding="utf-8") as f:
-            f.write(content)
-        return filepath
-
-    @pytest.mark.asyncio
-    async def test_line_boundaries_computed(self, mock_mcp, config_path):
-        yaml_content = """\
+    CT_YAML = """\
 template:
   - sensor:
       - unique_id: smart_vacuum_upstairs_score
         state: "{{ states('sensor.vacuum_status') }}"
 """
-        self._write_yaml(config_path, "configuration.yaml", yaml_content)
+    SUBDIR_YAML = """\
+sensor:
+  - unique_id: heating_mode
+    state: "{{ states('input_select.heating_mode') }}"
+"""
 
-        with patch("tools.storage.load_registry") as mock_load:
-            mock_load.return_value = {"data": {"entries": [], "entities": []}}
+    @pytest.mark.asyncio
+    async def test_line_boundaries_computed(self, mock_mcp, config_path):
+        with (
+            patch("tools.storage.load_registry", return_value={"data": {"entries": [], "entities": []}}),
+            patch("os.path.isfile", return_value=True),
+            patch("builtins.open", side_effect=lambda *a, **kw: StringIO(self.CT_YAML)),
+        ):
             register_storage_tools(mock_mcp, config_path)
             tool = mock_mcp._tools["get_template_entity_code"]
             data = json.loads(await tool(entity_id="sensor.smart_vacuum_upstairs_score"))
@@ -1396,17 +1422,16 @@ template:
 
     @pytest.mark.asyncio
     async def test_line_boundaries_in_subdir(self, mock_mcp, config_path):
-        templates_dir = os.path.join(config_path, "templates")
-        os.makedirs(templates_dir, exist_ok=True)
-        yaml_content = """\
-sensor:
-  - unique_id: heating_mode
-    state: "{{ states('input_select.heating_mode') }}"
-"""
-        self._write_yaml(config_path, "templates/heating.yaml", yaml_content)
+        def _mock_isfile(path):
+            return "heating" in path
 
-        with patch("tools.storage.load_registry") as mock_load:
-            mock_load.return_value = {"data": {"entries": [], "entities": []}}
+        with (
+            patch("tools.storage.load_registry", return_value={"data": {"entries": [], "entities": []}}),
+            patch("os.path.isfile", side_effect=_mock_isfile),
+            patch("os.path.isdir", return_value=True),
+            patch("os.listdir", return_value=["heating.yaml"]),
+            patch("builtins.open", side_effect=lambda *a, **kw: StringIO(self.SUBDIR_YAML)),
+        ):
             register_storage_tools(mock_mcp, config_path)
             tool = mock_mcp._tools["get_template_entity_code"]
             data = json.loads(await tool(entity_id="sensor.heating_mode"))
@@ -1420,48 +1445,42 @@ sensor:
 class TestOverlapScoreWithConditions:
     """Gap 11: conditions contribute 20% to overlap score."""
 
-    def _write_yaml(self, config_path: str, filename: str, content: str) -> str:
-        filepath = os.path.join(config_path, filename)
-        with open(filepath, "w", encoding="utf-8") as f:
-            f.write(content)
-        return filepath
+    OVERLAP_YAML = [
+        {
+            "id": "auto1",
+            "alias": "Climate Control",
+            "trigger": [
+                {"platform": "numeric_state", "entity_id": "sensor.temperature", "above": 25},
+            ],
+            "condition": [
+                {"condition": "state", "entity_id": "binary_sensor.window", "state": "off"},
+            ],
+            "action": [
+                {"service": "climate.set_hvac_mode", "target": {"entity_id": "climate.living_room"}},
+            ],
+        },
+        {
+            "id": "auto2",
+            "alias": "Climate Control",
+            "trigger": [
+                {"platform": "numeric_state", "entity_id": "sensor.temperature", "above": 25},
+            ],
+            "condition": [
+                {"condition": "state", "entity_id": "binary_sensor.window", "state": "off"},
+            ],
+            "action": [
+                {"service": "climate.set_hvac_mode", "target": {"entity_id": "climate.living_room"}},
+            ],
+        },
+    ]
 
     def test_conditions_contribute_to_overlap(self, config_path):
-        yaml_content = """\
-- id: "auto1"
-  alias: "Climate Control"
-  trigger:
-    - platform: numeric_state
-      entity_id: sensor.temperature
-      above: 25
-  condition:
-    - condition: state
-      entity_id: binary_sensor.window
-      state: "off"
-  action:
-    - service: climate.set_hvac_mode
-      target:
-        entity_id: climate.living_room
-- id: "auto2"
-  alias: "Climate Control"
-  trigger:
-    - platform: numeric_state
-      entity_id: sensor.temperature
-      above: 25
-  condition:
-    - condition: state
-      entity_id: binary_sensor.window
-      state: "off"
-  action:
-    - service: climate.set_hvac_mode
-      target:
-        entity_id: climate.living_room
-"""
-        self._write_yaml(config_path, "automations.yaml", yaml_content)
-
         from tools.automations import _do_diagnose_automation_aliases
 
-        with patch("tools.automations.make_ha_request") as mock_req:
+        with (
+            patch("tools.automations._load_automations", return_value=self.OVERLAP_YAML),
+            patch("tools.automations.make_ha_request") as mock_req,
+        ):
             mock_req.return_value = {
                 "success": True,
                 "data": [

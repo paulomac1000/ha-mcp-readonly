@@ -5,7 +5,6 @@ Provides tools for tracking entity usage:
 - get_entity_consumers(entity_id)
 """
 
-# mypy: ignore-errors
 import json
 import os
 from pathlib import Path
@@ -36,14 +35,14 @@ def _find_entity_in_automations(entity_id: str, config_path: str) -> list[dict]:
             for k, v in obj.items():
                 if isinstance(v, str) and entity_id in v:
                     return f"{context}.{k}" if context else k
-                path_result = search_obj(v, f"{context}.{k}" if context else k)
+                path_result = search_obj(v, f"{context}.{k}" if context else k)  # type: ignore[no-untyped-call]
                 if path_result:
                     return path_result
         elif isinstance(obj, list):
             for i, item in enumerate(obj):
                 if isinstance(item, str) and entity_id in item:
                     return f"{context}[{i}]" if context else f"[{i}]"
-                path_result = search_obj(item, f"{context}[{i}]" if context else f"[{i}]")
+                path_result = search_obj(item, f"{context}[{i}]" if context else f"[{i}]")  # type: ignore[no-untyped-call]
                 if path_result:
                     return path_result
         return None
@@ -56,7 +55,7 @@ def _find_entity_in_automations(entity_id: str, config_path: str) -> list[dict]:
         if entity_id not in auto_str:
             continue
 
-        path = search_obj(auto)
+        path = search_obj(auto)  # type: ignore[no-untyped-call]
         if path:
             found.append(
                 {
@@ -174,19 +173,19 @@ def _find_template_entities(entity_id: str, config_path: str) -> list[dict]:  # 
                     if isinstance(v, str) and v.startswith("!include "):
                         paths.append(v[9:])
                     elif isinstance(v, (dict, list)):
-                        paths.extend(_extract_includes(v))
+                        paths.extend(_extract_includes(v))  # type: ignore[no-untyped-call]
             elif isinstance(data, list):
                 for item in data:
                     if isinstance(item, str) and item.startswith("!include "):
                         paths.append(item[9:])
                     elif isinstance(item, (dict, list)):
-                        paths.extend(_extract_includes(item))
+                        paths.extend(_extract_includes(item))  # type: ignore[no-untyped-call]
             return paths
 
         try:
             config_data = load_yaml_file(config_file)
             if config_data:
-                include_paths = _extract_includes(config_data)
+                include_paths = _extract_includes(config_data)  # type: ignore[no-untyped-call]
                 for inc_path in include_paths:
                     full_path = os.path.join(config_path, inc_path)
                     if os.path.exists(full_path):
@@ -276,15 +275,15 @@ def _do_get_entity_dependencies(
     }
 
     result["summary"] = {
-        "automations_count": len(result["used_in"]["automations"]),
-        "scripts_count": len(result["used_in"]["scripts"]),
-        "templates_count": len(result["used_in"]["templates"]),
-        "dashboards_count": len(result["used_in"]["dashboards"]),
+        "automations_count": len(result["used_in"]["automations"]),  # type: ignore[index]
+        "scripts_count": len(result["used_in"]["scripts"]),  # type: ignore[index]
+        "templates_count": len(result["used_in"]["templates"]),  # type: ignore[index]
+        "dashboards_count": len(result["used_in"]["dashboards"]),  # type: ignore[index]
         "total_usages": (
-            len(result["used_in"]["automations"])
-            + len(result["used_in"]["scripts"])
-            + len(result["used_in"]["templates"])
-            + len(result["used_in"]["dashboards"])
+            len(result["used_in"]["automations"])  # type: ignore[index]
+            + len(result["used_in"]["scripts"])  # type: ignore[index]
+            + len(result["used_in"]["templates"])  # type: ignore[index]
+            + len(result["used_in"]["dashboards"])  # type: ignore[index]
         ),
     }
 

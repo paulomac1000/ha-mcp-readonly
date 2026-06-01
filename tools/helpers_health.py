@@ -143,7 +143,7 @@ def register_helpers_health_tools(mcp, ha_url: str, ha_token: str) -> None:  # t
         try:
             data = _do_diagnose_stuck_helpers(stale_hours, entity_ids, ha_url, ha_token)
             if data.get("success") is False:
-                return _error_response(str(data.get("error", data)))
+                return _error_response(data.get("error", data))
             return _success_response(data)
         except Exception as exc:
             _logger.exception("diagnose_stuck_helpers failed")

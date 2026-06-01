@@ -988,7 +988,7 @@ def register_state_tools(mcp, ha_url, ha_token, config_path: str | None = None) 
     async def get_all_states(
         domain: str | None = None, include_attributes: bool = False, compact: bool = False
     ) -> str:
-        """[READ] Get all entities and their states.
+        """Get all entities and their states.
 
         Warning: may return 1000+ entities. Use get_states_filtered for filtering.
 
@@ -1026,7 +1026,7 @@ def register_state_tools(mcp, ha_url, ha_token, config_path: str | None = None) 
 
     @mcp.tool()
     async def get_entity_state(entity_id: str, compact: bool = False) -> str:
-        """[READ] Get detailed state of a single entity.
+        """Get detailed state of a single entity.
 
         Args:
             entity_id: Entity id (e.g., 'sensor.temperature_living_room').
@@ -1232,7 +1232,7 @@ def register_state_tools(mcp, ha_url, ha_token, config_path: str | None = None) 
         max_results: int = 200,
         compact: bool = False,
     ) -> str:
-        """[READ] Server-side filtering of entities.
+        """Server-side filtering of entities.
 
         Args:
             domains: Comma-separated domains (e.g., "sensor,binary_sensor").
