@@ -1424,3 +1424,57 @@ class TestDiagnoseAutomationAliases:
 
         assert data["success"] is False
         assert "msg" in data.get("error", "")
+
+
+# ============================================================
+# Gap 6: Fragile Delay Pattern Detection in diagnose_automation
+# ============================================================
+
+FRAGILE_DELAY_YAML = """
+- id: "test_delay"
+  alias: "Test Delay Pattern"
+  trigger:
+    - platform: state
+      entity_id: input_boolean.test_bool
+      to: "on"
+  action:
+    - service: input_boolean.turn_on
+      target:
+        entity_id: input_boolean.lock
+    - delay:
+        hours: 3
+    - service: input_boolean.turn_off
+      target:
+        entity_id: input_boolean.lock
+"""
+
+
+class TestDiagnoseAutomationFragileDelay:
+    def test_delay_fragility_pattern_detected(self, mock_mcp, config_path, ha_url, ha_token):
+        path = os.path.join(config_path, "automations.yaml")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(FRAGILE_DELAY_YAML)
+
+        sample_states = [
+            {"entity_id": "input_boolean.test_bool", "state": "off", "attributes": {}},
+            {"entity_id": "input_boolean.lock", "state": "off", "attributes": {}},
+        ]
+
+        def make_ha_side_effect(ha_url_, ha_token_, endpoint, method="GET", data=None, **kwargs):
+            if endpoint == "/api/states":
+                return {"success": True, "data": sample_states}
+            if endpoint == "/api/template":
+                return {"success": True, "data": "OK"}
+            return {"success": False, "error": "Unexpected endpoint"}
+
+        with patch("tools.automations.make_ha_request", side_effect=make_ha_side_effect):
+            register_automation_tools(mock_mcp, config_path, ha_url, ha_token)
+            tool = mock_mcp._tools["diagnose_automation"]
+            data = json.loads(tool("test_delay"))
+
+        assert data["success"] is True
+        fragile_issues = [i for i in data["issues"] if i["type"] == "fragile_delay_pattern"]
+        assert len(fragile_issues) >= 1
+        assert fragile_issues[0]["severity"] == "error"
+        assert "fragile" in fragile_issues[0]["message"].lower()
+        assert "delay" in fragile_issues[0]["message"].lower()

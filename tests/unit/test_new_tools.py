@@ -1126,3 +1126,339 @@ class TestGetTemplateEntitiesBatch:
 
         assert data["success"] is False
         assert "batch template error" in data.get("error", "")
+
+
+# ================================================================
+# Gap 11: Functional overlap detection in diagnose_automation_aliases
+# ================================================================
+
+
+class TestDiagnoseAutomationAliasesOverlap:
+    def test_functional_overlap_detected(self, mock_mcp, config_path, ha_url, ha_token):
+        from tools.automations import _do_diagnose_automation_aliases
+
+        def _wrapper():
+            try:
+                result = _do_diagnose_automation_aliases(config_path, ha_url, ha_token)
+                return json.dumps({"success": True, **result})
+            except Exception as e:
+                return json.dumps({"success": False, "error": str(e)})
+
+        mock_mcp._tools["diagnose_automation_aliases"] = _wrapper
+
+        autos = [
+            {
+                "id": "auto1",
+                "alias": "Light Control",
+                "trigger": [
+                    {"platform": "state", "entity_id": "binary_sensor.motion", "to": "on"}
+                ],
+                "action": [
+                    {"service": "light.turn_on", "target": {"entity_id": "light.hallway"}}
+                ],
+            },
+            {
+                "id": "auto2",
+                "alias": "Light Control",
+                "trigger": [
+                    {"platform": "state", "entity_id": "binary_sensor.motion", "to": "on"}
+                ],
+                "action": [
+                    {"service": "light.turn_on", "target": {"entity_id": "light.hallway"}}
+                ],
+            },
+        ]
+
+        states_response = {
+            "success": True,
+            "data": [
+                {
+                    "entity_id": "automation.light_control",
+                    "state": "on",
+                    "attributes": {"friendly_name": "Light Control"},
+                },
+                {
+                    "entity_id": "automation.light_control_2",
+                    "state": "unavailable",
+                    "attributes": {"friendly_name": "Light Control"},
+                },
+            ],
+        }
+
+        with (
+            patch("tools.automations._load_automations", return_value=autos),
+            patch("tools.automations.make_ha_request", return_value=states_response),
+        ):
+            tool = mock_mcp._tools["diagnose_automation_aliases"]
+            data = json.loads(tool())
+
+        assert data["success"] is True
+        assert data["total_duplicates"] > 0
+        dup = data["duplicates"][0]
+        assert dup["overlap_score"] > 0
+        assert len(dup["trigger_overlap"]) > 0
+        assert "binary_sensor.motion" in dup["trigger_overlap"]
+        assert "light.hallway" in dup.get("action_target_overlap", [])
+
+
+# ================================================================
+# Gap 20: search_automations with category filter
+# ================================================================
+
+
+CATEGORY_AUTOS_YAML = """
+- id: "cat001"
+  alias: "Light Group Control"
+  trigger:
+    - platform: state
+      entity_id: light.living_room
+  action:
+    - service: light.turn_on
+      target:
+        entity_id: light.living_room
+- id: "cat002"
+  alias: "Security Alarm"
+  trigger:
+    - platform: state
+      entity_id: binary_sensor.door
+  action:
+    - service: notify.mobile
+- id: "cat003"
+  alias: "Another Light Automation"
+  trigger:
+    - platform: time
+      at: "08:00:00"
+  action:
+    - service: light.turn_on
+      target:
+        entity_id: light.kitchen
+"""
+
+
+class TestSearchAutomationsByCategory:
+    def _category_registry(self):
+        return {
+            "data": {
+                "categories": [
+                    {"category_id": "lighting", "name": "Lighting", "scope": "automation"},
+                    {"category_id": "security", "name": "Security", "scope": "automation"},
+                ]
+            }
+        }
+
+    def _entity_registry(self):
+        return {
+            "data": {
+                "entities": [
+                    {
+                        "entity_id": "automation.light_group_control",
+                        "unique_id": "cat001",
+                        "categories": {"automation": "lighting"},
+                    },
+                    {
+                        "entity_id": "automation.security_alarm",
+                        "unique_id": "cat002",
+                        "categories": {"automation": "security"},
+                    },
+                    {
+                        "entity_id": "automation.another_light_automation",
+                        "unique_id": "cat003",
+                        "categories": {"automation": "lighting"},
+                    },
+                ]
+            }
+        }
+
+    def test_search_by_category_name(self, mock_mcp, config_path, ha_url, ha_token):
+        path = os.path.join(config_path, "automations.yaml")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(CATEGORY_AUTOS_YAML)
+
+        register_automation_tools(mock_mcp, config_path, ha_url, ha_token)
+
+        def mock_load_registry(name, path_):
+            if "category" in name:
+                return self._category_registry()
+            if "entity" in name:
+                return self._entity_registry()
+            return {"data": {}}
+
+        with patch("tools.automations.load_registry", side_effect=mock_load_registry):
+            tool = mock_mcp._tools["search_automations"]
+            data = json.loads(tool(category="Lighting"))
+
+        assert data["success"] is True
+        assert data["matched_count"] == 2
+        aliases = [r["alias"] for r in data["results"]]
+        assert "Light Group Control" in aliases
+        assert "Another Light Automation" in aliases
+        assert "Security Alarm" not in aliases
+
+    def test_search_by_category_id(self, mock_mcp, config_path, ha_url, ha_token):
+        path = os.path.join(config_path, "automations.yaml")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(CATEGORY_AUTOS_YAML)
+
+        register_automation_tools(mock_mcp, config_path, ha_url, ha_token)
+
+        def mock_load_registry(name, path_):
+            if "category" in name:
+                return self._category_registry()
+            if "entity" in name:
+                return self._entity_registry()
+            return {"data": {}}
+
+        with patch("tools.automations.load_registry", side_effect=mock_load_registry):
+            tool = mock_mcp._tools["search_automations"]
+            data = json.loads(tool(category="security"))
+
+        assert data["success"] is True
+        assert data["matched_count"] == 1
+        assert data["results"][0]["alias"] == "Security Alarm"
+
+    def test_search_by_nonexistent_category(self, mock_mcp, config_path, ha_url, ha_token):
+        path = os.path.join(config_path, "automations.yaml")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(CATEGORY_AUTOS_YAML)
+
+        register_automation_tools(mock_mcp, config_path, ha_url, ha_token)
+
+        def mock_load_registry(name, path_):
+            if "category" in name:
+                return self._category_registry()
+            if "entity" in name:
+                return self._entity_registry()
+            return {"data": {}}
+
+        with patch("tools.automations.load_registry", side_effect=mock_load_registry):
+            tool = mock_mcp._tools["search_automations"]
+            data = json.loads(tool(category="Nonexistent"))
+
+        assert data["success"] is True
+        assert data["matched_count"] == 3
+
+
+# ================================================================
+# 14. YAML-based template scanning in get_template_entity_code
+# ================================================================
+
+
+class TestYamlTemplateScanning:
+    """Tests for YAML-based template sensor detection in _do_get_template_entity_code."""
+
+    TEMPLATE_YAML = """
+template:
+  - sensor:
+      - unique_id: yaml_temp_sensor
+        name: YAML Temperature
+        state: "{{ states('sensor.temperature') | float }}"
+        unit_of_measurement: "C"
+        device_class: temperature
+  - binary_sensor:
+      - unique_id: yaml_motion_sensor
+        name: YAML Motion
+        state: "{{ states('binary_sensor.motion') }}"
+"""
+
+    TEMPLATE_YAML_NO_MATCH = """
+template:
+  - sensor:
+      - unique_id: other_sensor
+        name: Other Sensor
+        state: "{{ 42 }}"
+"""
+
+    def _write_config_yaml(self, config_path: str, content: str) -> str:
+        """Write a configuration.yaml file and return its path."""
+        filepath = f"{config_path}/configuration.yaml"
+        with open(filepath, "w", encoding="utf-8") as f:
+            f.write(content)
+        return filepath
+
+    @pytest.mark.asyncio
+    async def test_yaml_template_found_by_unique_id(self, mock_mcp, config_path):
+        self._write_config_yaml(config_path, self.TEMPLATE_YAML)
+        with patch("tools.storage.load_registry") as mock_load:
+            mock_load.return_value = {"data": {"entries": [], "entities": []}}
+            register_storage_tools(mock_mcp, config_path)
+            tool = mock_mcp._tools["get_template_entity_code"]
+            data = json.loads(await tool(entity_id="sensor.yaml_temp_sensor"))
+
+        assert data["success"] is True
+        assert data["entity_id"] == "sensor.yaml_temp_sensor"
+        assert data["name"] == "YAML Temperature"
+        assert data["template_type"] == "sensor"
+        assert "states('sensor.temperature')" in data["state_template"]
+        assert data["unit_of_measurement"] == "C"
+        assert data["device_class"] == "temperature"
+        assert data["source"] == "yaml"
+        assert "configuration.yaml" in data["file_path"]
+
+    @pytest.mark.asyncio
+    async def test_yaml_template_found_by_name(self, mock_mcp, config_path):
+        self._write_config_yaml(config_path, self.TEMPLATE_YAML)
+        with patch("tools.storage.load_registry") as mock_load:
+            mock_load.return_value = {"data": {"entries": [], "entities": []}}
+            register_storage_tools(mock_mcp, config_path)
+            tool = mock_mcp._tools["get_template_entity_code"]
+            data = json.loads(await tool(entity_id="binary_sensor.yaml_motion"))
+
+        assert data["success"] is True
+        assert data["entity_id"] == "binary_sensor.yaml_motion"
+        assert data["template_type"] == "binary_sensor"
+        assert "states('binary_sensor.motion')" in data["state_template"]
+        assert data["source"] == "yaml"
+
+    @pytest.mark.asyncio
+    async def test_yaml_template_not_found(self, mock_mcp, config_path):
+        self._write_config_yaml(config_path, self.TEMPLATE_YAML_NO_MATCH)
+        with patch("tools.storage.load_registry") as mock_load:
+            mock_load.return_value = {"data": {"entries": [], "entities": []}}
+            register_storage_tools(mock_mcp, config_path)
+            tool = mock_mcp._tools["get_template_entity_code"]
+            data = json.loads(await tool(entity_id="sensor.nonexistent"))
+
+        assert data["success"] is False
+        err = data.get("error", {})
+        if isinstance(err, dict):
+            assert err.get("code") == "NOT_FOUND"
+
+    @pytest.mark.asyncio
+    async def test_yaml_template_in_subdirectory(self, mock_mcp, config_path, tmp_path):
+        templates_dir = f"{config_path}/templates"
+        os.makedirs(templates_dir, exist_ok=True)
+        filepath = f"{templates_dir}/sensors.yaml"
+        with open(filepath, "w", encoding="utf-8") as f:
+            f.write("""template:
+  - sensor:
+      - unique_id: dir_sensor
+        name: Directory Sensor
+        state: "{{ states('sensor.humidity') }}"
+""")
+        with patch("tools.storage.load_registry") as mock_load:
+            mock_load.return_value = {"data": {"entries": [], "entities": []}}
+            register_storage_tools(mock_mcp, config_path)
+            tool = mock_mcp._tools["get_template_entity_code"]
+            data = json.loads(await tool(entity_id="sensor.dir_sensor"))
+
+        assert data["success"] is True
+        assert data["entity_id"] == "sensor.dir_sensor"
+        assert data["source"] == "yaml"
+        assert "sensors.yaml" in data["file_path"]
+
+    @pytest.mark.asyncio
+    async def test_yaml_parse_error_handled_gracefully(self, mock_mcp, config_path):
+        filepath = f"{config_path}/configuration.yaml"
+        with open(filepath, "w", encoding="utf-8") as f:
+            f.write("template: [invalid: yaml: {{{")
+
+        with patch("tools.storage.load_registry") as mock_load:
+            mock_load.return_value = {"data": {"entries": [], "entities": []}}
+            register_storage_tools(mock_mcp, config_path)
+            tool = mock_mcp._tools["get_template_entity_code"]
+            data = json.loads(await tool(entity_id="sensor.anything"))
+
+        assert data["success"] is False
+        err = data.get("error", {})
+        if isinstance(err, dict):
+            assert err.get("code") == "NOT_FOUND"

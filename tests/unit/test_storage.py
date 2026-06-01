@@ -1078,7 +1078,11 @@ class TestTemplateEntityTools:
             )
             data = json.loads(result)
             assert data["success"] is False
-            assert "not found" in data["error"].lower()
+            error = data["error"]
+            if isinstance(error, dict):
+                assert "not found" in error.get("message", "").lower()
+            else:
+                assert "not found" in str(error).lower()
 
     @pytest.mark.asyncio
     async def test_get_template_entity_code_empty_entity_id(self):

@@ -12,6 +12,7 @@ DESIGN PRINCIPLES:
 
 import json
 import logging
+import os
 import re
 import statistics
 import unicodedata
@@ -20,15 +21,19 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+import yaml
+
 from tools.manifests import make_manifest, register_manifest
 from tools.utils import (
     _error_response,
     _success_response,
+    create_error_response,
     get_best_name,
     load_registry,
     make_ha_request,
     resolve_area_id,
 )
+from tools.yaml_utils import HomeAssistantLoader
 
 _logger = logging.getLogger(__name__)
 
@@ -1314,10 +1319,305 @@ def _do_get_template_entity_code(
             "source": "live" if force_reload else "cache",
         }
 
-    # TODO: Fallback to YAML-based template scanning for templates defined
-    # in configuration.yaml, templates.yaml, or other YAML files.
-    # When implemented, return {"source": "yaml", ...} for YAML-defined templates.
-    return {"error": f"Template '{entity_id}' not found", "source": "yaml"}
+    yaml_result = _scan_yaml_templates(entity_id, config_path)
+    if yaml_result:
+        return yaml_result
+
+    return create_error_response(
+        "NOT_FOUND",
+        f"Template '{entity_id}' not found",
+        retryable=False,
+        suggestion="Check the entity_id or verify the template is defined in configuration.yaml or the templates/ directory.",
+    )
+
+
+def _scan_yaml_templates(entity_id: str, config_path: str) -> dict[str, Any] | None:
+    """Scan YAML configuration files for template sensor/binary_sensor definitions.
+
+    Searches configuration.yaml ``template:`` section and individual ``templates/*.yaml``
+    files. Handles ``!include_dir_merge_list`` directives and inline template lists.
+    Matches by ``unique_id`` or normalized ``name``.
+
+    Args:
+        entity_id: Full entity_id (e.g. ``sensor.my_template``).
+        config_path: Path to HA config directory.
+
+    Returns:
+        Dict with template info (source="yaml") or None if not found.
+    """
+    if "." not in entity_id:
+        return None
+
+    domain, obj_id = entity_id.split(".", 1)
+    if domain not in ("sensor", "binary_sensor"):
+        return None
+
+    norm_obj_id = _normalize_text(obj_id)
+
+    config_yaml = os.path.join(config_path, "configuration.yaml")
+    if os.path.isfile(config_yaml) and not os.path.islink(config_yaml):
+        result = _scan_yaml_template_payload(
+            config_yaml, domain, obj_id, norm_obj_id, config_path
+        )
+        if result:
+            return result
+
+    templates_dir = os.path.join(config_path, "templates")
+    if os.path.isdir(templates_dir) and not os.path.islink(templates_dir):
+        result = _scan_yaml_template_directory(
+            templates_dir, domain, obj_id, norm_obj_id, config_path
+        )
+        if result:
+            return result
+
+    return None
+
+
+def _scan_yaml_template_file(
+    filepath: str,
+    domain: str,
+    obj_id: str,
+    norm_obj_id: str,
+    config_path: str,
+) -> dict[str, Any] | None:
+    """Load and scan a single YAML file for template definitions.
+
+    The file may contain a top-level ``template:`` section.
+    """
+    try:
+        with open(filepath, encoding="utf-8") as f:
+            data = yaml.load(f, Loader=HomeAssistantLoader) or {}  # nosec B506
+    except Exception:
+        return None
+
+    if not isinstance(data, dict):
+        return None
+
+    template_section = data.get("template")
+    if not template_section:
+        return None
+
+    result = _scan_yaml_template_section(
+        template_section, filepath, domain, obj_id, norm_obj_id, config_path
+    )
+    if result:
+        return result
+
+    return None
+
+
+def _scan_yaml_template_payload(
+    filepath: str,
+    domain: str,
+    obj_id: str,
+    norm_obj_id: str,
+    config_path: str,
+) -> dict[str, Any] | None:
+    """Load a YAML file and scan entire payload for template definitions.
+
+    Handles cases where the file IS the template payload (e.g. templates/*.yaml
+    files that contain sensor definitions directly, without a top-level ``template:`` key).
+    """
+    try:
+        with open(filepath, encoding="utf-8") as f:
+            data = yaml.load(f, Loader=HomeAssistantLoader) or {}  # nosec B506
+    except Exception:
+        return None
+
+    if isinstance(data, dict) and "template" in data:
+        return _scan_yaml_template_file(
+            filepath, domain, obj_id, norm_obj_id, config_path
+        )
+
+    for sensor_def in _iter_sensor_definitions(data, domain):
+        if _sensor_matches(sensor_def, obj_id, norm_obj_id):
+            return _build_yaml_template_result(
+                sensor_def, domain, obj_id, filepath, config_path
+            )
+
+    return None
+
+
+def _scan_yaml_template_directory(
+    templates_dir: str,
+    domain: str,
+    obj_id: str,
+    norm_obj_id: str,
+    config_path: str,
+) -> dict[str, Any] | None:
+    """Scan all .yaml/.yml files in a templates directory.
+
+    Safety limits: max 100 files, no symlink following.
+    """
+    scanned = 0
+    for fname in sorted(os.listdir(templates_dir)):
+        if not fname.endswith((".yaml", ".yml")):
+            continue
+        fpath = os.path.join(templates_dir, fname)
+        if os.path.islink(fpath) or not os.path.isfile(fpath):
+            continue
+        scanned += 1
+        if scanned > 100:
+            break
+        result = _scan_yaml_template_payload(
+            fpath, domain, obj_id, norm_obj_id, config_path
+        )
+        if result:
+            return result
+    return None
+
+
+def _scan_yaml_template_section(
+    template_section: Any,
+    filepath: str,
+    domain: str,
+    obj_id: str,
+    norm_obj_id: str,
+    config_path: str,
+) -> dict[str, Any] | None:
+    """Process a ``template:`` section value from a YAML file.
+
+    Handles:
+    - Inline list of template entries
+    - ``!include_dir_merge_list`` directives
+    - ``!include`` directives within list entries
+    """
+    if isinstance(template_section, str):
+        return _resolve_include_string(
+            template_section, domain, obj_id, norm_obj_id, config_path
+        )
+
+    if not isinstance(template_section, list):
+        return None
+
+    for entry in template_section:
+        if isinstance(entry, str):
+            result = _resolve_include_string(
+                entry, domain, obj_id, norm_obj_id, config_path
+            )
+            if result:
+                return result
+            continue
+
+        if not isinstance(entry, dict):
+            continue
+
+        sensors = entry.get(domain)
+        if sensors is None:
+            continue
+
+        if isinstance(sensors, dict):
+            sensors = [sensors]
+        if not isinstance(sensors, list):
+            continue
+
+        for sensor_def in sensors:
+            if not isinstance(sensor_def, dict):
+                continue
+            if _sensor_matches(sensor_def, obj_id, norm_obj_id):
+                return _build_yaml_template_result(
+                    sensor_def, domain, obj_id, filepath, config_path
+                )
+
+    return None
+
+
+def _resolve_include_string(
+    include_str: str,
+    domain: str,
+    obj_id: str,
+    norm_obj_id: str,
+    config_path: str,
+) -> dict[str, Any] | None:
+    """Resolve ``!include`` / ``!include_dir_merge_list`` directives."""
+    match = re.match(r"!(?:include|include_dir_merge_list)\s+(.+)", include_str.strip())
+    if not match:
+        return None
+
+    target = match.group(1).strip()
+    if not os.path.isabs(target):
+        target = os.path.join(config_path, target)
+
+    if os.path.isdir(target) and not os.path.islink(target):
+        return _scan_yaml_template_directory(
+            target, domain, obj_id, norm_obj_id, config_path
+        )
+
+    if os.path.isfile(target) and not os.path.islink(target):
+        return _scan_yaml_template_payload(
+            target, domain, obj_id, norm_obj_id, config_path
+        )
+
+    return None
+
+
+def _iter_sensor_definitions(data: Any, domain: str):
+    """Yield sensor definitions from various YAML structures."""
+    if isinstance(data, dict):
+        sensors = data.get(domain)
+        if sensors is None and domain == "sensor":
+            sensors = data.get("sensor")
+        if sensors is None and domain == "binary_sensor":
+            sensors = data.get("binary_sensor")
+        if sensors is None:
+            return
+        if isinstance(sensors, dict):
+            yield sensors
+        elif isinstance(sensors, list):
+            yield from sensors
+    elif isinstance(data, list):
+        for item in data:
+            if isinstance(item, dict):
+                sd = item.get(domain)
+                if sd is not None:
+                    if isinstance(sd, dict):
+                        yield sd
+                    elif isinstance(sd, list):
+                        yield from sd
+
+
+def _sensor_matches(
+    sensor_def: dict[str, Any],
+    obj_id: str,
+    norm_obj_id: str,
+) -> bool:
+    """Check if a sensor definition matches the requested entity."""
+    uid = sensor_def.get("unique_id")
+    if uid and str(uid) == obj_id:
+        return True
+    name = sensor_def.get("name")
+    if name and _normalize_text(str(name)) == norm_obj_id:
+        return True
+    return False
+
+
+def _build_yaml_template_result(
+    sensor_def: dict[str, Any],
+    domain: str,
+    obj_id: str,
+    filepath: str,
+    config_path: str,
+) -> dict[str, Any]:
+    """Build template result dict from a matched YAML sensor definition."""
+    rel_path = (
+        os.path.relpath(filepath, config_path) if config_path else filepath
+    )
+
+    return {
+        "entity_id": f"{domain}.{obj_id}",
+        "name": sensor_def.get("name", sensor_def.get("unique_id", obj_id)),
+        "template_type": domain,
+        "state_template": sensor_def.get("state", ""),
+        "unit_of_measurement": sensor_def.get("unit_of_measurement"),
+        "device_class": sensor_def.get("device_class"),
+        "availability_template": sensor_def.get("availability"),
+        "attribute_templates": sensor_def.get("attributes", {}),
+        "icon": sensor_def.get("icon"),
+        "source": "yaml",
+        "file_path": rel_path,
+        "line_start": None,
+        "line_end": None,
+    }
 
 
 def _do_get_template_entities_batch(

@@ -151,6 +151,18 @@ def _minify_state(
     }
 
 
+def _compact_state(state_obj: dict[str, Any]) -> dict[str, Any]:
+    """Strip verbose fields from a state dict for compact/token-efficient output.
+
+    Keeps only: entity_id, state, friendly_name, last_changed, last_updated.
+    Drops: attributes, context, last_reported, and other large fields.
+    """
+    return {
+        k: state_obj.get(k)
+        for k in ("entity_id", "state", "friendly_name", "last_changed", "last_updated")
+    }
+
+
 def _get_entity_platform(entity_id: str, entity_registry: list[dict]) -> str:  # type: ignore[type-arg]
     """Get platform/integration for entity from registry."""
     for e in entity_registry:
@@ -189,6 +201,7 @@ def _do_get_all_states(
     config_path: str | None,
     domain: str | None = None,
     include_attributes: bool = False,
+    compact: bool = False,
 ) -> dict[str, Any]:
     result = make_ha_request(ha_url, ha_token, "/api/states")
     if not result["success"]:
@@ -200,6 +213,9 @@ def _do_get_all_states(
         states = [s for s in states if s["entity_id"].startswith(f"{domain}.")]
 
     optimized_states = [_minify_state(s, include_attributes) for s in states]
+
+    if compact:
+        optimized_states = [_compact_state(s) for s in optimized_states]
 
     if len(optimized_states) > 500:
         return {
@@ -613,6 +629,7 @@ def _do_get_states_filtered(
     exclude_disabled: bool = True,
     group_results: bool = False,
     max_results: int = 200,
+    compact: bool = False,
 ) -> dict[str, Any]:
     result = make_ha_request(ha_url, ha_token, "/api/states")
     if not result["success"]:
@@ -653,6 +670,9 @@ def _do_get_states_filtered(
                 continue
 
         minified = _minify_state(s, include_attributes)
+
+        if compact:
+            minified = _compact_state(minified)
 
         if group_results:
             grouped[domain].append(minified)
@@ -966,7 +986,7 @@ def register_state_tools(mcp, ha_url, ha_token, config_path: str | None = None) 
     """
 
     @mcp.tool()
-    async def get_all_states(domain: str | None = None, include_attributes: bool = False) -> str:
+    async def get_all_states(domain: str | None = None, include_attributes: bool = False, compact: bool = False) -> str:
         """[READ] Get all entities and their states.
 
         Warning: may return 1000+ entities. Use get_states_filtered for filtering.
@@ -974,17 +994,18 @@ def register_state_tools(mcp, ha_url, ha_token, config_path: str | None = None) 
         Args:
             domain: Optional domain filter (e.g., 'sensor', 'light').
             include_attributes: Whether to include all attributes (default False for efficiency).
+            compact: Strip attributes, keep only entity_id/state/friendly_name/last_changed/last_updated (default: False).
 
         Returns:
             JSON with list of states.
         """
-        cache_key = f"all_states_{domain}_{include_attributes}"
+        cache_key = f"all_states_{domain}_{include_attributes}_{compact}"
         cached = _get_cached(cache_key)
         if cached:
             return cached  # type: ignore[no-any-return]
         try:
             data = await asyncio.to_thread(
-                _do_get_all_states, ha_url, ha_token, config_path, domain, include_attributes
+                _do_get_all_states, ha_url, ha_token, config_path, domain, include_attributes, compact
             )
         except Exception as e:
             _logger.exception("get_all_states failed")
@@ -1202,6 +1223,7 @@ def register_state_tools(mcp, ha_url, ha_token, config_path: str | None = None) 
         exclude_disabled: bool = True,
         group_results: bool = False,
         max_results: int = 200,
+        compact: bool = False,
     ) -> str:
         """[READ] Server-side filtering of entities.
 
@@ -1214,6 +1236,7 @@ def register_state_tools(mcp, ha_url, ha_token, config_path: str | None = None) 
             exclude_disabled: Exclude disabled entities (default True).
             group_results: Group results by domain (default False).
             max_results: Maximum results (default 200).
+            compact: Strip attributes, keep only entity_id/state/friendly_name/last_changed/last_updated (default: False).
 
         Returns:
             List of entities matching criteria (optionally grouped).
@@ -1232,6 +1255,7 @@ def register_state_tools(mcp, ha_url, ha_token, config_path: str | None = None) 
                 exclude_disabled,
                 group_results,
                 max_results,
+                compact,
             )
         except Exception as e:
             _logger.exception("get_states_filtered failed")
