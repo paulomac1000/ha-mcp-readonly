@@ -92,6 +92,7 @@ exempt_files:
   - INSTRUCTIONS.md
   - AGENTS.md
   - IMPLEMENTATION_NOTES.md
+  - todo.md
 
 normative_sections:
   - RULES
