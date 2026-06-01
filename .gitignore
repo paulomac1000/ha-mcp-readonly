@@ -68,3 +68,7 @@ ha-ai-context*.md
 
 # Ruff
 .ruff_cache/
+
+# AI agent artifacts
+.opencode/
+semgrep.sarif
