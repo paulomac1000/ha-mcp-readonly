@@ -519,7 +519,9 @@ def _error_response_extended(
     Prefer ``create_error_response()`` + ``_error_response(dict)`` in new code.
     """
     return json.dumps(
-        sanitize_response_data(create_error_response(code, message, retryable, suggestion, available_names)),
+        sanitize_response_data(
+            create_error_response(code, message, retryable, suggestion, available_names)
+        ),
         indent=2,
         ensure_ascii=False,
     )

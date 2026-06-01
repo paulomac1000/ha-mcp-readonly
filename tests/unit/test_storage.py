@@ -1310,9 +1310,7 @@ class TestBatchExceptionHandlers:
             side_effect=RuntimeError("boom"),
         ):
             data = json.loads(
-                await mock_mcp._tools["get_template_entities_batch"](
-                    entity_ids="sensor.test"
-                )
+                await mock_mcp._tools["get_template_entities_batch"](entity_ids="sensor.test")
             )
         assert data["success"] is False
         assert "boom" in data["error"]
@@ -1325,9 +1323,7 @@ class TestBatchExceptionHandlers:
             side_effect=RuntimeError("boom"),
         ):
             data = json.loads(
-                await mock_mcp._tools["get_entity_registry_batch"](
-                    entity_ids="sensor.test"
-                )
+                await mock_mcp._tools["get_entity_registry_batch"](entity_ids="sensor.test")
             )
         assert data["success"] is False
         assert "boom" in data["error"]

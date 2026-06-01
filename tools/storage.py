@@ -1541,7 +1541,9 @@ def _resolve_include_string(
         return None
 
     if os.path.isdir(resolved) and not os.path.islink(resolved):
-        return _scan_yaml_template_directory(str(resolved), domain, obj_id, norm_obj_id, config_path)
+        return _scan_yaml_template_directory(
+            str(resolved), domain, obj_id, norm_obj_id, config_path
+        )
 
     if os.path.isfile(resolved) and not os.path.islink(resolved):
         return _scan_yaml_template_payload(str(resolved), domain, obj_id, norm_obj_id, config_path)

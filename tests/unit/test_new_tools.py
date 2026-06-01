@@ -1284,12 +1284,16 @@ template:
     def _yaml_opener(content):
         def _open(*args, **kwargs):
             return StringIO(content)
+
         return _open
 
     @pytest.mark.asyncio
     async def test_yaml_template_found_by_unique_id(self, mock_mcp, config_path):
         with (
-            patch("tools.storage.load_registry", return_value={"data": {"entries": [], "entities": []}}),
+            patch(
+                "tools.storage.load_registry",
+                return_value={"data": {"entries": [], "entities": []}},
+            ),
             patch("os.path.isfile", return_value=True),
             patch("builtins.open", side_effect=self._yaml_opener(self.TEMPLATE_YAML)),
         ):
@@ -1310,7 +1314,10 @@ template:
     @pytest.mark.asyncio
     async def test_yaml_template_found_by_name(self, mock_mcp, config_path):
         with (
-            patch("tools.storage.load_registry", return_value={"data": {"entries": [], "entities": []}}),
+            patch(
+                "tools.storage.load_registry",
+                return_value={"data": {"entries": [], "entities": []}},
+            ),
             patch("os.path.isfile", return_value=True),
             patch("builtins.open", side_effect=self._yaml_opener(self.TEMPLATE_YAML)),
         ):
@@ -1327,7 +1334,10 @@ template:
     @pytest.mark.asyncio
     async def test_yaml_template_not_found(self, mock_mcp, config_path):
         with (
-            patch("tools.storage.load_registry", return_value={"data": {"entries": [], "entities": []}}),
+            patch(
+                "tools.storage.load_registry",
+                return_value={"data": {"entries": [], "entities": []}},
+            ),
             patch("os.path.isfile", return_value=True),
             patch("builtins.open", side_effect=self._yaml_opener(self.TEMPLATE_YAML_NO_MATCH)),
         ):
@@ -1346,7 +1356,10 @@ template:
             return path.endswith(".yaml") and "sensors" in path
 
         with (
-            patch("tools.storage.load_registry", return_value={"data": {"entries": [], "entities": []}}),
+            patch(
+                "tools.storage.load_registry",
+                return_value={"data": {"entries": [], "entities": []}},
+            ),
             patch("os.path.isfile", side_effect=_mock_isfile),
             patch("os.path.isdir", return_value=True),
             patch("os.listdir", return_value=["sensors.yaml"]),
@@ -1364,7 +1377,10 @@ template:
     @pytest.mark.asyncio
     async def test_yaml_parse_error_handled_gracefully(self, mock_mcp, config_path):
         with (
-            patch("tools.storage.load_registry", return_value={"data": {"entries": [], "entities": []}}),
+            patch(
+                "tools.storage.load_registry",
+                return_value={"data": {"entries": [], "entities": []}},
+            ),
             patch("os.path.isfile", return_value=True),
             patch(
                 "builtins.open",
@@ -1404,7 +1420,10 @@ sensor:
     @pytest.mark.asyncio
     async def test_line_boundaries_computed(self, mock_mcp, config_path):
         with (
-            patch("tools.storage.load_registry", return_value={"data": {"entries": [], "entities": []}}),
+            patch(
+                "tools.storage.load_registry",
+                return_value={"data": {"entries": [], "entities": []}},
+            ),
             patch("os.path.isfile", return_value=True),
             patch("builtins.open", side_effect=lambda *a, **kw: StringIO(self.CT_YAML)),
         ):
@@ -1426,7 +1445,10 @@ sensor:
             return "heating" in path
 
         with (
-            patch("tools.storage.load_registry", return_value={"data": {"entries": [], "entities": []}}),
+            patch(
+                "tools.storage.load_registry",
+                return_value={"data": {"entries": [], "entities": []}},
+            ),
             patch("os.path.isfile", side_effect=_mock_isfile),
             patch("os.path.isdir", return_value=True),
             patch("os.listdir", return_value=["heating.yaml"]),
@@ -1456,7 +1478,10 @@ class TestOverlapScoreWithConditions:
                 {"condition": "state", "entity_id": "binary_sensor.window", "state": "off"},
             ],
             "action": [
-                {"service": "climate.set_hvac_mode", "target": {"entity_id": "climate.living_room"}},
+                {
+                    "service": "climate.set_hvac_mode",
+                    "target": {"entity_id": "climate.living_room"},
+                },
             ],
         },
         {
@@ -1469,7 +1494,10 @@ class TestOverlapScoreWithConditions:
                 {"condition": "state", "entity_id": "binary_sensor.window", "state": "off"},
             ],
             "action": [
-                {"service": "climate.set_hvac_mode", "target": {"entity_id": "climate.living_room"}},
+                {
+                    "service": "climate.set_hvac_mode",
+                    "target": {"entity_id": "climate.living_room"},
+                },
             ],
         },
     ]

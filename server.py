@@ -412,7 +412,11 @@ def create_rest_app():
                 )
             if "success" not in result:
                 return JSONResponse(
-                    {"success": False, "error": "Tool result missing 'success' key", "tool": tool_name},
+                    {
+                        "success": False,
+                        "error": "Tool result missing 'success' key",
+                        "tool": tool_name,
+                    },
                     status_code=502,
                 )
             tool_success = result.get("success", False)
