@@ -54,7 +54,10 @@ def _calculate_duration(start: datetime, end: datetime) -> float:
 
 
 def _do_get_entity_state_history_summary(
-    entity_id: str, hours_back: int, ha_url: str, ha_token: str,
+    entity_id: str,
+    hours_back: int,
+    ha_url: str,
+    ha_token: str,
     group_by: str | None = None,
 ) -> str:
     """Summarize entity state history instead of returning raw rows.

@@ -593,9 +593,17 @@ def _do_get_entity_registry_batch(
     """
     data = load_registry("core.entity_registry", config_path).get("data", {}).get("entities", [])
     all_fields = {
-        "entity_id", "name", "platform", "device_id", "area_id",
-        "disabled_by", "hidden_by", "unique_id", "config_entry_id",
-        "categories", "labels",
+        "entity_id",
+        "name",
+        "platform",
+        "device_id",
+        "area_id",
+        "disabled_by",
+        "hidden_by",
+        "unique_id",
+        "config_entry_id",
+        "categories",
+        "labels",
     }
     if fields != "all":
         requested = {f.strip() for f in fields.split(",")}
@@ -1356,9 +1364,7 @@ def _scan_yaml_templates(entity_id: str, config_path: str) -> dict[str, Any] | N
 
     config_yaml = os.path.join(config_path, "configuration.yaml")
     if os.path.isfile(config_yaml) and not os.path.islink(config_yaml):
-        result = _scan_yaml_template_payload(
-            config_yaml, domain, obj_id, norm_obj_id, config_path
-        )
+        result = _scan_yaml_template_payload(config_yaml, domain, obj_id, norm_obj_id, config_path)
         if result:
             return result
 
@@ -1425,15 +1431,11 @@ def _scan_yaml_template_payload(
         return None
 
     if isinstance(data, dict) and "template" in data:
-        return _scan_yaml_template_file(
-            filepath, domain, obj_id, norm_obj_id, config_path
-        )
+        return _scan_yaml_template_file(filepath, domain, obj_id, norm_obj_id, config_path)
 
     for sensor_def in _iter_sensor_definitions(data, domain):
         if _sensor_matches(sensor_def, obj_id, norm_obj_id):
-            return _build_yaml_template_result(
-                sensor_def, domain, obj_id, filepath, config_path
-            )
+            return _build_yaml_template_result(sensor_def, domain, obj_id, filepath, config_path)
 
     return None
 
@@ -1459,9 +1461,7 @@ def _scan_yaml_template_directory(
         scanned += 1
         if scanned > 100:
             break
-        result = _scan_yaml_template_payload(
-            fpath, domain, obj_id, norm_obj_id, config_path
-        )
+        result = _scan_yaml_template_payload(fpath, domain, obj_id, norm_obj_id, config_path)
         if result:
             return result
     return None
@@ -1483,18 +1483,14 @@ def _scan_yaml_template_section(
     - ``!include`` directives within list entries
     """
     if isinstance(template_section, str):
-        return _resolve_include_string(
-            template_section, domain, obj_id, norm_obj_id, config_path
-        )
+        return _resolve_include_string(template_section, domain, obj_id, norm_obj_id, config_path)
 
     if not isinstance(template_section, list):
         return None
 
     for entry in template_section:
         if isinstance(entry, str):
-            result = _resolve_include_string(
-                entry, domain, obj_id, norm_obj_id, config_path
-            )
+            result = _resolve_include_string(entry, domain, obj_id, norm_obj_id, config_path)
             if result:
                 return result
             continue
@@ -1539,19 +1535,15 @@ def _resolve_include_string(
         target = os.path.join(config_path, target)
 
     if os.path.isdir(target) and not os.path.islink(target):
-        return _scan_yaml_template_directory(
-            target, domain, obj_id, norm_obj_id, config_path
-        )
+        return _scan_yaml_template_directory(target, domain, obj_id, norm_obj_id, config_path)
 
     if os.path.isfile(target) and not os.path.islink(target):
-        return _scan_yaml_template_payload(
-            target, domain, obj_id, norm_obj_id, config_path
-        )
+        return _scan_yaml_template_payload(target, domain, obj_id, norm_obj_id, config_path)
 
     return None
 
 
-def _iter_sensor_definitions(data: Any, domain: str):
+def _iter_sensor_definitions(data: Any, domain: str) -> Any:
     """Yield sensor definitions from various YAML structures."""
     if isinstance(data, dict):
         sensors = data.get(domain)
@@ -1658,9 +1650,7 @@ def _build_yaml_template_result(
     config_path: str,
 ) -> dict[str, Any]:
     """Build template result dict from a matched YAML sensor definition."""
-    rel_path = (
-        os.path.relpath(filepath, config_path) if config_path else filepath
-    )
+    rel_path = os.path.relpath(filepath, config_path) if config_path else filepath
 
     line_start, line_end = _find_yaml_line_boundaries(filepath, sensor_def)
 
@@ -1681,9 +1671,7 @@ def _build_yaml_template_result(
     }
 
 
-def _do_get_template_entities_batch(
-    entity_ids: str, config_path: str
-) -> dict[str, Any]:
+def _do_get_template_entities_batch(entity_ids: str, config_path: str) -> dict[str, Any]:
     """Batch fetch template entity code for multiple entities.
 
     Args:
@@ -2308,9 +2296,7 @@ def register_storage_tools(  # type: ignore[no-untyped-def]
     )
 
     @mcp.tool()
-    async def get_entity_registry_batch(
-        entity_ids: str | None = None, fields: str = "all"
-    ) -> str:
+    async def get_entity_registry_batch(entity_ids: str | None = None, fields: str = "all") -> str:
         """[READ] Fetch entity registry entries with optional filtering by entity IDs and fields.
 
         Args:

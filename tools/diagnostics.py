@@ -1961,9 +1961,7 @@ def _do_diagnose_stale_entities(
         target_domains = {domain_filter}
 
     entity_reg = (
-        load_registry("core.entity_registry", config_path)
-        .get("data", {})
-        .get("entities", [])
+        load_registry("core.entity_registry", config_path).get("data", {}).get("entities", [])
     )
     entity_to_platform: dict[str, str] = {}
     for e in entity_reg:
@@ -2034,9 +2032,7 @@ def _do_diagnose_stale_entities(
         "info": len([x for x in stale_entities if x["severity"] == "info"]),
     }
 
-    total_scanned = sum(
-        1 for s in states if s.get("entity_id", "").split(".")[0] in target_domains
-    )
+    total_scanned = sum(1 for s in states if s.get("entity_id", "").split(".")[0] in target_domains)
 
     recommendations: list[dict[str, str]] = []
     if by_severity["critical"] > 0:
@@ -2060,9 +2056,7 @@ def _do_diagnose_stale_entities(
             }
         )
     if not stale_entities:
-        recommendations.append(
-            {"priority": "info", "message": "No stale entities detected"}
-        )
+        recommendations.append({"priority": "info", "message": "No stale entities detected"})
 
     return {
         "success": True,
@@ -2113,7 +2107,7 @@ def _do_diagnose_orphan_references(
             if auto_path.exists():
                 try:
                     with open(auto_path, encoding="utf-8") as f:
-                        automations = yaml.load(f, Loader=HomeAssistantLoader) or []
+                        automations = yaml.load(f, Loader=HomeAssistantLoader) or []  # nosec B506
                     for auto in automations:
                         auto_str = str(auto)
                         alias = auto.get("alias", "Unknown")
@@ -2139,7 +2133,7 @@ def _do_diagnose_orphan_references(
             if script_path.exists():
                 try:
                     with open(script_path, encoding="utf-8") as f:
-                        raw = yaml.load(f, Loader=HomeAssistantLoader) or {}
+                        raw = yaml.load(f, Loader=HomeAssistantLoader) or {}  # nosec B506
                     scripts: dict[str, Any] = raw if isinstance(raw, dict) else {}
                     for script_id, script_config in scripts.items():
                         script_str = str(script_config)
@@ -2232,18 +2226,17 @@ def _do_diagnose_entity_threshold_proximity(
     states = states_res["data"]
 
     entity_reg = (
-        load_registry("core.entity_registry", config_path)
-        .get("data", {})
-        .get("entities", [])
+        load_registry("core.entity_registry", config_path).get("data", {}).get("entities", [])
     )
-    area_reg = (
-        load_registry("core.area_registry", config_path)
-        .get("data", {})
-        .get("areas", [])
-    )
+    area_reg = load_registry("core.area_registry", config_path).get("data", {}).get("areas", [])
 
     entity_to_area: dict[str, str | None] = {}
-    dev_map = {d.get("id"): d for d in load_registry("core.device_registry", config_path).get("data", {}).get("devices", [])}
+    dev_map = {
+        d.get("id"): d
+        for d in load_registry("core.device_registry", config_path)
+        .get("data", {})
+        .get("devices", [])
+    }
 
     for ent in entity_reg:
         eid = ent.get("entity_id", "")
@@ -2309,10 +2302,16 @@ def _do_diagnose_entity_threshold_proximity(
 
             # Match by naming convention: sensor base name should be a prefix or match
             # pattern: sensor_name matches threshold_name after stripping common suffixes
-            tname_clean = re.sub(r"_(lvl|level|limit|threshold|setpoint|target|min|max)$", "", threshold_name)
+            tname_clean = re.sub(
+                r"_(lvl|level|limit|threshold|setpoint|target|min|max)$", "", threshold_name
+            )
             sname_clean = sensor_name
 
-            if tname_clean == sname_clean or sname_clean.startswith(tname_clean) or tname_clean.startswith(sname_clean):
+            if (
+                tname_clean == sname_clean
+                or sname_clean.startswith(tname_clean)
+                or tname_clean.startswith(sname_clean)
+            ):
                 threshold_val = threshold_info["value"]
                 if threshold_val == 0:
                     continue
@@ -2321,14 +2320,16 @@ def _do_diagnose_entity_threshold_proximity(
 
                 if proximity <= proximity_percent:
                     direction = "above" if sensor_val > threshold_val else "below"
-                    threshold_alerts.append({
-                        "sensor_entity": sensor_id,
-                        "current_value": sensor_val,
-                        "threshold_entity": threshold_id,
-                        "threshold_value": threshold_val,
-                        "proximity_percent": round(proximity, 1),
-                        "direction": direction,
-                    })
+                    threshold_alerts.append(
+                        {
+                            "sensor_entity": sensor_id,
+                            "current_value": sensor_val,
+                            "threshold_entity": threshold_id,
+                            "threshold_value": threshold_val,
+                            "proximity_percent": round(proximity, 1),
+                            "direction": direction,
+                        }
+                    )
 
     threshold_alerts.sort(key=lambda x: x["proximity_percent"])
 

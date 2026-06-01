@@ -75,15 +75,17 @@ def _do_diagnose_stuck_helpers(
         else:
             severity = "info"
 
-        stuck.append({
-            "entity_id": entity_id,
-            "state": state,
-            "last_changed": last_changed_str,
-            "hours_stuck": round(hours_stuck, 1),
-            "severity": severity,
-            "domain": domain,
-            "friendly_name": ent.get("attributes", {}).get("friendly_name", ""),
-        })
+        stuck.append(
+            {
+                "entity_id": entity_id,
+                "state": state,
+                "last_changed": last_changed_str,
+                "hours_stuck": round(hours_stuck, 1),
+                "severity": severity,
+                "domain": domain,
+                "friendly_name": ent.get("attributes", {}).get("friendly_name", ""),
+            }
+        )
 
     stuck.sort(key=lambda x: x["hours_stuck"], reverse=True)
 

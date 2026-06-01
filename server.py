@@ -405,7 +405,9 @@ def create_rest_app():
                 except json.JSONDecodeError:
                     pass
 
-            return JSONResponse({"success": True, "tool": tool_name, "result": result})
+            tool_success = result.get("success", True) if isinstance(result, dict) else True
+
+            return JSONResponse({"success": tool_success, "tool": tool_name, "result": result})
 
         except TypeError as e:
             return JSONResponse(

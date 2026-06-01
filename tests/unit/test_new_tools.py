@@ -863,9 +863,7 @@ class TestDiagnoseTemplateNowDetection:
                 ]
             }
         }
-        with open(
-            os.path.join(storage_dir, "core.entity_registry"), "w", encoding="utf-8"
-        ) as f:
+        with open(os.path.join(storage_dir, "core.entity_registry"), "w", encoding="utf-8") as f:
             json.dump(entity_registry, f)
 
         entry_data = {
@@ -881,9 +879,7 @@ class TestDiagnoseTemplateNowDetection:
             },
         }
         config_entries = {"data": {"entries": [entry_data]}}
-        with open(
-            os.path.join(storage_dir, "core.config_entries"), "w", encoding="utf-8"
-        ) as f:
+        with open(os.path.join(storage_dir, "core.config_entries"), "w", encoding="utf-8") as f:
             json.dump(config_entries, f)
 
     def _mock_make_ha_request(self, ha_url, ha_token, endpoint, method="GET", data=None, **kwargs):
@@ -1000,13 +996,9 @@ class TestGetTemplateEntitiesBatch:
 
     def _write_storage_files(self, config_path):
         storage_dir = os.path.join(config_path, ".storage")
-        with open(
-            os.path.join(storage_dir, "core.entity_registry"), "w", encoding="utf-8"
-        ) as f:
+        with open(os.path.join(storage_dir, "core.entity_registry"), "w", encoding="utf-8") as f:
             json.dump(self._entity_registry(), f)
-        with open(
-            os.path.join(storage_dir, "core.config_entries"), "w", encoding="utf-8"
-        ) as f:
+        with open(os.path.join(storage_dir, "core.config_entries"), "w", encoding="utf-8") as f:
             json.dump(self._template_config_entries(), f)
 
     @pytest.mark.asyncio
@@ -1058,22 +1050,14 @@ class TestDiagnoseAutomationAliasesOverlap:
             {
                 "id": "auto1",
                 "alias": "Light Control",
-                "trigger": [
-                    {"platform": "state", "entity_id": "binary_sensor.motion", "to": "on"}
-                ],
-                "action": [
-                    {"service": "light.turn_on", "target": {"entity_id": "light.hallway"}}
-                ],
+                "trigger": [{"platform": "state", "entity_id": "binary_sensor.motion", "to": "on"}],
+                "action": [{"service": "light.turn_on", "target": {"entity_id": "light.hallway"}}],
             },
             {
                 "id": "auto2",
                 "alias": "Light Control",
-                "trigger": [
-                    {"platform": "state", "entity_id": "binary_sensor.motion", "to": "on"}
-                ],
-                "action": [
-                    {"service": "light.turn_on", "target": {"entity_id": "light.hallway"}}
-                ],
+                "trigger": [{"platform": "state", "entity_id": "binary_sensor.motion", "to": "on"}],
+                "action": [{"service": "light.turn_on", "target": {"entity_id": "light.hallway"}}],
             },
         ]
 
@@ -1478,10 +1462,16 @@ class TestOverlapScoreWithConditions:
         from tools.automations import _do_diagnose_automation_aliases
 
         with patch("tools.automations.make_ha_request") as mock_req:
-            mock_req.return_value = {"success": True, "data": [{
-                "entity_id": "automation.climate_control", "state": "on",
-                "attributes": {"friendly_name": "Climate Control"},
-            }]}
+            mock_req.return_value = {
+                "success": True,
+                "data": [
+                    {
+                        "entity_id": "automation.climate_control",
+                        "state": "on",
+                        "attributes": {"friendly_name": "Climate Control"},
+                    }
+                ],
+            }
             result = _do_diagnose_automation_aliases(config_path)
 
         assert result["total_duplicates"] >= 1
@@ -1500,19 +1490,25 @@ class TestHistoryGroupBy:
         history_data = []
         for minute in range(0, 120, 5):
             ts = now - timedelta(minutes=minute)
-            history_data.append({
-                "entity_id": "sensor.temperature",
-                "state": str(round(20 + (minute % 30) / 5, 1)),
-                "last_changed": ts.isoformat(),
-            })
+            history_data.append(
+                {
+                    "entity_id": "sensor.temperature",
+                    "state": str(round(20 + (minute % 30) / 5, 1)),
+                    "last_changed": ts.isoformat(),
+                }
+            )
 
         with patch("tools.history.make_ha_request") as mock_req:
             mock_req.return_value = {"success": True, "data": [history_data]}
             register_history_tools(mock_mcp, "http://ha", "token")
             tool = mock_mcp._tools["get_entity_state_history_summary"]
-            data = json.loads(await tool(
-                entity_id="sensor.temperature", hours_back=2, group_by="hour",
-            ))
+            data = json.loads(
+                await tool(
+                    entity_id="sensor.temperature",
+                    hours_back=2,
+                    group_by="hour",
+                )
+            )
 
         assert data["success"] is True
         assert data.get("grouped_by") == "hour"
@@ -1525,10 +1521,13 @@ class TestHistoryGroupBy:
         from tools.history import register_history_tools
 
         now = datetime.now(UTC)
-        history_data = [{
-            "entity_id": "sensor.temp", "state": "22.5",
-            "last_changed": (now - timedelta(minutes=10)).isoformat(),
-        }]
+        history_data = [
+            {
+                "entity_id": "sensor.temp",
+                "state": "22.5",
+                "last_changed": (now - timedelta(minutes=10)).isoformat(),
+            }
+        ]
 
         with patch("tools.history.make_ha_request") as mock_req:
             mock_req.return_value = {"success": True, "data": [history_data]}

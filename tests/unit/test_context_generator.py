@@ -947,13 +947,10 @@ class TestContextGeneratorV10:
 
         # Create temporary custom_components directory
         tmpdir = tempfile.mkdtemp()
-        import context_generator.analyzers as cg_analyzers
         import context_generator.constants as cg_constants
 
         original_constants_path = cg_constants.HA_CONFIG_PATH
-        original_analyzers_path = cg_analyzers.HA_CONFIG_PATH
         cg_constants.HA_CONFIG_PATH = tmpdir
-        cg_analyzers.HA_CONFIG_PATH = tmpdir
 
         cc_dir = os.path.join(tmpdir, "custom_components", "test_component")
         os.makedirs(cc_dir, exist_ok=True)
@@ -979,7 +976,6 @@ class TestContextGeneratorV10:
                 assert ha.custom_components[0]["domain"] == "test_component"
         finally:
             cg_constants.HA_CONFIG_PATH = original_constants_path
-            cg_analyzers.HA_CONFIG_PATH = original_analyzers_path
             import shutil
 
             shutil.rmtree(tmpdir, ignore_errors=True)

@@ -138,4 +138,7 @@ class TestValidateEntityId:
             validate_entity_id(None)
 
     def test_complex_entity_id(self):
-        assert validate_entity_id("light.yeelink_color2_0510_light") == "light.yeelink_color2_0510_light"
+        assert (
+            validate_entity_id("light.yeelink_color2_0510_light")
+            == "light.yeelink_color2_0510_light"
+        )

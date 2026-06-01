@@ -529,12 +529,14 @@ def _do_get_device_triggers(
 
         if domain in triggerable_domains:
             info = triggerable_domains[domain]
-            triggers.append({
-                "type": f"device.{domain}",
-                "subtype": info["subtype"],
-                "name": info["template"].format(name=name),
-                "entity_id": eid,
-            })
+            triggers.append(
+                {
+                    "type": f"device.{domain}",
+                    "subtype": info["subtype"],
+                    "name": info["template"].format(name=name),
+                    "entity_id": eid,
+                }
+            )
 
     for entry_id in device.get("config_entries", []):
         config_entries = get_registry_config_entries(config_path)
@@ -542,22 +544,26 @@ def _do_get_device_triggers(
             if ce.get("entry_id") == entry_id:
                 domain = ce.get("domain", "")
                 if domain == "mqtt" or domain == "zigbee2mqtt":
-                    triggers.append({
-                        "type": f"device.{domain}",
-                        "subtype": "mqtt_discovery",
-                        "name": f"MQTT device trigger ({domain})",
-                        "entity_id": None,
-                    })
+                    triggers.append(
+                        {
+                            "type": f"device.{domain}",
+                            "subtype": "mqtt_discovery",
+                            "name": f"MQTT device trigger ({domain})",
+                            "entity_id": None,
+                        }
+                    )
                 break
 
-    return _success_response({
-        "device_id": resolved_device_id,
-        "device_name": device.get("name_by_user") or device.get("name"),
-        "manufacturer": device.get("manufacturer"),
-        "model": device.get("model"),
-        "triggers": triggers,
-        "total_triggers": len(triggers),
-    })
+    return _success_response(
+        {
+            "device_id": resolved_device_id,
+            "device_name": device.get("name_by_user") or device.get("name"),
+            "manufacturer": device.get("manufacturer"),
+            "model": device.get("model"),
+            "triggers": triggers,
+            "total_triggers": len(triggers),
+        }
+    )
 
 
 # =============================================================================

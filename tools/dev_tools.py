@@ -1020,12 +1020,13 @@ def _do_diagnose_template(entity_id, ha_url, ha_token, config_path):  # type: ig
         has_config_entry = bool(result.get("template_info", {}).get("entry_id"))
         if not has_triggers:
             message = (
-                "Template uses now() but has no periodic trigger — "
-                "may not re-evaluate on its own"
+                "Template uses now() but has no periodic trigger — may not re-evaluate on its own"
             )
             if not has_config_entry:
                 message += " (YAML-based template — verify triggers manually)"
-            recommendation = "Add a time_pattern trigger or migrate to a trigger-based template sensor"
+            recommendation = (
+                "Add a time_pattern trigger or migrate to a trigger-based template sensor"
+            )
             if not has_config_entry:
                 recommendation += " — also verify triggers in configuration.yaml"
             result["issues"].append(

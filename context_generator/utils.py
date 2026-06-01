@@ -12,17 +12,7 @@ from typing import Any
 import requests
 import yaml
 
-from .constants import (
-    ENTITY_PATTERN,
-    HA_CONFIG_PATH,
-    HA_TOKEN,
-    HA_URL,
-    IGNORABLE_DOMAINS,
-    IGNORABLE_PATTERNS,
-    STATES_DOT_PATTERN,
-    TEMPLATE_ENTITY_PATTERN,
-    HomeAssistantLoader,
-)
+from . import constants
 
 _logger = logging.getLogger(__name__)
 
@@ -48,7 +38,7 @@ def load_registry(name: str, use_cache: bool = True) -> dict:
     """
     global _registry_cache, _registry_cache_timestamps
 
-    cache_key = f"{HA_CONFIG_PATH}:{name}"
+    cache_key = f"{constants.HA_CONFIG_PATH}:{name}"
     now = datetime.now().timestamp()
 
     # Check cache
@@ -58,7 +48,7 @@ def load_registry(name: str, use_cache: bool = True) -> dict:
                 return _registry_cache[cache_key]
 
     try:
-        path = Path(HA_CONFIG_PATH) / ".storage" / name
+        path = Path(constants.HA_CONFIG_PATH) / ".storage" / name
         if path.exists():
             with open(path, encoding="utf-8") as f:
                 data = json.load(f)
@@ -80,17 +70,19 @@ def make_ha_request(
     Based on test_utils.py make_ha_request.
     """
     headers = {
-        "Authorization": f"Bearer {HA_TOKEN}",
+        "Authorization": f"Bearer {constants.HA_TOKEN}",
         "Content-Type": "application/json",
     }
 
     for attempt in range(3):
         try:
             if method == "GET":
-                response = requests.get(f"{HA_URL}{endpoint}", headers=headers, timeout=timeout)
+                response = requests.get(
+                    f"{constants.HA_URL}{endpoint}", headers=headers, timeout=timeout
+                )
             elif method == "POST":
                 response = requests.post(
-                    f"{HA_URL}{endpoint}", headers=headers, json=data, timeout=timeout
+                    f"{constants.HA_URL}{endpoint}", headers=headers, json=data, timeout=timeout
                 )
             else:
                 return {"success": False, "error": f"Unsupported method: {method}"}
@@ -117,12 +109,12 @@ def make_ha_request(
 
 def load_yaml_file(filepath: str) -> Any:
     """Loads YAML file with error handling."""
-    path = Path(filepath) if os.path.isabs(filepath) else Path(HA_CONFIG_PATH) / filepath
+    path = Path(filepath) if os.path.isabs(filepath) else Path(constants.HA_CONFIG_PATH) / filepath
     if not path.exists():
         return None
     try:
         with open(path, encoding="utf-8") as f:
-            return yaml.load(f, Loader=HomeAssistantLoader)
+            return yaml.load(f, Loader=constants.HomeAssistantLoader)
     except Exception as e:
         _logger.warning("YAML error %s: %s", filepath, e)
         return None
@@ -134,7 +126,7 @@ def validate_yaml_syntax(yaml_content: str) -> dict[str, Any]:
     Based on test_config.py validate_yaml_syntax.
     """
     try:
-        yaml.load(yaml_content, Loader=HomeAssistantLoader)
+        yaml.load(yaml_content, Loader=constants.HomeAssistantLoader)
         return {"syntax_valid": True, "issues": []}
     except yaml.YAMLError as e:
         return {"syntax_valid": False, "error": f"YAML syntax error: {str(e)}"}
@@ -143,9 +135,9 @@ def validate_yaml_syntax(yaml_content: str) -> dict[str, Any]:
 def is_ignorable_entity(entity_id: str) -> bool:
     """Checks if entity should be ignored."""
     domain = entity_id.split(".")[0]
-    if domain in IGNORABLE_DOMAINS:
+    if domain in constants.IGNORABLE_DOMAINS:
         return True
-    for pattern in IGNORABLE_PATTERNS:
+    for pattern in constants.IGNORABLE_PATTERNS:
         if re.match(pattern, entity_id):
             return True
     return False
@@ -205,15 +197,15 @@ def extract_entities_from_template(template_str: str) -> set[str]:
         return found
 
     # Pattern 1: states('entity_id'), is_state('entity_id', ...), etc.
-    found.update(TEMPLATE_ENTITY_PATTERN.findall(template_str))
+    found.update(constants.TEMPLATE_ENTITY_PATTERN.findall(template_str))
 
     # Pattern 2: states.domain.name
-    for match in STATES_DOT_PATTERN.findall(template_str):
+    for match in constants.STATES_DOT_PATTERN.findall(template_str):
         # match = "sensor.temperature" (without "states.")
         found.add(match)
 
     # Pattern 3: standard entity_id pattern as fallback
-    found.update(ENTITY_PATTERN.findall(template_str))
+    found.update(constants.ENTITY_PATTERN.findall(template_str))
 
     return found
 
@@ -232,7 +224,7 @@ def extract_entities_from_data(data: Any, extract_from_templates: bool = True) -
                 if isinstance(value, str):
                     if "." in value and not value.startswith("!"):
                         found.add(value)
-                    found.update(ENTITY_PATTERN.findall(value))
+                    found.update(constants.ENTITY_PATTERN.findall(value))
                 elif isinstance(value, list):
                     for v in value:
                         if isinstance(v, str) and "." in v:
@@ -263,7 +255,7 @@ def extract_entities_from_data(data: Any, extract_from_templates: bool = True) -
 
     elif isinstance(data, str):
         # Search for entity_id in string
-        found.update(ENTITY_PATTERN.findall(data))
+        found.update(constants.ENTITY_PATTERN.findall(data))
         # And in templates
         if extract_from_templates and ("{{" in data or "{%" in data):
             found.update(extract_entities_from_template(data))

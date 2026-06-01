@@ -165,8 +165,10 @@ def _do_search_automations(
             if cat_entry.get("name", "").lower() == category.lower():
                 category_id = cat_entry.get("category_id")
                 break
-        if category_id and cat_entries is not None and not any(
-            c.get("category_id") == category_id for c in cat_entries
+        if (
+            category_id
+            and cat_entries is not None
+            and not any(c.get("category_id") == category_id for c in cat_entries)
         ):
             category_id = None
 
@@ -198,7 +200,7 @@ def _do_search_automations(
         if category_id:
             auto_unique_id = str(auto_id) if auto_id else ""
             auto_entity_id = f"automation.{re.sub(r'[^a-z0-9_]+', '_', str(auto_id or alias or '').lower()).strip('_')}"
-            entity_entries = load_registry("core.entity_registry", config_path)  # type: ignore[arg-type]
+            entity_entries = load_registry("core.entity_registry", config_path)
             entities = entity_entries.get("data", {}).get("entities", []) if entity_entries else []
             matched_categories: dict[str, str] | None = None
             for ent in entities:
@@ -912,15 +914,33 @@ def _do_diagnose_automation(
                 break
 
     _STATE_CHANGING_SERVICES = {
-        "turn_on", "turn_off", "toggle", "open_cover", "close_cover", "lock", "unlock",
-        "set_temperature", "set_hvac_mode", "set_fan_mode", "set_preset_mode", "reload",
+        "turn_on",
+        "turn_off",
+        "toggle",
+        "open_cover",
+        "close_cover",
+        "lock",
+        "unlock",
+        "set_temperature",
+        "set_hvac_mode",
+        "set_fan_mode",
+        "set_preset_mode",
+        "reload",
     }
     for idx, action in enumerate(actions):
         if "delay" in action and idx > 0 and idx + 1 < len(actions):
             prev_action = actions[idx - 1]
             next_action = actions[idx + 1]
-            prev_svc = (prev_action.get("service") or "").split(".")[-1] if "service" in prev_action else ""
-            next_svc = (next_action.get("service") or "").split(".")[-1] if "service" in next_action else ""
+            prev_svc = (
+                (prev_action.get("service") or "").split(".")[-1]
+                if "service" in prev_action
+                else ""
+            )
+            next_svc = (
+                (next_action.get("service") or "").split(".")[-1]
+                if "service" in next_action
+                else ""
+            )
             _prev_target = prev_action.get("target", prev_action.get("entity_id", ""))
             _next_target = next_action.get("target", next_action.get("entity_id", ""))
             prev_changes_state = prev_svc in _STATE_CHANGING_SERVICES
@@ -935,19 +955,25 @@ def _do_diagnose_automation(
                         "type": "fragile_delay_pattern",
                         "message": (
                             f"Action {idx}: delay between state-changing calls "
-                            f"({prev_action.get('service')} at {idx-1} and "
-                            f"{next_action.get('service')} at {idx+1}) — "
+                            f"({prev_action.get('service')} at {idx - 1} and "
+                            f"{next_action.get('service')} at {idx + 1}) — "
                             f"fragile pattern. Use timer helpers instead."
                         ),
                         "detail": {
                             "delay_action_index": idx,
-                            "previous_action": {"index": idx - 1, "service": prev_action.get("service")},
-                            "next_action": {"index": idx + 1, "service": next_action.get("service")},
+                            "previous_action": {
+                                "index": idx - 1,
+                                "service": prev_action.get("service"),
+                            },
+                            "next_action": {
+                                "index": idx + 1,
+                                "service": next_action.get("service"),
+                            },
                             "reverses_state": reversing,
                         },
                         "fix": "Replace 'delay' with a timer helper (timer or schedule). "
-                               "Start the timer in the first action, trigger the second "
-                               "action on timer.finished event via a separate automation.",
+                        "Start the timer in the first action, trigger the second "
+                        "action on timer.finished event via a separate automation.",
                     }
                 )
 
@@ -1572,7 +1598,7 @@ def _compute_overlap(
         elif isinstance(entity_id, list):
             trigger_entities.update(entity_id)
 
-    def _collect_action_targets(obj, targets: set[str]) -> None:
+    def _collect_action_targets(obj: Any, targets: set[str]) -> None:
         if isinstance(obj, dict):
             eid = obj.get("entity_id", "")
             if isinstance(eid, str):
@@ -1678,11 +1704,13 @@ def _compute_overlap(
     if has_on and has_unavailable:
         for e in entries:
             if e.get("state") == "unavailable":
-                stale_entities.append({
-                    "entity_id": e.get("entity_id"),
-                    "state": "unavailable",
-                    "recommendation": "Consider deleting this stale duplicate entry.",
-                })
+                stale_entities.append(
+                    {
+                        "entity_id": e.get("entity_id"),
+                        "state": "unavailable",
+                        "recommendation": "Consider deleting this stale duplicate entry.",
+                    }
+                )
 
     dup_entry["overlap_score"] = overlap_score
     dup_entry["trigger_overlap"] = trigger_overlap_list
@@ -1803,7 +1831,7 @@ _CANONICAL_PREFIXES = frozenset(
 )
 
 _POLISH_CHARS = frozenset("ąęśćńółżź")
-_EMOJI_RANGE_RE = re.compile("[\U0001F300-\U0001F9FF]")
+_EMOJI_RANGE_RE = re.compile("[\U0001f300-\U0001f9ff]")
 
 _PREFIX_CATEGORY_MAP: dict[str, list[str]] = {
     "Heating": ["Heating", "Climate"],
@@ -1866,14 +1894,18 @@ def _do_validate_automation_names(
 
         # Rule 1: Separator must be " - " not " — ", " – ", ": "
         if " - " not in alias and (" — " in alias or " – " in alias or ": " in alias):
-            violations.append({
-                "entity_id": entity_id,
-                "alias": alias,
-                "violation_type": "wrong_separator",
-                "current_value": alias,
-                "suggested_fix": alias.replace(" — ", " - ").replace(" – ", " - ").replace(": ", " - "),
-                "severity": "warning",
-            })
+            violations.append(
+                {
+                    "entity_id": entity_id,
+                    "alias": alias,
+                    "violation_type": "wrong_separator",
+                    "current_value": alias,
+                    "suggested_fix": alias.replace(" — ", " - ")
+                    .replace(" – ", " - ")
+                    .replace(": ", " - "),
+                    "severity": "warning",
+                }
+            )
             continue
 
         # Rule 2: Prefix before first " - " must be canonical
@@ -1882,51 +1914,59 @@ def _do_validate_automation_names(
         remainder = parts[1] if len(parts) > 1 else ""
 
         if prefix not in _CANONICAL_PREFIXES:
-            violations.append({
-                "entity_id": entity_id,
-                "alias": alias,
-                "violation_type": "missing_prefix",
-                "current_value": prefix if prefix else "(empty)",
-                "suggested_fix": f"Add canonical prefix from: {sorted(_CANONICAL_PREFIXES)}",
-                "severity": "error",
-            })
+            violations.append(
+                {
+                    "entity_id": entity_id,
+                    "alias": alias,
+                    "violation_type": "missing_prefix",
+                    "current_value": prefix if prefix else "(empty)",
+                    "suggested_fix": f"Add canonical prefix from: {sorted(_CANONICAL_PREFIXES)}",
+                    "severity": "error",
+                }
+            )
 
         # Rule 3: No Polish characters
         polish_found = [c for c in alias if c.lower() in _POLISH_CHARS or c in _POLISH_CHARS]
         if polish_found:
-            violations.append({
-                "entity_id": entity_id,
-                "alias": alias,
-                "violation_type": "polish_characters",
-                "current_value": "".join(polish_found),
-                "suggested_fix": "Replace Polish characters with ASCII equivalents",
-                "severity": "warning",
-            })
+            violations.append(
+                {
+                    "entity_id": entity_id,
+                    "alias": alias,
+                    "violation_type": "polish_characters",
+                    "current_value": "".join(polish_found),
+                    "suggested_fix": "Replace Polish characters with ASCII equivalents",
+                    "severity": "warning",
+                }
+            )
 
         # Rule 4: No emoji in alias
         if _EMOJI_RANGE_RE.search(alias):
-            violations.append({
-                "entity_id": entity_id,
-                "alias": alias,
-                "violation_type": "emoji_in_alias",
-                "current_value": alias,
-                "suggested_fix": "Remove emoji characters from alias",
-                "severity": "error",
-            })
+            violations.append(
+                {
+                    "entity_id": entity_id,
+                    "alias": alias,
+                    "violation_type": "emoji_in_alias",
+                    "current_value": alias,
+                    "suggested_fix": "Remove emoji characters from alias",
+                    "severity": "error",
+                }
+            )
 
         # Rule 5: Title Case in purpose text (after prefix)
         if remainder:
             words = remainder.split()
             title_words = _TITLE_CASE_WORDS_RE.findall(remainder)
             if title_words and len(title_words) < len([w for w in words if w[0].isalpha()]) * 0.5:
-                violations.append({
-                    "entity_id": entity_id,
-                    "alias": alias,
-                    "violation_type": "bad_capitalization",
-                    "current_value": remainder,
-                    "suggested_fix": remainder.title(),
-                    "severity": "warning",
-                })
+                violations.append(
+                    {
+                        "entity_id": entity_id,
+                        "alias": alias,
+                        "violation_type": "bad_capitalization",
+                        "current_value": remainder,
+                        "suggested_fix": remainder.title(),
+                        "severity": "warning",
+                    }
+                )
 
         # Rule 6: Compound hyphens (e.g. "Auto-Off" should use hyphens not spaces)
         compound_pattern = re.compile(
@@ -1940,28 +1980,32 @@ def _do_validate_automation_names(
                 first, second = m
                 full = f"{first} {second}"
                 if f"{first} {second}" in alias and f"{first}-{second}" not in alias:
-                    violations.append({
-                        "entity_id": entity_id,
-                        "alias": alias,
-                        "violation_type": "missing_compound_hyphen",
-                        "current_value": full,
-                        "suggested_fix": f"{first}-{second}",
-                        "severity": "warning",
-                    })
+                    violations.append(
+                        {
+                            "entity_id": entity_id,
+                            "alias": alias,
+                            "violation_type": "missing_compound_hyphen",
+                            "current_value": full,
+                            "suggested_fix": f"{first}-{second}",
+                            "severity": "warning",
+                        }
+                    )
 
         # Rule 7: Version strings must be lowercase (v5.0, v2)
         version_pattern = re.compile(r"\b[Vv]\d+(?:\.\d+)?\b")
         for vmatch in version_pattern.finditer(alias):
             vtext = vmatch.group()
             if vtext[0].isupper():
-                violations.append({
-                    "entity_id": entity_id,
-                    "alias": alias,
-                    "violation_type": "uppercase_version",
-                    "current_value": vtext,
-                    "suggested_fix": vtext.lower(),
-                    "severity": "warning",
-                })
+                violations.append(
+                    {
+                        "entity_id": entity_id,
+                        "alias": alias,
+                        "violation_type": "uppercase_version",
+                        "current_value": vtext,
+                        "suggested_fix": vtext.lower(),
+                        "severity": "warning",
+                    }
+                )
 
     return {
         "success": True,
@@ -2016,18 +2060,17 @@ def _do_diagnose_category_alias_mismatch(
         assigned_cat_name = cat_id_to_name.get(assigned_cat_id, assigned_cat_id)
         expected_names = _PREFIX_CATEGORY_MAP.get(prefix, [])
 
-        if not any(
-            assigned_cat_name.lower() == expected.lower()
-            for expected in expected_names
-        ):
-            mismatches.append({
-                "entity_id": auto_entity_id,
-                "alias": alias,
-                "alias_prefix": prefix,
-                "assigned_category_name": assigned_cat_name,
-                "expected_category_name": " or ".join(expected_names),
-                "severity": "warning",
-            })
+        if not any(assigned_cat_name.lower() == expected.lower() for expected in expected_names):
+            mismatches.append(
+                {
+                    "entity_id": auto_entity_id,
+                    "alias": alias,
+                    "alias_prefix": prefix,
+                    "assigned_category_name": assigned_cat_name,
+                    "expected_category_name": " or ".join(expected_names),
+                    "severity": "warning",
+                }
+            )
 
     return {
         "success": True,
@@ -2479,7 +2522,17 @@ def register_automation_tools(mcp, config_path, ha_url=None, ha_token=None) -> N
             _logger.exception("diagnose_category_alias_mismatch failed")
             return _error_response(str(exc))
 
-    register_manifest("search_inside_automations", make_manifest("search_inside_automations", latency="fast"))
-    register_manifest("diagnose_uncategorized_automations", make_manifest("diagnose_uncategorized_automations", latency="fast"))
-    register_manifest("validate_automation_names", make_manifest("validate_automation_names", latency="fast"))
-    register_manifest("diagnose_category_alias_mismatch", make_manifest("diagnose_category_alias_mismatch", latency="fast"))
+    register_manifest(
+        "search_inside_automations", make_manifest("search_inside_automations", latency="fast")
+    )
+    register_manifest(
+        "diagnose_uncategorized_automations",
+        make_manifest("diagnose_uncategorized_automations", latency="fast"),
+    )
+    register_manifest(
+        "validate_automation_names", make_manifest("validate_automation_names", latency="fast")
+    )
+    register_manifest(
+        "diagnose_category_alias_mismatch",
+        make_manifest("diagnose_category_alias_mismatch", latency="fast"),
+    )

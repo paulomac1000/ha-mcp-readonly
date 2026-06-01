@@ -168,20 +168,26 @@ def _do_list_directory(path: str, max_entries: int) -> dict[str, Any]:
     try:
         all_iter = list(target.iterdir())
     except OSError as e:
-        return create_error_response("INTERNAL_ERROR", f"Cannot read directory {target}: {e}", retryable=True)
+        return create_error_response(
+            "INTERNAL_ERROR", f"Cannot read directory {target}: {e}", retryable=True
+        )
 
     for entry in all_iter:
         if len(entries) >= max_entries:
             break
         try:
             stat = entry.stat()
-            entries.append({
-                "name": entry.name,
-                "type": "directory" if entry.is_dir() else "file",
-                "size_bytes": stat.st_size if entry.is_file() else None,
-                "modified_timestamp": stat.st_mtime,
-                "is_binary": SECURITY_CONTEXT.is_binary_file(entry) if entry.is_file() else False,
-            })
+            entries.append(
+                {
+                    "name": entry.name,
+                    "type": "directory" if entry.is_dir() else "file",
+                    "size_bytes": stat.st_size if entry.is_file() else None,
+                    "modified_timestamp": stat.st_mtime,
+                    "is_binary": SECURITY_CONTEXT.is_binary_file(entry)
+                    if entry.is_file()
+                    else False,
+                }
+            )
         except PermissionError:
             continue
 
@@ -218,7 +224,9 @@ def _do_read_file(file_path: str, max_lines: int, offset: int) -> dict[str, Any]
     try:
         file_size = target.stat().st_size
     except FileNotFoundError:
-        return create_error_response("RESOURCE_NOT_FOUND", f"File not found: {target}", retryable=False)
+        return create_error_response(
+            "RESOURCE_NOT_FOUND", f"File not found: {target}", retryable=False
+        )
 
     if file_size > max_bytes:
         return create_error_response(
@@ -250,7 +258,9 @@ def _do_read_file(file_path: str, max_lines: int, offset: int) -> dict[str, Any]
                         break
                     lines.append(line.rstrip("\n"))
         except Exception as e:
-            return create_error_response("INTERNAL_ERROR", f"File encoding not supported: {e}", retryable=False)
+            return create_error_response(
+                "INTERNAL_ERROR", f"File encoding not supported: {e}", retryable=False
+            )
     except Exception as e:
         return create_error_response("INTERNAL_ERROR", f"Read failed: {e}", retryable=True)
 
@@ -270,7 +280,8 @@ def _do_search_files(pattern: str, search_path: str, max_results: int) -> dict[s
     """Search for files containing a text pattern (safe grep)."""
     if not re.match(r"^[a-zA-Z0-9\s\-_\.\/\\:\[\]\(\)\{\}\+\*\?\^\$\|@#%&=!<>~\']+$", pattern):
         return create_error_response(
-            "INVALID_PARAM", "Invalid search pattern: pattern contains blocked special characters",
+            "INVALID_PARAM",
+            "Invalid search pattern: pattern contains blocked special characters",
             retryable=False,
         )
 
@@ -280,7 +291,9 @@ def _do_search_files(pattern: str, search_path: str, max_results: int) -> dict[s
         return create_error_response("ACCESS_DENIED", str(e), retryable=False)
 
     if not target.is_dir():
-        return create_error_response("INVALID_PARAM", f"Search path must be a directory: {target}", retryable=False)
+        return create_error_response(
+            "INVALID_PARAM", f"Search path must be a directory: {target}", retryable=False
+        )
 
     results: list[dict[str, Any]] = []
     files_searched = 0
@@ -316,12 +329,14 @@ def _do_search_files(pattern: str, search_path: str, max_results: int) -> dict[s
                             matches.append({"position": match.start(), "context": context})
                             if len(matches) >= 3:
                                 break
-                        results.append({
-                            "path": str(filepath.relative_to(target)),
-                            "absolute_path": str(filepath),
-                            "matches_count": len(matches),
-                            "sample_matches": matches[:3],
-                        })
+                        results.append(
+                            {
+                                "path": str(filepath.relative_to(target)),
+                                "absolute_path": str(filepath),
+                                "matches_count": len(matches),
+                                "sample_matches": matches[:3],
+                            }
+                        )
             except Exception:
                 continue
 

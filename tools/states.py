@@ -985,7 +985,9 @@ def register_state_tools(mcp, ha_url, ha_token, config_path: str | None = None) 
     """
 
     @mcp.tool()
-    async def get_all_states(domain: str | None = None, include_attributes: bool = False, compact: bool = False) -> str:
+    async def get_all_states(
+        domain: str | None = None, include_attributes: bool = False, compact: bool = False
+    ) -> str:
         """[READ] Get all entities and their states.
 
         Warning: may return 1000+ entities. Use get_states_filtered for filtering.
@@ -1004,7 +1006,13 @@ def register_state_tools(mcp, ha_url, ha_token, config_path: str | None = None) 
             return cached  # type: ignore[no-any-return]
         try:
             data = await asyncio.to_thread(
-                _do_get_all_states, ha_url, ha_token, config_path, domain, include_attributes, compact
+                _do_get_all_states,
+                ha_url,
+                ha_token,
+                config_path,
+                domain,
+                include_attributes,
+                compact,
             )
         except Exception as e:
             _logger.exception("get_all_states failed")

@@ -204,7 +204,9 @@ def load_registry(
     Blocked registries (``auth``, ``auth_provider.homeassistatet``,
     ``onboarding``) silently return ``{}`` to prevent credential leaks.
     """
-    if registry_name in BLOCKED_REGISTRIES:
+    if registry_name in BLOCKED_REGISTRIES or any(
+        registry_name.startswith(prefix) for prefix in ("auth_provider.",)
+    ):
         with _CACHE_LOCK:
             _REGISTRY_CACHE_STATS["blocked"] += 1
         return {}
@@ -392,7 +394,7 @@ def _success_response(
     return json.dumps(response, indent=2, ensure_ascii=False)
 
 
-def _error_response(error: str | dict) -> str:
+def _error_response(error: str | dict[str, Any]) -> str:
     """Format an error tool response. All tools MUST use this.
 
     Accepts both a plain string (backward compatible) and a structured

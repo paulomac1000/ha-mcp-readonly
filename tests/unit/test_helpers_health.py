@@ -152,10 +152,12 @@ class TestDiagnoseStuckHelpers:
             mock_req.return_value = {"success": True, "data": states}
             register_helpers_health_tools(mock_mcp, ha_url, ha_token)
             tool = mock_mcp._tools["diagnose_stuck_helpers"]
-            data = json.loads(tool(
-                stale_hours=24,
-                entity_ids="input_boolean.warning_one",
-            ))
+            data = json.loads(
+                tool(
+                    stale_hours=24,
+                    entity_ids="input_boolean.warning_one",
+                )
+            )
 
         assert data["success"] is True
         assert data["stuck_count"] == 1
@@ -169,10 +171,12 @@ class TestDiagnoseStuckHelpers:
             mock_req.return_value = {"success": True, "data": states}
             register_helpers_health_tools(mock_mcp, ha_url, ha_token)
             tool = mock_mcp._tools["diagnose_stuck_helpers"]
-            data = json.loads(tool(
-                stale_hours=24,
-                entity_ids="input_boolean.warning_one, timer.laundry",
-            ))
+            data = json.loads(
+                tool(
+                    stale_hours=24,
+                    entity_ids="input_boolean.warning_one, timer.laundry",
+                )
+            )
 
         assert data["success"] is True
         assert data["stuck_count"] == 2
@@ -193,10 +197,12 @@ class TestDiagnoseStuckHelpers:
             mock_req.return_value = {"success": True, "data": states}
             register_helpers_health_tools(mock_mcp, ha_url, ha_token)
             tool = mock_mcp._tools["diagnose_stuck_helpers"]
-            data = json.loads(tool(
-                stale_hours=24,
-                entity_ids="input_boolean.not_found",
-            ))
+            data = json.loads(
+                tool(
+                    stale_hours=24,
+                    entity_ids="input_boolean.not_found",
+                )
+            )
 
         assert data["success"] is True
         assert data["stuck_count"] == 0
