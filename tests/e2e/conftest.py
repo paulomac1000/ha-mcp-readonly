@@ -1,6 +1,7 @@
 """E2E test conftest — real HA, temp output dir."""
 
 import os
+import socket
 import tempfile
 from pathlib import Path
 
@@ -25,6 +26,16 @@ HA_TOKEN = os.getenv("HA_TOKEN", "")
 HA_CONFIG_PATH = os.getenv("HA_CONFIG_PATH", "/config")
 REST_API_PORT = int(os.getenv("REST_API_PORT", "9093"))
 REST_API_URL = f"http://localhost:{REST_API_PORT}"
+
+
+def _server_running():
+    """Check if MCP server is reachable on the REST API port."""
+    try:
+        sock = socket.create_connection(("localhost", REST_API_PORT), timeout=1)
+        sock.close()
+        return True
+    except (OSError, ConnectionRefusedError):
+        return False
 
 
 @pytest.fixture

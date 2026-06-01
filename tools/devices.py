@@ -10,6 +10,7 @@ Provides tools for device management and context:
 import logging
 from typing import Any
 
+from tools.manifests import make_manifest, register_manifest
 from tools.utils import (
     _error_response,
     _success_response,
@@ -19,7 +20,6 @@ from tools.utils import (
     get_registry_entities,
     make_ha_request,
 )
-from tools.manifests import register_manifest, make_manifest
 
 _logger = logging.getLogger(__name__)
 

@@ -5,8 +5,7 @@ for an extended period — a common root cause of silent system failures.
 """
 
 import logging
-import time
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from tools.manifests import make_manifest, register_manifest
@@ -43,8 +42,7 @@ def _do_diagnose_stuck_helpers(
     else:
         requested = None
 
-    now = datetime.now(timezone.utc)
-    threshold = timedelta(hours=stale_hours)
+    now = datetime.now(UTC)
     stuck = []
 
     for ent in entities:

@@ -11,7 +11,6 @@ Optimizations:
 
 import logging
 import math
-import os
 import re
 import threading
 import time
@@ -22,10 +21,9 @@ from typing import Any
 
 import yaml
 
-from tools.yaml_utils import HomeAssistantLoader
-
+from tools.manifests import make_manifest, register_manifest
 from tools.utils import _error_response, _success_response, load_registry, make_ha_request
-from tools.manifests import register_manifest, make_manifest
+from tools.yaml_utils import HomeAssistantLoader
 
 _logger = logging.getLogger(__name__)
 
@@ -2245,7 +2243,6 @@ def _do_diagnose_entity_threshold_proximity(
     )
 
     entity_to_area: dict[str, str | None] = {}
-    device_to_area: dict[str, str | None] = {}
     dev_map = {d.get("id"): d for d in load_registry("core.device_registry", config_path).get("data", {}).get("devices", [])}
 
     for ent in entity_reg:

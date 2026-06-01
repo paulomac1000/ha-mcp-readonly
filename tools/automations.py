@@ -921,13 +921,13 @@ def _do_diagnose_automation(
             next_action = actions[idx + 1]
             prev_svc = (prev_action.get("service") or "").split(".")[-1] if "service" in prev_action else ""
             next_svc = (next_action.get("service") or "").split(".")[-1] if "service" in next_action else ""
-            prev_target = prev_action.get("target", prev_action.get("entity_id", ""))
-            next_target = next_action.get("target", next_action.get("entity_id", ""))
+            _prev_target = prev_action.get("target", prev_action.get("entity_id", ""))
+            _next_target = next_action.get("target", next_action.get("entity_id", ""))
             prev_changes_state = prev_svc in _STATE_CHANGING_SERVICES
             next_changes_state = next_svc in _STATE_CHANGING_SERVICES
             if prev_changes_state and next_changes_state:
-                prev_domain = (prev_action.get("service") or "").split(".")[0]
-                next_domain = (next_action.get("service") or "").split(".")[0]
+                _prev_domain = (prev_action.get("service") or "").split(".")[0]
+                _next_domain = (next_action.get("service") or "").split(".")[0]
                 reversing = _detect_reversal(prev_svc, next_svc)
                 result["issues"].append(  # type: ignore[attr-defined]
                     {

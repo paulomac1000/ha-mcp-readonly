@@ -5,15 +5,15 @@ diagnostics (new), devices (new), storage (new), dev_tools (new).
 
 import json
 import os
-from datetime import datetime, timezone, timedelta
+from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
 import pytest
 
 from tools.automations import register_automation_tools
 from tools.categories import register_categories_tools
-from tools.devices import register_device_tools
 from tools.dev_tools import register_dev_tools
+from tools.devices import register_device_tools
 from tools.diagnostics import register_diagnostics_tools
 from tools.helpers_health import register_helpers_health_tools
 from tools.storage import register_storage_tools
@@ -62,7 +62,7 @@ def mock_mcp():
 
 class TestDiagnoseStuckHelpers:
     def _stuck_states(self):
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         old_ts = (now - timedelta(hours=48)).isoformat()
         recent_ts = (now - timedelta(minutes=5)).isoformat()
         return [
@@ -112,7 +112,7 @@ class TestDiagnoseStuckHelpers:
         assert "timer.laundry" in stuck_ids
 
     def test_empty_result(self, mock_mcp, ha_url, ha_token):
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         recent_ts = (now - timedelta(minutes=5)).isoformat()
         states = [
             {
@@ -554,7 +554,7 @@ class TestDiagnoseCategoryAliasMismatch:
 
 class TestDiagnoseStaleEntities:
     def _stale_states(self):
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         stale_ts = (now - timedelta(hours=2)).isoformat()
         fresh_ts = (now - timedelta(minutes=5)).isoformat()
         return [
@@ -607,7 +607,7 @@ class TestDiagnoseStaleEntities:
         assert "sensor.stale_temp" in stale_ids
 
     def test_no_stale_entities(self, mock_mcp, config_path, ha_url, ha_token):
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         fresh_ts = (now - timedelta(minutes=5)).isoformat()
         states = [
             {
@@ -1588,7 +1588,7 @@ class TestHistoryGroupBy:
     async def test_group_by_hour(self, mock_mcp):
         from tools.history import register_history_tools
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         history_data = []
         for minute in range(0, 120, 5):
             ts = now - timedelta(minutes=minute)
@@ -1616,7 +1616,7 @@ class TestHistoryGroupBy:
     async def test_group_by_none(self, mock_mcp):
         from tools.history import register_history_tools
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         history_data = [{
             "entity_id": "sensor.temp", "state": "22.5",
             "last_changed": (now - timedelta(minutes=10)).isoformat(),

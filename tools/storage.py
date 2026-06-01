@@ -261,7 +261,7 @@ def _do_get_entity_context(
     entity = next((e for e in ent_data if e.get("entity_id") == entity_id), None)
 
     if not entity:
-        return {"error": f"Entity '{entity_id}' not found in registry"}
+        return {"success": False, "error": f"Entity '{entity_id}' not found in registry"}
 
     result = {  # type: ignore[var-annotated]
         "entity_id": entity_id,
@@ -422,7 +422,7 @@ def _do_get_area_overview(
     )
 
     if not area:
-        return {"error": f"Area '{area_id}' not found"}
+        return {"success": False, "error": f"Area '{area_id}' not found"}
 
     final_area_id = area.get("id")
 
@@ -511,7 +511,7 @@ def _do_get_history_stats(
     ha_token: str | None,
 ) -> dict[str, Any]:
     if not ha_url or not ha_token:
-        return {"error": "HA API not configured"}
+        return {"success": False, "error": "HA API not configured"}
 
     hours_back = min(hours_back, 168)
 
@@ -520,7 +520,7 @@ def _do_get_history_stats(
 
     res = make_ha_request(ha_url, ha_token, url)
     if not res["success"] or not res["data"] or not res["data"][0]:
-        return {"error": "No history data found"}
+        return {"success": False, "error": "No history data found"}
 
     history = res["data"][0]
     states = [h["state"] for h in history if h["state"] not in ["unavailable", "unknown"]]
@@ -1695,7 +1695,7 @@ def _do_get_template_entities_batch(
     """
     ids_list = [eid.strip() for eid in entity_ids.split(",") if eid.strip()]
     if not ids_list:
-        return {"error": "No entity_ids provided"}
+        return {"success": False, "error": "No entity_ids provided"}
 
     results: dict[str, Any] = {}
     errors_count = 0

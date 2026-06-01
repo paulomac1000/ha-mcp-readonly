@@ -4,11 +4,13 @@ import os
 
 import pytest
 
+from .conftest import _server_running
+
 _HA_URL = os.getenv("HA_URL") or "http://192.168.0.101:8123"
 _HA_TOKEN = os.getenv("HA_TOKEN") or ""
 _HA_CONFIG_PATH = os.getenv("HA_CONFIG_PATH") or "/var/apps/hassio/data/hassio"
 
-pytestmark = pytest.mark.skipif(not _HA_TOKEN, reason="HA_TOKEN required for e2e tests")
+pytestmark = pytest.mark.skipif(not _HA_TOKEN or not _server_running(), reason="HA_TOKEN and running server required for e2e tests")
 
 
 def _run_generation(output_path):

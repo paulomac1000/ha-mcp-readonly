@@ -5,9 +5,9 @@ import time
 import pytest
 import requests
 
-from .conftest import HA_TOKEN, REST_API_URL
+from .conftest import HA_TOKEN, REST_API_URL, _server_running
 
-pytestmark = pytest.mark.skipif(not HA_TOKEN, reason="HA_TOKEN required for e2e tests")
+pytestmark = pytest.mark.skipif(not HA_TOKEN or not _server_running(), reason="HA_TOKEN and running server required for e2e tests")
 
 
 class TestRESTAPI:

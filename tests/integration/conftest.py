@@ -241,7 +241,7 @@ class MCPWrapper:
     def _get_or_create_loop(self):
         """
         Fetches or creates shared event loop.
-        KRYTYCZNE: Zawsze returns TEN SAM loop dla wszystkich operacji.
+        CRITICAL: Always returns THE SAME loop for all operations.
         """
         if self._loop is None or self._loop.is_closed():
             self._loop = asyncio.new_event_loop()
@@ -278,6 +278,7 @@ def real_mcp():
         from tools.areas import register_area_tools
         from tools.automations import register_automation_tools
         from tools.batch_operations import register_batch_operations_tools
+        from tools.blueprints import register_blueprint_tools
         from tools.capabilities import register_capability_tools
         from tools.categories import register_categories_tools
         from tools.composite import register_composite_tools

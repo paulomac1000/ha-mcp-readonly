@@ -10,7 +10,6 @@ Optimizations:
 """
 
 import asyncio
-import json
 import logging
 import time
 import urllib.parse
@@ -1013,7 +1012,7 @@ def register_state_tools(mcp, ha_url, ha_token, config_path: str | None = None) 
         if data["success"]:
             response = _success_response(data)
         else:
-            response = json.dumps(data, indent=2)
+            response = _error_response(data.get("error", str(data)))
         _set_cache(cache_key, response)
         return response
 
@@ -1100,7 +1099,7 @@ def register_state_tools(mcp, ha_url, ha_token, config_path: str | None = None) 
         if data["success"]:
             response = _success_response(data)
         else:
-            response = json.dumps(data, indent=2)
+            response = _error_response(data.get("error", str(data)))
         _set_cache(cache_key, response)
         return response
 
@@ -1123,7 +1122,7 @@ def register_state_tools(mcp, ha_url, ha_token, config_path: str | None = None) 
         if data["success"]:
             response = _success_response(data)
         else:
-            response = json.dumps(data, indent=2)
+            response = _error_response(data.get("error", str(data)))
         _set_cache(cache_key, response)
         return response
 
@@ -1166,7 +1165,7 @@ def register_state_tools(mcp, ha_url, ha_token, config_path: str | None = None) 
         if data["success"]:
             response = _success_response(data)
         else:
-            response = json.dumps(data, indent=2)
+            response = _error_response(data.get("error", str(data)))
         _set_cache(cache_key, response)
         return response
 
@@ -1209,7 +1208,7 @@ def register_state_tools(mcp, ha_url, ha_token, config_path: str | None = None) 
         if data["success"]:
             response = _success_response(data)
         else:
-            response = json.dumps(data, indent=2)
+            response = _error_response(data.get("error", str(data)))
         _set_cache(cache_key, response)
         return response
 
