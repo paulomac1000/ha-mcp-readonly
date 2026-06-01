@@ -2,14 +2,14 @@
 
 [![CI](https://github.com/paulomac1000/ha-mcp-readonly/actions/workflows/ci.yml/badge.svg)](https://github.com/paulomac1000/ha-mcp-readonly/actions/workflows/ci.yml)
 [![Docker](https://github.com/paulomac1000/ha-mcp-readonly/actions/workflows/publish.yml/badge.svg)](https://github.com/paulomac1000/ha-mcp-readonly/actions/workflows/publish.yml)
-[![Python 3.14+](https://img.shields.io/badge/python-3.14%2B-blue)](https://www.python.org/)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
 Read-only MCP (Model Context Protocol) server for Home Assistant. Gives AI assistants (Claude Desktop, LibreChat, Cline) full observability into your smart home — entity states, automations, scripts, devices, logs, diagnostics — without any write access. Also generates static AI context snapshots for RAG systems, ChatGPT Projects, Qwen, and other tools that accept custom knowledge files. Built in Python, runs anywhere — locally, in Docker, or as an MCP integration.
 
 ## Requirements
 
-- Python 3.14+ (for local use) or Docker
+- Python 3.11+ (for local use) or Docker
 - A Home Assistant instance with a [long-lived access token](https://www.home-assistant.io/docs/configuration/secrets/#long-lived-access-token)
   - Create one in your HA profile: **Settings → Security → Long-Lived Access Tokens**
 - Access to your Home Assistant config directory (for filesystem tools)
@@ -94,7 +94,7 @@ docker build -t ha-mcp-readonly .
 docker compose -f docker-compose.build.yml up -d
 ```
 
-### 3. Run locally (Python 3.14+)
+### 3. Run locally (Python 3.11+)
 
 ```bash
 pip install -r requirements.txt
@@ -124,7 +124,7 @@ curl -X POST http://localhost:9093/api/context/generate \
   -d '{"mode": "hybrid"}'
 ```
 
-## Available Tools (122 total)
+## Available Tools (134 with dev tools, 122 without)
 
 Tools are organized by category (53 shown in table below). All are **read-only** — no state changes, no service calls, no modifications.
 
@@ -238,7 +238,7 @@ pip install -r requirements.txt
 ### Run tests
 
 ```bash
-# Unit tests (no credentials needed, 703 tests, <20s)
+# Unit tests (no credentials needed, 884 tests, <20s)
 pytest tests/unit/ -q
 
 # Smoke tests (requires local MCP server, 84 tests, <5s)
@@ -256,7 +256,7 @@ pytest tests/e2e/ -q
 pytest tests/unit/ tests/smoke/ tests/e2e/ tests/integration/ -q
 ```
 
-All unit tests use mocked dependencies — no real Home Assistant instance required. 909 total tests across 4 suites.
+All unit tests use mocked dependencies — no real Home Assistant instance required. 1090 total tests across 4 suites.
 
 ### Lint & format
 
@@ -277,30 +277,36 @@ context_generator/
 └── utils.py               # Registry cache, HA API client, YAML helpers
 
 tools/
-├── states.py              # Entity state queries (12 tools)
 ├── automations.py         # Automation analysis (10 tools)
-├── scripts.py, scenes.py  # Script and scene inspection (2+2 tools)
-├── blueprints.py          # Blueprint management (4 tools)
-├── devices.py, areas.py   # Device and area tools (5+1 tools)
-├── config_entries.py      # Config entry diagnostics (4 tools)
-├── integrations.py        # Integration entity analysis (2 tools)
-├── diagnostics.py         # System health, energy dashboard
-├── logs.py                # Log analysis and insights
-├── history.py             # State history and recent changes
-├── entity_dependencies.py # Entity dependency graph
-├── entity_context.py      # Entity context tree
-├── config.py              # Configuration file tools
-├── storage.py             # Registry dump and search tools
 ├── batch_operations.py    # Bulk entity operations
+├── blueprints.py          # Blueprint management (4 tools)
+├── capabilities.py        # Zero-I/O MCP introspection tool catalog
+├── categories.py          # Category management (automation, script, scene, helpers)
 ├── composite.py           # Composite diagnostic tools
+├── config.py              # Configuration file tools
+├── config_entries.py      # Config entry diagnostics (4 tools)
+├── devices.py, areas.py   # Device and area tools (5+1 tools)
 ├── dev_tools.py           # Template testing, validation
+├── diagnostics.py         # System health, energy dashboard
+├── entity_context.py      # Entity context tree
+├── entity_dependencies.py # Entity dependency graph
 ├── filesystem_explorer.py # Secured filesystem browsing
 ├── health_reporter.py     # Health score and metrics
+├── helpers_health.py      # Helper entity health diagnostics
+├── history.py             # State history and recent changes
+├── integrations.py        # Integration entity analysis (2 tools)
+├── logs.py                # Log analysis and insights
+├── manifests.py           # TOOL_MANIFESTS, risk prefix injection
+├── observability.py       # request_id, invocation counters
+├── scripts.py, scenes.py  # Script and scene inspection (2+2 tools)
+├── states.py              # Entity state queries (12 tools)
+├── storage.py             # Registry dump and search tools
 ├── utils.py               # Shared: HA API client, registry loader, log sanitizer
+├── validators.py          # Input validation and schema checks
 └── yaml_utils.py          # HomeAssistantLoader for HA-specific YAML tags
 
 tests/
-├── unit/                  # 26 test files, 703 tests, fully mocked
+├── unit/                  # 26 test files, 884 tests, fully mocked
 └── integration/           # Real HA tests (requires HA_URL + HA_TOKEN)
 ```
 

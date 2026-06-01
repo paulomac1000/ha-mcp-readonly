@@ -29,7 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `GET /api/tools/{tool_name}/manifest` REST endpoint — returns the tool's manifest
   entry from `TOOL_MANIFESTS`.
 - Unit tests: 25 new tests for manifests, factories, consistency matrix, injection,
-  build_meta, sanitizer, and `_meta` envelope (798 total).
+  build_meta, sanitizer, and `_meta` envelope (884 total).
 - `describe_ha_capabilities` — zero-I/O MCP introspection tool exposing the full
   tool catalog with capability manifests over the MCP/SSE transport (standard
   rule 2b, L3+). New module `tools/capabilities.py`.

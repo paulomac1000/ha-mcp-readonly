@@ -64,7 +64,14 @@ def register_script_tools(mcp, config_path) -> None:  # type: ignore[no-untyped-
     @mcp.tool()
     def list_scripts() -> str:
         """[READ] Fetches list of all scripts from scripts.yaml.
+
         Returns script names and their descriptions.
+
+        Args:
+            None
+
+        Returns:
+            JSON with list of scripts.
         """
         try:
             return _do_list_scripts(config_path)

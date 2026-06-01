@@ -6,6 +6,7 @@ Safe access to file system with allowlist validation.
 import json
 import tempfile
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -296,6 +297,45 @@ class TestFilesystemTools:
         )
         assert result["success"] is True
         assert result["results_count"] == 0
+
+    def test_list_directory_exception_handler(
+        self, mock_mcp, temp_dir, allow_temp_dir_in_security_context
+    ):
+        """RuntimeError in _do_list_directory is caught by wrapper per [TEST-REG-3]."""
+        register_filesystem_tools(mock_mcp)
+        with patch(
+            "tools.filesystem_explorer._do_list_directory",
+            side_effect=RuntimeError("boom"),
+        ):
+            result = json.loads(mock_mcp.get_tool("list_directory")())
+        assert "success" in result
+        assert "boom" in str(result)
+
+    def test_read_file_exception_handler(
+        self, mock_mcp, temp_dir, allow_temp_dir_in_security_context
+    ):
+        """RuntimeError in _do_read_file is caught by wrapper per [TEST-REG-3]."""
+        register_filesystem_tools(mock_mcp)
+        with patch(
+            "tools.filesystem_explorer._do_read_file",
+            side_effect=RuntimeError("boom"),
+        ):
+            result = json.loads(mock_mcp.get_tool("read_file")(file_path="test.txt"))
+        assert "success" in result
+        assert "boom" in str(result)
+
+    def test_search_files_exception_handler(
+        self, mock_mcp, temp_dir, allow_temp_dir_in_security_context
+    ):
+        """RuntimeError in _do_search_files is caught by wrapper per [TEST-REG-3]."""
+        register_filesystem_tools(mock_mcp)
+        with patch(
+            "tools.filesystem_explorer._do_search_files",
+            side_effect=RuntimeError("boom"),
+        ):
+            result = json.loads(mock_mcp.get_tool("search_files")(pattern="test"))
+        assert "success" in result
+        assert "boom" in str(result)
 
 
 # =============================================================================

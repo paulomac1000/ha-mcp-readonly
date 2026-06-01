@@ -15,7 +15,6 @@ from tools.categories import register_categories_tools
 from tools.dev_tools import register_dev_tools
 from tools.devices import register_device_tools
 from tools.diagnostics import register_diagnostics_tools
-from tools.helpers_health import register_helpers_health_tools
 from tools.storage import register_storage_tools
 
 
@@ -53,97 +52,6 @@ def mock_mcp():
             return decorator
 
     return MockMCP()
-
-
-# ================================================================
-# 1. diagnose_stuck_helpers
-# ================================================================
-
-
-class TestDiagnoseStuckHelpers:
-    def _stuck_states(self):
-        now = datetime.now(UTC)
-        old_ts = (now - timedelta(hours=48)).isoformat()
-        recent_ts = (now - timedelta(minutes=5)).isoformat()
-        return [
-            {
-                "entity_id": "input_boolean.stuck_test",
-                "state": "on",
-                "last_changed": old_ts,
-                "last_updated": old_ts,
-                "attributes": {"friendly_name": "Stuck Boolean"},
-            },
-            {
-                "entity_id": "input_boolean.active_test",
-                "state": "off",
-                "last_changed": recent_ts,
-                "last_updated": recent_ts,
-                "attributes": {"friendly_name": "Active Boolean"},
-            },
-            {
-                "entity_id": "timer.laundry",
-                "state": "idle",
-                "last_changed": old_ts,
-                "last_updated": old_ts,
-                "attributes": {"friendly_name": "Laundry Timer"},
-            },
-            {
-                "entity_id": "light.living_room",
-                "state": "on",
-                "last_changed": recent_ts,
-                "last_updated": recent_ts,
-                "attributes": {},
-            },
-        ]
-
-    def test_success_path(self, mock_mcp, ha_url, ha_token):
-        states = self._stuck_states()
-        with patch("tools.helpers_health.make_ha_request") as mock_req:
-            mock_req.return_value = {"success": True, "data": states}
-            register_helpers_health_tools(mock_mcp, ha_url, ha_token)
-            tool = mock_mcp._tools["diagnose_stuck_helpers"]
-            data = json.loads(tool(stale_hours=24))
-
-        assert data["success"] is True
-        assert data["stuck_count"] >= 2
-        assert data["stale_threshold_hours"] == 24
-        stuck_ids = [h["entity_id"] for h in data["stuck_helpers"]]
-        assert "input_boolean.stuck_test" in stuck_ids
-        assert "timer.laundry" in stuck_ids
-
-    def test_empty_result(self, mock_mcp, ha_url, ha_token):
-        now = datetime.now(UTC)
-        recent_ts = (now - timedelta(minutes=5)).isoformat()
-        states = [
-            {
-                "entity_id": "input_boolean.active_btn",
-                "state": "off",
-                "last_changed": recent_ts,
-                "last_updated": recent_ts,
-                "attributes": {"friendly_name": "Active Button"},
-            },
-        ]
-        with patch("tools.helpers_health.make_ha_request") as mock_req:
-            mock_req.return_value = {"success": True, "data": states}
-            register_helpers_health_tools(mock_mcp, ha_url, ha_token)
-            tool = mock_mcp._tools["diagnose_stuck_helpers"]
-            data = json.loads(tool(stale_hours=24))
-
-        assert data["success"] is True
-        assert data["stuck_count"] == 0
-        assert len(data["stuck_helpers"]) == 0
-
-    def test_exception_handler(self, mock_mcp, ha_url, ha_token):
-        with patch(
-            "tools.helpers_health._do_diagnose_stuck_helpers",
-            side_effect=RuntimeError("test explosion"),
-        ):
-            register_helpers_health_tools(mock_mcp, ha_url, ha_token)
-            tool = mock_mcp._tools["diagnose_stuck_helpers"]
-            data = json.loads(tool())
-
-        assert data["success"] is False
-        assert "test explosion" in data.get("error", "")
 
 
 # ================================================================

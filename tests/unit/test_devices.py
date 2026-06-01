@@ -1091,5 +1091,58 @@ class TestDeviceGetWifiStatus:
         assert wifi["mac_address"] == "aa:bb:cc:dd:ee:11"
 
 
+class TestDevicesExceptionHandlers:
+    """Verify tool wrappers catch internal exceptions per [TEST-REG-3]."""
+
+    @pytest.mark.parametrize(
+        "tool_name,patch_target,args",
+        [
+            (
+                "get_device_details",
+                "tools.devices._do_get_device_details",
+                {"device_id": "test_device"},
+            ),
+            (
+                "get_device_entities",
+                "tools.devices._do_get_device_entities",
+                {"device_id": "test_device"},
+            ),
+            (
+                "search_devices",
+                "tools.devices._do_search_devices",
+                {"search_term": "test"},
+            ),
+            (
+                "get_devices_by_area",
+                "tools.devices._do_get_devices_by_area",
+                {"area_id": "test_area"},
+            ),
+            (
+                "device_get_wifi_status",
+                "tools.devices._do_device_get_wifi_status",
+                {"device_id": "test_device"},
+            ),
+            (
+                "get_device_triggers",
+                "tools.devices._do_get_device_triggers",
+                {"device_id": "test_device"},
+            ),
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_exception_handler(
+        self, tool_name, patch_target, args, mock_mcp, config_path, ha_url, ha_token
+    ):
+        """RuntimeError in _do_* function is caught and returned as error."""
+        register_device_tools(mock_mcp, config_path, ha_url, ha_token)
+
+        with patch(patch_target, side_effect=RuntimeError("boom")):
+            tool = mock_mcp._tools[tool_name]
+            data = json.loads(await tool(**args))
+
+        assert data["success"] is False
+        assert "boom" in data.get("error", "")
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
