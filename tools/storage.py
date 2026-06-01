@@ -1591,6 +1591,65 @@ def _sensor_matches(
     return False
 
 
+def _find_yaml_line_boundaries(
+    filepath: str, sensor_def: dict[str, Any]
+) -> tuple[int | None, int | None]:
+    """Locate approximate line boundaries of a sensor definition in a YAML file.
+
+    Searches for the ``unique_id`` or ``name`` value in the raw file lines,
+    then expands backward/forward to capture the full sensor block at the
+    same indentation level.
+
+    Returns:
+        (line_start, line_end) — 1-indexed, or (None, None) on failure.
+    """
+    lookup_value = sensor_def.get("unique_id") or sensor_def.get("name")
+    if not lookup_value:
+        return None, None
+    lookup_str = str(lookup_value)
+
+    try:
+        with open(filepath, encoding="utf-8") as f:
+            raw_lines = f.readlines()
+    except (OSError, UnicodeDecodeError):
+        return None, None
+
+    if not raw_lines:
+        return None, None
+
+    found_line = None
+    for i, line in enumerate(raw_lines):
+        if lookup_str in line:
+            found_line = i
+            break
+    if found_line is None:
+        return None, None
+
+    line_indent = len(raw_lines[found_line]) - len(raw_lines[found_line].lstrip())
+
+    line_start = found_line
+    for i in range(found_line - 1, -1, -1):
+        stripped = raw_lines[i].rstrip()
+        indent = len(raw_lines[i]) - len(raw_lines[i].lstrip())
+        if indent < line_indent and stripped:
+            line_start = i
+            break
+
+    line_end = found_line
+    for i in range(found_line + 1, len(raw_lines)):
+        stripped = raw_lines[i].rstrip()
+        if not stripped:
+            continue
+        indent = len(raw_lines[i]) - len(raw_lines[i].lstrip())
+        if indent <= line_indent:
+            line_end = i - 1
+            break
+    else:
+        line_end = len(raw_lines) - 1
+
+    return line_start + 1, line_end + 1
+
+
 def _build_yaml_template_result(
     sensor_def: dict[str, Any],
     domain: str,
@@ -1602,6 +1661,8 @@ def _build_yaml_template_result(
     rel_path = (
         os.path.relpath(filepath, config_path) if config_path else filepath
     )
+
+    line_start, line_end = _find_yaml_line_boundaries(filepath, sensor_def)
 
     return {
         "entity_id": f"{domain}.{obj_id}",
@@ -1615,8 +1676,8 @@ def _build_yaml_template_result(
         "icon": sensor_def.get("icon"),
         "source": "yaml",
         "file_path": rel_path,
-        "line_start": None,
-        "line_end": None,
+        "line_start": line_start,
+        "line_end": line_end,
     }
 
 

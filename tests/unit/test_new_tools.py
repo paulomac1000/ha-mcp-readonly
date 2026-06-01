@@ -1462,3 +1462,172 @@ template:
         err = data.get("error", {})
         if isinstance(err, dict):
             assert err.get("code") == "NOT_FOUND"
+
+
+# ================================================================
+# Gap 3: YAML template line boundaries
+# ================================================================
+
+
+class TestYamlTemplateLineBoundaries:
+    """Tests for _find_yaml_line_boundaries."""
+
+    def _write_yaml(self, config_path: str, filename: str, content: str) -> str:
+        filepath = os.path.join(config_path, filename)
+        with open(filepath, "w", encoding="utf-8") as f:
+            f.write(content)
+        return filepath
+
+    @pytest.mark.asyncio
+    async def test_line_boundaries_computed(self, mock_mcp, config_path):
+        yaml_content = """\
+template:
+  - sensor:
+      - unique_id: smart_vacuum_upstairs_score
+        state: "{{ states('sensor.vacuum_status') }}"
+"""
+        self._write_yaml(config_path, "configuration.yaml", yaml_content)
+
+        with patch("tools.storage.load_registry") as mock_load:
+            mock_load.return_value = {"data": {"entries": [], "entities": []}}
+            register_storage_tools(mock_mcp, config_path)
+            tool = mock_mcp._tools["get_template_entity_code"]
+            data = json.loads(await tool(entity_id="sensor.smart_vacuum_upstairs_score"))
+
+        assert data["success"] is True
+        assert data.get("source") == "yaml"
+        assert data.get("file_path") == "configuration.yaml"
+        assert isinstance(data.get("line_start"), int)
+        assert isinstance(data.get("line_end"), int)
+        assert data["line_start"] > 0
+        assert data["line_end"] >= data["line_start"]
+
+    @pytest.mark.asyncio
+    async def test_line_boundaries_in_subdir(self, mock_mcp, config_path):
+        templates_dir = os.path.join(config_path, "templates")
+        os.makedirs(templates_dir, exist_ok=True)
+        yaml_content = """\
+sensor:
+  - unique_id: heating_mode
+    state: "{{ states('input_select.heating_mode') }}"
+"""
+        self._write_yaml(config_path, "templates/heating.yaml", yaml_content)
+
+        with patch("tools.storage.load_registry") as mock_load:
+            mock_load.return_value = {"data": {"entries": [], "entities": []}}
+            register_storage_tools(mock_mcp, config_path)
+            tool = mock_mcp._tools["get_template_entity_code"]
+            data = json.loads(await tool(entity_id="sensor.heating_mode"))
+
+        assert data["success"] is True
+        assert "templates/heating.yaml" in data.get("file_path", "")
+        assert isinstance(data.get("line_start"), int)
+        assert data["line_start"] > 0
+
+
+class TestOverlapScoreWithConditions:
+    """Gap 11: conditions contribute 20% to overlap score."""
+
+    def _write_yaml(self, config_path: str, filename: str, content: str) -> str:
+        filepath = os.path.join(config_path, filename)
+        with open(filepath, "w", encoding="utf-8") as f:
+            f.write(content)
+        return filepath
+
+    def test_conditions_contribute_to_overlap(self, config_path):
+        yaml_content = """\
+- id: "auto1"
+  alias: "Climate Control"
+  trigger:
+    - platform: numeric_state
+      entity_id: sensor.temperature
+      above: 25
+  condition:
+    - condition: state
+      entity_id: binary_sensor.window
+      state: "off"
+  action:
+    - service: climate.set_hvac_mode
+      target:
+        entity_id: climate.living_room
+- id: "auto2"
+  alias: "Climate Control"
+  trigger:
+    - platform: numeric_state
+      entity_id: sensor.temperature
+      above: 25
+  condition:
+    - condition: state
+      entity_id: binary_sensor.window
+      state: "off"
+  action:
+    - service: climate.set_hvac_mode
+      target:
+        entity_id: climate.living_room
+"""
+        self._write_yaml(config_path, "automations.yaml", yaml_content)
+
+        from tools.automations import _do_diagnose_automation_aliases
+
+        with patch("tools.automations.make_ha_request") as mock_req:
+            mock_req.return_value = {"success": True, "data": [{
+                "entity_id": "automation.climate_control", "state": "on",
+                "attributes": {"friendly_name": "Climate Control"},
+            }]}
+            result = _do_diagnose_automation_aliases(config_path)
+
+        assert result["total_duplicates"] >= 1
+        dup = result["duplicates"][0]
+        assert dup.get("overlap_score", 0) >= 80
+
+
+class TestHistoryGroupBy:
+    """Gap 12: group_by parameter in history summary."""
+
+    @pytest.mark.asyncio
+    async def test_group_by_hour(self, mock_mcp):
+        from tools.history import register_history_tools
+
+        now = datetime.now(timezone.utc)
+        history_data = []
+        for minute in range(0, 120, 5):
+            ts = now - timedelta(minutes=minute)
+            history_data.append({
+                "entity_id": "sensor.temperature",
+                "state": str(round(20 + (minute % 30) / 5, 1)),
+                "last_changed": ts.isoformat(),
+            })
+
+        with patch("tools.history.make_ha_request") as mock_req:
+            mock_req.return_value = {"success": True, "data": [history_data]}
+            register_history_tools(mock_mcp, "http://ha", "token")
+            tool = mock_mcp._tools["get_entity_state_history_summary"]
+            data = json.loads(await tool(
+                entity_id="sensor.temperature", hours_back=2, group_by="hour",
+            ))
+
+        assert data["success"] is True
+        assert data.get("grouped_by") == "hour"
+        assert len(data.get("grouped", {})) > 0
+        for bucket, stats in data["grouped"].items():
+            assert "count" in stats and "min" in stats and "max" in stats and "avg" in stats
+
+    @pytest.mark.asyncio
+    async def test_group_by_none(self, mock_mcp):
+        from tools.history import register_history_tools
+
+        now = datetime.now(timezone.utc)
+        history_data = [{
+            "entity_id": "sensor.temp", "state": "22.5",
+            "last_changed": (now - timedelta(minutes=10)).isoformat(),
+        }]
+
+        with patch("tools.history.make_ha_request") as mock_req:
+            mock_req.return_value = {"success": True, "data": [history_data]}
+            register_history_tools(mock_mcp, "http://ha", "token")
+            tool = mock_mcp._tools["get_entity_state_history_summary"]
+            data = json.loads(await tool(entity_id="sensor.temp"))
+
+        assert data["success"] is True
+        assert "grouped_by" not in data
+        assert "last_5_changes" in data

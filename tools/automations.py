@@ -1637,9 +1637,39 @@ def _compute_overlap(
     trigger_overlap_list: list[str] = sorted(trigger_entities)
     action_overlap_list: list[str] = sorted(action_entities)
 
+    condition_entities: set[str] = set()
+    conditions = yaml_auto.get("condition", [])
+    if isinstance(conditions, dict):
+        conditions = [conditions]
+    for cond in conditions:
+        eid = cond.get("entity_id", "")
+        if isinstance(eid, str):
+            condition_entities.add(eid)
+        elif isinstance(eid, list):
+            condition_entities.update(eid)
+    condition_entities.discard("")
+
+    for other in other_autos:
+        other_alias = other.get("alias", "")
+        if other_alias != dup_entry.get("alias"):
+            continue
+        other_conds = other.get("condition", [])
+        if isinstance(other_conds, dict):
+            other_conds = [other_conds]
+        other_cond_set: set[str] = set()
+        for c in other_conds:
+            eid = c.get("entity_id", "")
+            if isinstance(eid, str):
+                other_cond_set.add(eid)
+            elif isinstance(eid, list):
+                other_cond_set.update(eid)
+        other_cond_set.discard("")
+        condition_entities |= other_cond_set
+
     trigger_score = 40 if len(trigger_entities) > 0 else 0
     action_score = 40 if len(action_entities) > 0 else 0
-    overlap_score = trigger_score + action_score
+    condition_score = 20 if len(condition_entities) > 0 else 0
+    overlap_score = trigger_score + action_score + condition_score
 
     stale_entities: list[dict[str, Any]] = []
     states_list = [e.get("state") for e in entries]
