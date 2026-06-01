@@ -12,6 +12,7 @@ DESIGN PRINCIPLES:
 
 import json
 import logging
+import os
 import re
 import statistics
 import unicodedata
@@ -20,14 +21,19 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+import yaml
+
+from tools.manifests import make_manifest, register_manifest
 from tools.utils import (
     _error_response,
     _success_response,
+    create_error_response,
     get_best_name,
     load_registry,
     make_ha_request,
     resolve_area_id,
 )
+from tools.yaml_utils import HomeAssistantLoader
 
 _logger = logging.getLogger(__name__)
 
@@ -255,7 +261,7 @@ def _do_get_entity_context(
     entity = next((e for e in ent_data if e.get("entity_id") == entity_id), None)
 
     if not entity:
-        return {"error": f"Entity '{entity_id}' not found in registry"}
+        return {"success": False, "error": f"Entity '{entity_id}' not found in registry"}
 
     result = {  # type: ignore[var-annotated]
         "entity_id": entity_id,
@@ -416,7 +422,7 @@ def _do_get_area_overview(
     )
 
     if not area:
-        return {"error": f"Area '{area_id}' not found"}
+        return {"success": False, "error": f"Area '{area_id}' not found"}
 
     final_area_id = area.get("id")
 
@@ -505,7 +511,7 @@ def _do_get_history_stats(
     ha_token: str | None,
 ) -> dict[str, Any]:
     if not ha_url or not ha_token:
-        return {"error": "HA API not configured"}
+        return {"success": False, "error": "HA API not configured"}
 
     hours_back = min(hours_back, 168)
 
@@ -514,7 +520,7 @@ def _do_get_history_stats(
 
     res = make_ha_request(ha_url, ha_token, url)
     if not res["success"] or not res["data"] or not res["data"][0]:
-        return {"error": "No history data found"}
+        return {"success": False, "error": "No history data found"}
 
     history = res["data"][0]
     states = [h["state"] for h in history if h["state"] not in ["unavailable", "unknown"]]
@@ -565,8 +571,78 @@ def _do_get_entity_registry(config_path: str) -> dict[str, Any]:
                 "hidden_by": e.get("hidden_by"),
                 "unique_id": e.get("unique_id"),
                 "config_entry_id": e.get("config_entry_id"),
+                "categories": e.get("categories"),
+                "labels": e.get("labels"),
             }
         )
+    return {"total_entities": len(simplified), "entities": simplified}
+
+
+def _do_get_entity_registry_batch(
+    config_path: str, entity_ids: str | None = None, fields: str = "all"
+) -> dict[str, Any]:
+    """Fetch entity registry entries, optionally filtered by entity IDs and fields.
+
+    Args:
+        config_path: Path to HA config directory.
+        entity_ids: Comma-separated list of entity IDs, or None for all.
+        fields: Comma-separated list of field names, or "all".
+
+    Returns:
+        Dict with total_entities and filtered entities list.
+    """
+    data = load_registry("core.entity_registry", config_path).get("data", {}).get("entities", [])
+    all_fields = {
+        "entity_id",
+        "name",
+        "platform",
+        "device_id",
+        "area_id",
+        "disabled_by",
+        "hidden_by",
+        "unique_id",
+        "config_entry_id",
+        "categories",
+        "labels",
+    }
+    if fields != "all":
+        requested = {f.strip() for f in fields.split(",")}
+        selected = (requested | {"categories", "labels", "entity_id"}) & all_fields
+    else:
+        selected = all_fields
+
+    requested_ids = set()
+    if entity_ids:
+        requested_ids = {eid.strip() for eid in entity_ids.split(",")}
+
+    simplified = []
+    for e in data:
+        eid = e.get("entity_id")
+        if requested_ids and eid not in requested_ids:
+            continue
+        entry: dict[str, Any] = {"entity_id": eid}
+        if "name" in selected:
+            entry["name"] = get_best_name(e, "entity")
+        if "platform" in selected:
+            entry["platform"] = e.get("platform")
+        if "device_id" in selected:
+            entry["device_id"] = e.get("device_id")
+        if "area_id" in selected:
+            entry["area_id"] = e.get("area_id")
+        if "disabled_by" in selected:
+            entry["disabled_by"] = e.get("disabled_by")
+        if "hidden_by" in selected:
+            entry["hidden_by"] = e.get("hidden_by")
+        if "unique_id" in selected:
+            entry["unique_id"] = e.get("unique_id")
+        if "config_entry_id" in selected:
+            entry["config_entry_id"] = e.get("config_entry_id")
+        if "categories" in selected:
+            entry["categories"] = e.get("categories")
+        if "labels" in selected:
+            entry["labels"] = e.get("labels")
+        simplified.append(entry)
+
     return {"total_entities": len(simplified), "entities": simplified}
 
 
@@ -1251,7 +1327,390 @@ def _do_get_template_entity_code(
             "source": "live" if force_reload else "cache",
         }
 
-    return {"error": f"Template '{entity_id}' not found"}
+    yaml_result = _scan_yaml_templates(entity_id, config_path)
+    if yaml_result:
+        return yaml_result
+
+    return create_error_response(
+        "NOT_FOUND",
+        f"Template '{entity_id}' not found",
+        retryable=False,
+        suggestion="Check the entity_id or verify the template is defined in configuration.yaml or the templates/ directory.",
+    )
+
+
+def _scan_yaml_templates(entity_id: str, config_path: str) -> dict[str, Any] | None:
+    """Scan YAML configuration files for template sensor/binary_sensor definitions.
+
+    Searches configuration.yaml ``template:`` section and individual ``templates/*.yaml``
+    files. Handles ``!include_dir_merge_list`` directives and inline template lists.
+    Matches by ``unique_id`` or normalized ``name``.
+
+    Args:
+        entity_id: Full entity_id (e.g. ``sensor.my_template``).
+        config_path: Path to HA config directory.
+
+    Returns:
+        Dict with template info (source="yaml") or None if not found.
+    """
+    if "." not in entity_id:
+        return None
+
+    domain, obj_id = entity_id.split(".", 1)
+    if domain not in ("sensor", "binary_sensor"):
+        return None
+
+    norm_obj_id = _normalize_text(obj_id)
+
+    config_yaml = os.path.join(config_path, "configuration.yaml")
+    if os.path.isfile(config_yaml) and not os.path.islink(config_yaml):
+        result = _scan_yaml_template_payload(config_yaml, domain, obj_id, norm_obj_id, config_path)
+        if result:
+            return result
+
+    templates_dir = os.path.join(config_path, "templates")
+    if os.path.isdir(templates_dir) and not os.path.islink(templates_dir):
+        result = _scan_yaml_template_directory(
+            templates_dir, domain, obj_id, norm_obj_id, config_path
+        )
+        if result:
+            return result
+
+    return None
+
+
+def _scan_yaml_template_file(
+    filepath: str,
+    domain: str,
+    obj_id: str,
+    norm_obj_id: str,
+    config_path: str,
+) -> dict[str, Any] | None:
+    """Load and scan a single YAML file for template definitions.
+
+    The file may contain a top-level ``template:`` section.
+    """
+    try:
+        with open(filepath, encoding="utf-8") as f:
+            data = yaml.load(f, Loader=HomeAssistantLoader) or {}  # nosec B506
+    except Exception:
+        return None
+
+    if not isinstance(data, dict):
+        return None
+
+    template_section = data.get("template")
+    if not template_section:
+        return None
+
+    result = _scan_yaml_template_section(
+        template_section, filepath, domain, obj_id, norm_obj_id, config_path
+    )
+    if result:
+        return result
+
+    return None
+
+
+def _scan_yaml_template_payload(
+    filepath: str,
+    domain: str,
+    obj_id: str,
+    norm_obj_id: str,
+    config_path: str,
+) -> dict[str, Any] | None:
+    """Load a YAML file and scan entire payload for template definitions.
+
+    Handles cases where the file IS the template payload (e.g. templates/*.yaml
+    files that contain sensor definitions directly, without a top-level ``template:`` key).
+    """
+    try:
+        with open(filepath, encoding="utf-8") as f:
+            data = yaml.load(f, Loader=HomeAssistantLoader) or {}  # nosec B506
+    except Exception:
+        return None
+
+    if isinstance(data, dict) and "template" in data:
+        return _scan_yaml_template_file(filepath, domain, obj_id, norm_obj_id, config_path)
+
+    for sensor_def in _iter_sensor_definitions(data, domain):
+        if _sensor_matches(sensor_def, obj_id, norm_obj_id):
+            return _build_yaml_template_result(sensor_def, domain, obj_id, filepath, config_path)
+
+    return None
+
+
+def _scan_yaml_template_directory(
+    templates_dir: str,
+    domain: str,
+    obj_id: str,
+    norm_obj_id: str,
+    config_path: str,
+) -> dict[str, Any] | None:
+    """Scan all .yaml/.yml files in a templates directory.
+
+    Safety limits: max 100 files, no symlink following.
+    """
+    scanned = 0
+    for fname in sorted(os.listdir(templates_dir)):
+        if not fname.endswith((".yaml", ".yml")):
+            continue
+        fpath = os.path.join(templates_dir, fname)
+        if os.path.islink(fpath) or not os.path.isfile(fpath):
+            continue
+        scanned += 1
+        if scanned > 100:
+            break
+        result = _scan_yaml_template_payload(fpath, domain, obj_id, norm_obj_id, config_path)
+        if result:
+            return result
+    return None
+
+
+def _scan_yaml_template_section(
+    template_section: Any,
+    filepath: str,
+    domain: str,
+    obj_id: str,
+    norm_obj_id: str,
+    config_path: str,
+) -> dict[str, Any] | None:
+    """Process a ``template:`` section value from a YAML file.
+
+    Handles:
+    - Inline list of template entries
+    - ``!include_dir_merge_list`` directives
+    - ``!include`` directives within list entries
+    """
+    if isinstance(template_section, str):
+        return _resolve_include_string(template_section, domain, obj_id, norm_obj_id, config_path)
+
+    if not isinstance(template_section, list):
+        return None
+
+    for entry in template_section:
+        if isinstance(entry, str):
+            result = _resolve_include_string(entry, domain, obj_id, norm_obj_id, config_path)
+            if result:
+                return result
+            continue
+
+        if not isinstance(entry, dict):
+            continue
+
+        sensors = entry.get(domain)
+        if sensors is None:
+            continue
+
+        if isinstance(sensors, dict):
+            sensors = [sensors]
+        if not isinstance(sensors, list):
+            continue
+
+        for sensor_def in sensors:
+            if not isinstance(sensor_def, dict):
+                continue
+            if _sensor_matches(sensor_def, obj_id, norm_obj_id):
+                return _build_yaml_template_result(
+                    sensor_def, domain, obj_id, filepath, config_path
+                )
+
+    return None
+
+
+def _resolve_include_string(
+    include_str: str,
+    domain: str,
+    obj_id: str,
+    norm_obj_id: str,
+    config_path: str,
+) -> dict[str, Any] | None:
+    """Resolve ``!include`` / ``!include_dir_merge_list`` directives."""
+    match = re.match(r"!(?:include|include_dir_merge_list)\s+(.+)", include_str.strip())
+    if not match:
+        return None
+
+    target = match.group(1).strip()
+    if not os.path.isabs(target):
+        target = os.path.join(config_path, target)
+
+    resolved = Path(target).resolve()
+    try:
+        resolved.relative_to(Path(config_path).resolve())
+    except ValueError:
+        return None
+
+    if os.path.isdir(resolved) and not os.path.islink(resolved):
+        return _scan_yaml_template_directory(
+            str(resolved), domain, obj_id, norm_obj_id, config_path
+        )
+
+    if os.path.isfile(resolved) and not os.path.islink(resolved):
+        return _scan_yaml_template_payload(str(resolved), domain, obj_id, norm_obj_id, config_path)
+
+    return None
+
+
+def _iter_sensor_definitions(data: Any, domain: str) -> Any:
+    """Yield sensor definitions from various YAML structures."""
+    if isinstance(data, dict):
+        sensors = data.get(domain)
+        if sensors is None and domain == "sensor":
+            sensors = data.get("sensor")
+        if sensors is None and domain == "binary_sensor":
+            sensors = data.get("binary_sensor")
+        if sensors is None:
+            return
+        if isinstance(sensors, dict):
+            yield sensors
+        elif isinstance(sensors, list):
+            yield from sensors
+    elif isinstance(data, list):
+        for item in data:
+            if isinstance(item, dict):
+                sd = item.get(domain)
+                if sd is not None:
+                    if isinstance(sd, dict):
+                        yield sd
+                    elif isinstance(sd, list):
+                        yield from sd
+
+
+def _sensor_matches(
+    sensor_def: dict[str, Any],
+    obj_id: str,
+    norm_obj_id: str,
+) -> bool:
+    """Check if a sensor definition matches the requested entity."""
+    uid = sensor_def.get("unique_id")
+    if uid and str(uid) == obj_id:
+        return True
+    name = sensor_def.get("name")
+    if name and _normalize_text(str(name)) == norm_obj_id:
+        return True
+    return False
+
+
+def _find_yaml_line_boundaries(
+    filepath: str, sensor_def: dict[str, Any]
+) -> tuple[int | None, int | None]:
+    """Locate approximate line boundaries of a sensor definition in a YAML file.
+
+    Searches for the ``unique_id`` or ``name`` value in the raw file lines,
+    then expands backward/forward to capture the full sensor block at the
+    same indentation level.
+
+    Returns:
+        (line_start, line_end) — 1-indexed, or (None, None) on failure.
+    """
+    lookup_value = sensor_def.get("unique_id") or sensor_def.get("name")
+    if not lookup_value:
+        return None, None
+    lookup_str = str(lookup_value)
+
+    try:
+        with open(filepath, encoding="utf-8") as f:
+            raw_lines = f.readlines()
+    except (OSError, UnicodeDecodeError):
+        return None, None
+
+    if not raw_lines:
+        return None, None
+
+    found_line = None
+    for i, line in enumerate(raw_lines):
+        if lookup_str in line:
+            found_line = i
+            break
+    if found_line is None:
+        return None, None
+
+    line_indent = len(raw_lines[found_line]) - len(raw_lines[found_line].lstrip())
+
+    line_start = found_line
+    for i in range(found_line - 1, -1, -1):
+        stripped = raw_lines[i].rstrip()
+        indent = len(raw_lines[i]) - len(raw_lines[i].lstrip())
+        if indent < line_indent and stripped:
+            line_start = i
+            break
+
+    line_end = found_line
+    for i in range(found_line + 1, len(raw_lines)):
+        stripped = raw_lines[i].rstrip()
+        if not stripped:
+            continue
+        indent = len(raw_lines[i]) - len(raw_lines[i].lstrip())
+        if indent <= line_indent:
+            line_end = i - 1
+            break
+    else:
+        line_end = len(raw_lines) - 1
+
+    return line_start + 1, line_end + 1
+
+
+def _build_yaml_template_result(
+    sensor_def: dict[str, Any],
+    domain: str,
+    obj_id: str,
+    filepath: str,
+    config_path: str,
+) -> dict[str, Any]:
+    """Build template result dict from a matched YAML sensor definition."""
+    rel_path = os.path.relpath(filepath, config_path) if config_path else filepath
+
+    line_start, line_end = _find_yaml_line_boundaries(filepath, sensor_def)
+
+    return {
+        "entity_id": f"{domain}.{obj_id}",
+        "name": sensor_def.get("name", sensor_def.get("unique_id", obj_id)),
+        "template_type": domain,
+        "state_template": sensor_def.get("state", ""),
+        "unit_of_measurement": sensor_def.get("unit_of_measurement"),
+        "device_class": sensor_def.get("device_class"),
+        "availability_template": sensor_def.get("availability"),
+        "attribute_templates": sensor_def.get("attributes", {}),
+        "icon": sensor_def.get("icon"),
+        "source": "yaml",
+        "file_path": rel_path,
+        "line_start": line_start,
+        "line_end": line_end,
+    }
+
+
+def _do_get_template_entities_batch(entity_ids: str, config_path: str) -> dict[str, Any]:
+    """Batch fetch template entity code for multiple entities.
+
+    Args:
+        entity_ids: Comma-separated list of entity IDs.
+        config_path: Path to HA config directory.
+
+    Returns:
+        Dict keyed by entity_id with template code or error per entity.
+    """
+    ids_list = [eid.strip() for eid in entity_ids.split(",") if eid.strip()]
+    if not ids_list:
+        return {"success": False, "error": "No entity_ids provided"}
+
+    results: dict[str, Any] = {}
+    errors_count = 0
+    found_count = 0
+
+    for entity_id in ids_list:
+        result = _do_get_template_entity_code(entity_id=entity_id, config_path=config_path)
+        results[entity_id] = result
+        if "error" in result:
+            errors_count += 1
+        else:
+            found_count += 1
+
+    return {
+        "total": len(ids_list),
+        "found": found_count,
+        "errors": errors_count,
+        "results": results,
+    }
 
 
 def _do_search_entity_by_name(
@@ -1760,6 +2219,32 @@ def register_storage_tools(  # type: ignore[no-untyped-def]
         except Exception as e:
             return _error_response(str(e))
 
+    register_manifest(
+        "get_template_entities_batch",
+        make_manifest("get_template_entities_batch", latency="moderate"),
+    )
+
+    @mcp.tool()
+    async def get_template_entities_batch(entity_ids: str) -> str:
+        """Batch fetch template entity code for multiple entities.
+
+        Args:
+            entity_ids: Comma-separated list of entity IDs (e.g. "sensor.my_tpl1,sensor.my_tpl2").
+
+        Returns:
+            JSON with results dict keyed by entity_id, plus total/found/errors counts.
+        """
+        try:
+            result = _do_get_template_entities_batch(
+                entity_ids=entity_ids,
+                config_path=config_path,
+            )
+            if "error" in result:
+                return _error_response(result["error"])
+            return _success_response(result)
+        except Exception as e:
+            return _error_response(str(e))
+
     # ========================================
     # COMPATIBILITY WRAPPERS
     # ========================================
@@ -1805,6 +2290,36 @@ def register_storage_tools(  # type: ignore[no-untyped-def]
             )
             if "error" in result:
                 return _error_response(result["error"])
+            return _success_response(result)
+        except Exception as e:
+            return _error_response(str(e))
+
+    # ========================================
+    # ENTITY REGISTRY BATCH
+    # ========================================
+
+    register_manifest(
+        "get_entity_registry_batch",
+        make_manifest("get_entity_registry_batch", latency="fast"),
+    )
+
+    @mcp.tool()
+    async def get_entity_registry_batch(entity_ids: str | None = None, fields: str = "all") -> str:
+        """Fetch entity registry entries with optional filtering by entity IDs and fields.
+
+        Args:
+            entity_ids: Comma-separated list of entity IDs, or None for all entities.
+            fields: Comma-separated field names or "all". Always includes categories and labels.
+
+        Returns:
+            JSON with total_entities and filtered entities list.
+        """
+        try:
+            result = _do_get_entity_registry_batch(
+                config_path=config_path,
+                entity_ids=entity_ids,
+                fields=fields,
+            )
             return _success_response(result)
         except Exception as e:
             return _error_response(str(e))

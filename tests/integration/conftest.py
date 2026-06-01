@@ -241,7 +241,7 @@ class MCPWrapper:
     def _get_or_create_loop(self):
         """
         Fetches or creates shared event loop.
-        KRYTYCZNE: Zawsze returns TEN SAM loop dla wszystkich operacji.
+        CRITICAL: Always returns THE SAME loop for all operations.
         """
         if self._loop is None or self._loop.is_closed():
             self._loop = asyncio.new_event_loop()
@@ -280,6 +280,7 @@ def real_mcp():
         from tools.batch_operations import register_batch_operations_tools
         from tools.blueprints import register_blueprint_tools
         from tools.capabilities import register_capability_tools
+        from tools.categories import register_categories_tools
         from tools.composite import register_composite_tools
         from tools.config import register_config_tools
         from tools.config_entries import register_config_entry_tools
@@ -290,6 +291,7 @@ def real_mcp():
         from tools.entity_dependencies import register_entity_dependency_tools
         from tools.filesystem_explorer import register_filesystem_tools
         from tools.health_reporter import register_health_reporter_tools
+        from tools.helpers_health import register_helpers_health_tools
         from tools.history import register_history_tools
         from tools.integrations import register_integration_tools
         from tools.logs import register_log_tools
@@ -318,6 +320,8 @@ def real_mcp():
         register_integration_tools(mcp, HA_CONFIG_PATH, HA_URL, HA_TOKEN)
         register_composite_tools(mcp, HA_CONFIG_PATH, HA_URL, HA_TOKEN)
         register_batch_operations_tools(mcp, HA_CONFIG_PATH, HA_URL, HA_TOKEN)
+        register_categories_tools(mcp, HA_CONFIG_PATH)
+        register_helpers_health_tools(mcp, HA_URL, HA_TOKEN)
         register_filesystem_tools(mcp)
         register_capability_tools(mcp)
 

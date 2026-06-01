@@ -98,7 +98,7 @@ jobs:
           docker run --rm -e MCP_DEV_TOOLS_ENABLED=0 ha-mcp-readonly:test python3 -c "
           from server import get_tool_count
           tc = get_tool_count()
-          assert tc == 122, f'Expected 122 tools, got {tc}'
+          assert tc == 134, f'Expected 134 tools, got {tc}'
           print('Tool count OK:', tc)
           "
 
@@ -115,6 +115,6 @@ jobs:
             http://localhost:9099/health || exit 1
           TOOLS=$(curl -s http://localhost:9100/api/tools \
             | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['total'])")
-          [ "$TOOLS" = "122" ] \
-            || (echo "FAIL: expected 122, got $TOOLS" && exit 1)
+          [ "$TOOLS" = "134" ] \
+            || (echo "FAIL: expected 134, got $TOOLS" && exit 1)
           docker stop ha-mcp-smoke

@@ -8,8 +8,9 @@ import logging
 import os
 import re
 from pathlib import Path
+from typing import Any
 
-from tools.utils import _error_response, _success_response
+from tools.utils import _error_response, _success_response, create_error_response
 
 _logger = logging.getLogger(__name__)
 
@@ -150,195 +151,204 @@ SECURITY_CONTEXT = SecurityContext(
 # =============================================================================
 
 
-def _do_list_directory(path: str, max_entries: int) -> str:
-    """List directory contents with allowlist validation."""
+def _do_list_directory(path: str, max_entries: int) -> dict[str, Any]:
+    """List directory contents with allowlist validation.
+
+    Returns a dict (not JSON) so the wrapper can add _meta envelope.
+    """
     try:
         target = SECURITY_CONTEXT.validate_path(path)
+    except PermissionError as e:
+        return create_error_response("ACCESS_DENIED", str(e), retryable=False)
 
-        if not target.is_dir():
-            return _error_response(f"Not a directory: {target}")
+    if not target.is_dir():
+        return create_error_response("INVALID_PARAM", f"Not a directory: {target}", retryable=False)
 
-        entries = []  # type: ignore[var-annotated]
-        for entry in target.iterdir():
-            if len(entries) >= max_entries:
-                break
-
-            try:
-                stat = entry.stat()
-                entries.append(
-                    {
-                        "name": entry.name,
-                        "type": "directory" if entry.is_dir() else "file",
-                        "size_bytes": stat.st_size if entry.is_file() else None,
-                        "modified_timestamp": stat.st_mtime,
-                        "is_binary": SECURITY_CONTEXT.is_binary_file(entry)
-                        if entry.is_file()
-                        else False,
-                    }
-                )
-            except PermissionError:
-                continue
-
-        return _success_response(
-            {
-                "path": str(target),
-                "entries_count": len(entries),
-                "total_entries": len(list(target.iterdir())),
-                "entries": entries,
-                "truncated": len(entries) < len(list(target.iterdir())),
-                "allowed_directories": [str(d) for d in SECURITY_CONTEXT.allowed_directories],
-            }
+    entries: list[dict[str, Any]] = []
+    try:
+        all_iter = list(target.iterdir())
+    except OSError as e:
+        return create_error_response(
+            "INTERNAL_ERROR", f"Cannot read directory {target}: {e}", retryable=True
         )
 
-    except PermissionError as e:
-        return _error_response(f"Access denied: {e}")
-    except Exception as e:
-        return _error_response(f"Operation failed on {path}: {e}")
+    for entry in all_iter:
+        if len(entries) >= max_entries:
+            break
+        try:
+            stat = entry.stat()
+            entries.append(
+                {
+                    "name": entry.name,
+                    "type": "directory" if entry.is_dir() else "file",
+                    "size_bytes": stat.st_size if entry.is_file() else None,
+                    "modified_timestamp": stat.st_mtime,
+                    "is_binary": SECURITY_CONTEXT.is_binary_file(entry)
+                    if entry.is_file()
+                    else False,
+                }
+            )
+        except PermissionError:
+            continue
+
+    total = len(all_iter)
+    return {
+        "success": True,
+        "path": str(target),
+        "entries_count": len(entries),
+        "total_entries": total,
+        "entries": entries,
+        "truncated": len(entries) < total,
+        "allowed_directories": [str(d) for d in SECURITY_CONTEXT.allowed_directories],
+    }
 
 
-def _do_read_file(file_path: str, max_lines: int, offset: int) -> str:
+def _do_read_file(file_path: str, max_lines: int, offset: int) -> dict[str, Any]:
     """Read a text file with allowlist validation and size limits."""
     try:
         target = SECURITY_CONTEXT.validate_path(file_path)
+    except PermissionError as e:
+        return create_error_response("ACCESS_DENIED", str(e), retryable=False)
 
-        if not target.is_file():
-            return _error_response(f"Not a file: {target}")
+    if not target.is_file():
+        return create_error_response("INVALID_PARAM", f"Not a file: {target}", retryable=False)
 
-        if SECURITY_CONTEXT.is_binary_file(target):
-            return _error_response(
-                f"Binary file type not allowed: {target}. Use list_directory to explore this location"
-            )
+    if SECURITY_CONTEXT.is_binary_file(target):
+        return create_error_response(
+            "UNSUPPORTED",
+            f"Binary file type not allowed: {target}. Use list_directory to explore this location",
+            retryable=False,
+        )
 
-        max_bytes = 5 * 1024 * 1024
+    max_bytes = 5 * 1024 * 1024
+    try:
+        file_size = target.stat().st_size
+    except FileNotFoundError:
+        return create_error_response(
+            "RESOURCE_NOT_FOUND", f"File not found: {target}", retryable=False
+        )
+
+    if file_size > max_bytes:
+        return create_error_response(
+            "VALIDATION_FAILED",
+            f"File too large ({file_size} bytes > {max_bytes} max): {target}",
+            retryable=False,
+        )
+
+    if offset < 1:
+        offset = 1
+    lines: list[str] = []
+    encoding_used = "utf-8"
+    try:
+        with open(target, encoding="utf-8", errors="replace") as f:
+            for i, line in enumerate(f):
+                if i < offset - 1:
+                    continue
+                if i >= offset - 1 + max_lines:
+                    break
+                lines.append(line.rstrip("\n"))
+    except UnicodeDecodeError:
         try:
-            if target.stat().st_size > max_bytes:
-                return _error_response(
-                    f"File too large for safe reading ({target.stat().st_size} bytes > {max_bytes} max): {target}"
-                )
-        except FileNotFoundError:
-            return _error_response(f"File not found: {target}")
-
-        if offset < 1:
-            offset = 1
-        lines = []
-        try:
-            with open(target, encoding="utf-8", errors="replace") as f:
+            with open(target, encoding="latin-1", errors="replace") as f:
+                encoding_used = "latin-1"
                 for i, line in enumerate(f):
                     if i < offset - 1:
                         continue
                     if i >= offset - 1 + max_lines:
                         break
                     lines.append(line.rstrip("\n"))
-        except UnicodeDecodeError:
-            try:
-                with open(target, encoding="latin-1", errors="replace") as f:
-                    for i, line in enumerate(f):
-                        if i < offset - 1:
-                            continue
-                        if i >= offset - 1 + max_lines:
-                            break
-                        lines.append(line.rstrip("\n"))
-            except Exception as e:
-                return _error_response(f"File encoding not supported: {e}")
         except Exception as e:
-            return _error_response(f"Read failed: {e}")
-
-        return _success_response(
-            {
-                "path": str(target),
-                "offset": offset,
-                "lines_count": len(lines),
-                "total_lines_estimate": "unknown",
-                "content": "\n".join(lines),
-                "truncated": len(lines) >= max_lines,
-                "encoding_used": "utf-8"
-                if all(ord(c) < 128 for c in "".join(lines[:10]))
-                else "detected",
-            }
-        )
-
-    except PermissionError as e:
-        return _error_response(f"Access denied: {e}")
+            return create_error_response(
+                "INTERNAL_ERROR", f"File encoding not supported: {e}", retryable=False
+            )
     except Exception as e:
-        return _error_response(f"Operation failed: {e}")
+        return create_error_response("INTERNAL_ERROR", f"Read failed: {e}", retryable=True)
+
+    return {
+        "success": True,
+        "path": str(target),
+        "offset": offset,
+        "lines_count": len(lines),
+        "total_lines_estimate": "unknown",
+        "content": "\n".join(lines),
+        "truncated": len(lines) >= max_lines,
+        "encoding_used": encoding_used,
+    }
 
 
-def _do_search_files(pattern: str, search_path: str, max_results: int) -> str:
+def _do_search_files(pattern: str, search_path: str, max_results: int) -> dict[str, Any]:
     """Search for files containing a text pattern (safe grep)."""
     if not re.match(r"^[a-zA-Z0-9\s\-_\.\/\\:\[\]\(\)\{\}\+\*\?\^\$\|@#%&=!<>~\']+$", pattern):
-        return _error_response(
-            "Invalid search pattern: pattern contains blocked special characters"
+        return create_error_response(
+            "INVALID_PARAM",
+            "Invalid search pattern: pattern contains blocked special characters",
+            retryable=False,
         )
 
     try:
         target = SECURITY_CONTEXT.validate_path(search_path)
+    except PermissionError as e:
+        return create_error_response("ACCESS_DENIED", str(e), retryable=False)
 
-        if not target.is_dir():
-            return _error_response(f"Search path must be a directory: {target}")
-
-        results = []  # type: ignore[var-annotated]
-        files_searched = 0
-
-        for root, dirs, files in os.walk(target):
-            if root.count(os.sep) - str(target).count(os.sep) > SECURITY_CONTEXT.max_depth:
-                dirs[:] = []
-                continue
-
-            for filename in files:
-                files_searched += 1
-                if len(results) >= max_results:
-                    break
-
-                filepath = Path(root) / filename
-
-                if SECURITY_CONTEXT.is_binary_file(filepath):
-                    continue
-
-                try:
-                    if filepath.stat().st_size > 2 * 1024 * 1024:
-                        continue
-                except FileNotFoundError:
-                    continue
-
-                try:
-                    with open(filepath, encoding="utf-8", errors="ignore") as f:
-                        content = f.read()
-                        if re.search(re.escape(pattern), content, re.IGNORECASE):
-                            matches = []
-                            for match in re.finditer(re.escape(pattern), content, re.IGNORECASE):
-                                start = max(0, match.start() - 30)
-                                end = min(len(content), match.end() + 30)
-                                context = content[start:end].replace("\n", " ").strip()
-                                matches.append({"position": match.start(), "context": context})
-                                if len(matches) >= 3:
-                                    break
-
-                            results.append(
-                                {
-                                    "path": str(filepath.relative_to(target)),
-                                    "absolute_path": str(filepath),
-                                    "matches_count": len(matches),
-                                    "sample_matches": matches[:3],
-                                }
-                            )
-                except Exception:
-                    continue
-
-        return _success_response(
-            {
-                "pattern": pattern,
-                "search_path": str(target),
-                "files_searched": files_searched,
-                "results_count": len(results),
-                "results": results[:max_results],
-                "truncated": len(results) > max_results,
-            }
+    if not target.is_dir():
+        return create_error_response(
+            "INVALID_PARAM", f"Search path must be a directory: {target}", retryable=False
         )
 
-    except PermissionError as e:
-        return _error_response(f"Access denied: {e}")
-    except Exception as e:
-        return _error_response(f"Search failed for '{pattern}' in '{search_path}': {e}")
+    results: list[dict[str, Any]] = []
+    files_searched = 0
+
+    for root, dirs, files in os.walk(target):
+        if root.count(os.sep) - str(target).count(os.sep) > SECURITY_CONTEXT.max_depth:
+            dirs[:] = []
+            continue
+
+        for filename in files:
+            files_searched += 1
+            if len(results) >= max_results:
+                break
+
+            filepath = Path(root) / filename
+            if SECURITY_CONTEXT.is_binary_file(filepath):
+                continue
+            try:
+                if filepath.stat().st_size > 2 * 1024 * 1024:
+                    continue
+            except FileNotFoundError:
+                continue
+
+            try:
+                with open(filepath, encoding="utf-8", errors="ignore") as f:
+                    content = f.read()
+                    if re.search(re.escape(pattern), content, re.IGNORECASE):
+                        matches: list[dict[str, Any]] = []
+                        for match in re.finditer(re.escape(pattern), content, re.IGNORECASE):
+                            start = max(0, match.start() - 30)
+                            end = min(len(content), match.end() + 30)
+                            context = content[start:end].replace("\n", " ").strip()
+                            matches.append({"position": match.start(), "context": context})
+                            if len(matches) >= 3:
+                                break
+                        results.append(
+                            {
+                                "path": str(filepath.relative_to(target)),
+                                "absolute_path": str(filepath),
+                                "matches_count": len(matches),
+                                "sample_matches": matches[:3],
+                            }
+                        )
+            except Exception:
+                continue
+
+    return {
+        "success": True,
+        "pattern": pattern,
+        "search_path": str(target),
+        "files_searched": files_searched,
+        "results_count": len(results),
+        "results": results[:max_results],
+        "truncated": len(results) > max_results,
+    }
 
 
 # =============================================================================
@@ -360,7 +370,14 @@ def register_filesystem_tools(mcp) -> None:  # type: ignore[no-untyped-def]
         Returns:
             JSON string containing the entries or an error message.
         """
-        return _do_list_directory(path, max_entries)
+        try:
+            data = _do_list_directory(path, max_entries)
+            if data.get("success") is False:
+                return _error_response(data.get("error", data))
+            return _success_response(data)
+        except Exception as exc:
+            _logger.exception("list_directory failed")
+            return _error_response(str(exc))
 
     @mcp.tool()
     def read_file(file_path: str, max_lines: int = 200, offset: int = 1) -> str:
@@ -374,7 +391,14 @@ def register_filesystem_tools(mcp) -> None:  # type: ignore[no-untyped-def]
         Returns:
             JSON string with file content or error details.
         """
-        return _do_read_file(file_path, max_lines, offset)
+        try:
+            data = _do_read_file(file_path, max_lines, offset)
+            if data.get("success") is False:
+                return _error_response(data.get("error", data))
+            return _success_response(data)
+        except Exception as exc:
+            _logger.exception("read_file failed")
+            return _error_response(str(exc))
 
     @mcp.tool()
     def search_files(pattern: str, search_path: str = "/config", max_results: int = 50) -> str:
@@ -388,4 +412,11 @@ def register_filesystem_tools(mcp) -> None:  # type: ignore[no-untyped-def]
         Returns:
             JSON string with search results or error information.
         """
-        return _do_search_files(pattern, search_path, max_results)
+        try:
+            data = _do_search_files(pattern, search_path, max_results)
+            if data.get("success") is False:
+                return _error_response(data.get("error", data))
+            return _success_response(data)
+        except Exception as exc:
+            _logger.exception("search_files failed")
+            return _error_response(str(exc))

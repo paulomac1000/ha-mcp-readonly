@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ha-mcp-readonly"
-version = "1.4.0"
+version = "1.5.0"
 description = "Read-only MCP server for Home Assistant observation by AI assistants"
 readme = "README.md"
 license = { text = "MIT" }

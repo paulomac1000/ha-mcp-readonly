@@ -9,6 +9,28 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from server import create_rest_app
+from tests.fixtures import MOCK_SAMPLE_STATES
+
+_MOCK_SUN_STATE = {
+    "entity_id": "sun.sun",
+    "state": "above_horizon",
+    "attributes": {"friendly_name": "Sun", "elevation": 45.5},
+    "last_changed": "2024-06-01T05:30:00.000000+00:00",
+    "last_updated": "2024-06-01T14:35:00.000000+00:00",
+}
+
+
+def _mock_make_ha_request(ha_url, ha_token, endpoint, **kwargs):
+    """Mock for make_ha_request that returns fixture data based on endpoint."""
+    if endpoint == "/api/states":
+        return {"success": True, "data": list(MOCK_SAMPLE_STATES)}
+    if endpoint.startswith("/api/states/"):
+        entity_id = endpoint.replace("/api/states/", "")
+        for state in MOCK_SAMPLE_STATES:
+            if state["entity_id"] == entity_id:
+                return {"success": True, "data": dict(state)}
+        return {"success": True, "data": _MOCK_SUN_STATE}
+    return {"success": False, "error": f"Mock: unhandled endpoint {endpoint}"}
 
 
 @pytest.fixture
@@ -16,6 +38,14 @@ def client():
     """Create a TestClient for the REST API."""
     app = create_rest_app()
     return TestClient(app)
+
+
+@pytest.fixture
+def client_mocked():
+    """Create a TestClient with make_ha_request mocked to return fixture data."""
+    with patch("tools.states.make_ha_request", side_effect=_mock_make_ha_request):
+        app = create_rest_app()
+        yield TestClient(app)
 
 
 class TestHealthEndpoint:
@@ -27,7 +57,7 @@ class TestHealthEndpoint:
         data = response.json()
         assert data["status"] == "healthy"
         assert data["server"] == "HA-Observer"
-        assert "tools_registered" in data
+        assert "tool_count" in data
         assert "endpoints" in data
 
     def test_api_health_returns_200(self, client):
@@ -53,9 +83,8 @@ class TestListToolsEndpoint:
 class TestCallToolEndpoint:
     """Tests for POST /api/tools/{tool_name}."""
 
-    def test_call_existing_tool(self, client):
-        # Use a simple built-in tool
-        response = client.post("/api/tools/get_domains_summary")
+    def test_call_existing_tool(self, client_mocked):
+        response = client_mocked.post("/api/tools/get_domains_summary")
         assert response.status_code == 200
         data = response.json()
         assert data["success"] is True
@@ -70,8 +99,8 @@ class TestCallToolEndpoint:
         assert "not found" in data["error"].lower()
         assert "available_tools" in data
 
-    def test_call_tool_with_args(self, client):
-        response = client.post("/api/tools/search_entities", json={"search_term": "sun"})
+    def test_call_tool_with_args(self, client_mocked):
+        response = client_mocked.post("/api/tools/search_entities", json={"search_term": "sun"})
         assert response.status_code == 200
         data = response.json()
         assert data["success"] is True
@@ -83,9 +112,9 @@ class TestCallToolEndpoint:
         # TypeError -> 400
         assert response.status_code in (400, 200, 500)
 
-    def test_call_tool_get_entity_state(self, client):
+    def test_call_tool_get_entity_state(self, client_mocked):
         """Test calling get_entity_state with valid entity_id."""
-        response = client.post(
+        response = client_mocked.post(
             "/api/tools/get_entity_state",
             json={"entity_id": "sun.sun"},
         )
@@ -94,9 +123,9 @@ class TestCallToolEndpoint:
         assert data["success"] is True
         assert data["tool"] == "get_entity_state"
 
-    def test_call_tool_invalid_json_body(self, client):
+    def test_call_tool_invalid_json_body(self, client_mocked):
         """POST with malformed JSON triggers JSONDecodeError handler (lines 318-319)."""
-        response = client.post(
+        response = client_mocked.post(
             "/api/tools/get_domains_summary",
             content=b"not valid json {{{",
             headers={"Content-Type": "application/json"},
@@ -361,12 +390,12 @@ class TestToolCount:
     def test_tool_count_positive(self, client):
         response = client.get("/api/health")
         assert response.status_code == 200
-        assert response.json()["tools_registered"] > 0
+        assert response.json()["tool_count"] > 0
 
     def test_tool_count_matches_list(self, client):
         health_data = client.get("/api/health").json()
         tools_data = client.get("/api/tools").json()
-        assert health_data["tools_registered"] == tools_data["total"]
+        assert health_data["tool_count"] == tools_data["tool_count"]
 
     def test_list_tools_total_matches_items(self, client):
         tools_data = client.get("/api/tools").json()

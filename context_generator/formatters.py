@@ -9,7 +9,7 @@ from datetime import datetime
 # Type-only imports to avoid circular dependency issues at runtime
 from typing import TYPE_CHECKING
 
-from .constants import HA_CONFIG_PATH, HA_URL, LOG_HOURS_BACK
+from . import constants
 from .utils import is_ignorable_entity
 
 if TYPE_CHECKING:
@@ -78,8 +78,8 @@ class ReportGenerator:
         """Document header."""
         f.write("# Home Assistant Context for AI (v1.0)\n\n")
         f.write(f"> **Generated:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-        f.write(f"> **HA Instance:** {HA_URL}\n")
-        f.write(f"> **Config Path:** {HA_CONFIG_PATH}\n")
+        f.write(f"> **HA Instance:** {constants.HA_URL}\n")
+        f.write(f"> **Config Path:** {constants.HA_CONFIG_PATH}\n")
         f.write("> **Generator Version:** 1.0\n\n")
         f.write("---\n\n")
 
@@ -1082,7 +1082,7 @@ class ReportGenerator:
         """Log analysis with recommendations per component."""
         f.write("## 📋 9. Log Analysis\n\n")
 
-        f.write(f"*Analysis from the last {LOG_HOURS_BACK} hours*\n\n")
+        f.write(f"*Analysis from the last {constants.LOG_HOURS_BACK} hours*\n\n")
 
         # Summary
         f.write("### Summary\n\n")

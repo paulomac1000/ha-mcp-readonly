@@ -65,7 +65,14 @@ def register_scene_tools(mcp, config_path) -> None:  # type: ignore[no-untyped-d
     @mcp.tool()
     def list_scenes() -> str:
         """[READ] Fetches list of all scenes from scenes.yaml.
+
         Returns scene names and their basic information.
+
+        Args:
+            None
+
+        Returns:
+            JSON with list of scenes.
         """
         try:
             return _do_list_scenes(config_path)

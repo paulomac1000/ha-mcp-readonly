@@ -12,6 +12,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from tools.manifests import make_manifest, register_manifest
 from tools.utils import _error_response, _success_response, make_ha_request
 
 _logger = logging.getLogger(__name__)
@@ -834,6 +835,7 @@ def _do_diagnose_template(entity_id, ha_url, ha_token, config_path):  # type: ig
     }
 
     template_code = None
+    template_triggers = None
 
     if config_path:
         try:
@@ -868,6 +870,7 @@ def _do_diagnose_template(entity_id, ha_url, ha_token, config_path):  # type: ig
                                 or options.get("template")
                                 or entry.get("data", {}).get("state")
                             )
+                            template_triggers = entry.get("data", {}).get("triggers", [])
                             break
 
             if not template_code and entries_path.exists():
@@ -903,6 +906,7 @@ def _do_diagnose_template(entity_id, ha_url, ha_token, config_path):  # type: ig
                                     or options.get("template")
                                     or entry.get("data", {}).get("state")
                                 )
+                                template_triggers = entry.get("data", {}).get("triggers", [])
                                 break
         except Exception as e:
             result["issues"].append(
@@ -1010,6 +1014,29 @@ def _do_diagnose_template(entity_id, ha_url, ha_token, config_path):  # type: ig
             }
         )
         result["recommendations"].append("Fix template syntax before using")
+
+    if re.search(r"\bnow\(\)", str(template_code)):
+        has_triggers = bool(template_triggers)
+        has_config_entry = bool(result.get("template_info", {}).get("entry_id"))
+        if not has_triggers:
+            message = (
+                "Template uses now() but has no periodic trigger — may not re-evaluate on its own"
+            )
+            if not has_config_entry:
+                message += " (YAML-based template — verify triggers manually)"
+            recommendation = (
+                "Add a time_pattern trigger or migrate to a trigger-based template sensor"
+            )
+            if not has_config_entry:
+                recommendation += " — also verify triggers in configuration.yaml"
+            result["issues"].append(
+                {
+                    "type": "stale_timer_risk",
+                    "severity": "warning",
+                    "message": message,
+                    "recommendation": recommendation,
+                }
+            )
 
     if len(result["referenced_entities"]) > 10:
         result["recommendations"].append(
@@ -1258,6 +1285,23 @@ def register_dev_tools(mcp, ha_url: str, ha_token: str, config_path: str | None 
         ha_token: Authorization token.
         config_path: Path to HA configuration directory (optional, required for diagnostics).
     """
+
+    # Explicit manifests for dev tools — all make real HA API calls.
+    for _name in (
+        "test_template",
+        "test_templates_batch",
+        "eval_templates_batch",
+        "get_template_performance",
+        "validate_automation_trigger",
+        "test_condition",
+        "check_entity_exists",
+        "check_entities_batch",
+        "test_service_call",
+        "diagnose_entity",
+        "diagnose_template",
+        "diagnose_energy_setup",
+    ):
+        register_manifest(_name, make_manifest(_name, latency="moderate"))
 
     @mcp.tool()
     def test_template(template: str) -> str:

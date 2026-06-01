@@ -94,6 +94,9 @@ _REQUIRES_PARAMS = {
     "get_template_entity_code",
     "eval_templates_batch",
     "compare_entity_health_snapshot",
+    "search_inside_automations",
+    "get_device_triggers",
+    "get_template_entities_batch",
 }
 
 

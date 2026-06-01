@@ -204,7 +204,9 @@ def load_registry(
     Blocked registries (``auth``, ``auth_provider.homeassistatet``,
     ``onboarding``) silently return ``{}`` to prevent credential leaks.
     """
-    if registry_name in BLOCKED_REGISTRIES:
+    if registry_name in BLOCKED_REGISTRIES or any(
+        registry_name.startswith(prefix) for prefix in ("auth_provider.",)
+    ):
         with _CACHE_LOCK:
             _REGISTRY_CACHE_STATS["blocked"] += 1
         return {}
@@ -392,21 +394,33 @@ def _success_response(
     return json.dumps(response, indent=2, ensure_ascii=False)
 
 
-def _error_response(error: str) -> str:
-    """Format an error tool response. All tools MUST use this."""
-    return json.dumps({"success": False, "error": str(error)}, indent=2, ensure_ascii=False)
+def _error_response(error: str | dict[str, Any]) -> str:
+    """Format an error tool response. All tools MUST use this.
+
+    Accepts both a plain string (backward compatible) and a structured
+    error dict (extended L2+ error contract).
+
+    Args:
+        error: Error message string or structured error dict with code/message/retryable.
+    """
+    return json.dumps(
+        {"success": False, "error": sanitize_response_data(error)},
+        indent=2,
+        ensure_ascii=False,
+    )
 
 
-def _error_dict_extended(
+def create_error_response(
     code: str,
     message: str,
-    retryable: bool,
+    retryable: bool = False,
     suggestion: str | None = None,
     available_names: list[str] | None = None,
 ) -> dict[str, Any]:
-    """Return a structured error dict (extended L2+ error contract).
+    """Create a structured error dict for internal functions (before JSON serialization).
 
-    For internal function composition before JSON serialization.
+    Use this in ``_do_*`` functions to return structured errors with
+    machine-readable codes that AI agents can branch on.
 
     Args:
         code: Machine-readable UPPER_SNAKE_CASE identifier (e.g. ``TIMEOUT``).
@@ -417,6 +431,10 @@ def _error_dict_extended(
 
     Returns:
         Dict of the form ``{"success": False, "error": {...}}``.
+
+    Example:
+        return create_error_response("TIMEOUT", "HA API timed out", True,
+                                      "Check HA connectivity and retry")
     """
     error: dict[str, Any] = {"code": code, "message": message, "retryable": retryable}
     if suggestion:
@@ -424,32 +442,6 @@ def _error_dict_extended(
     if available_names:
         error["available_names"] = available_names[:50]
     return {"success": False, "error": error}
-
-
-def _error_response_extended(
-    code: str,
-    message: str,
-    retryable: bool,
-    suggestion: str | None = None,
-    available_names: list[str] | None = None,
-) -> str:
-    """Format a structured error tool response (extended L2+ error contract).
-
-    Args:
-        code: Machine-readable UPPER_SNAKE_CASE identifier (e.g. ``TIMEOUT``).
-        message: Human-readable error message.
-        retryable: Whether the agent SHOULD retry with backoff.
-        suggestion: Optional one-sentence actionable next step.
-        available_names: Optional list of valid alternatives (capped at 50).
-
-    Returns:
-        JSON string with a structured ``error`` object.
-    """
-    return json.dumps(
-        _error_dict_extended(code, message, retryable, suggestion, available_names),
-        indent=2,
-        ensure_ascii=False,
-    )
 
 
 # =============================================================================
@@ -499,3 +491,37 @@ def sanitize_response_data(data: object) -> object:
 # Backward-compatible aliases
 success_response = _success_response
 error_response = _error_response
+
+
+def _error_dict_extended(
+    code: str,
+    message: str,
+    retryable: bool,
+    suggestion: str | None = None,
+    available_names: list[str] | None = None,
+) -> dict[str, Any]:
+    """Return a structured error dict (legacy signature kept for backward compat).
+
+    Prefer ``create_error_response()`` in new code.
+    """
+    return create_error_response(code, message, retryable, suggestion, available_names)
+
+
+def _error_response_extended(
+    code: str,
+    message: str,
+    retryable: bool,
+    suggestion: str | None = None,
+    available_names: list[str] | None = None,
+) -> str:
+    """Format a structured error response (legacy signature kept for backward compat).
+
+    Prefer ``create_error_response()`` + ``_error_response(dict)`` in new code.
+    """
+    return json.dumps(
+        sanitize_response_data(
+            create_error_response(code, message, retryable, suggestion, available_names)
+        ),
+        indent=2,
+        ensure_ascii=False,
+    )

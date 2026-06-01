@@ -4,7 +4,7 @@
 
 | Version | Supported          |
 | ------- | ------------------ |
-| 1.2.x   | :white_check_mark: |
+| 1.5.x   | :white_check_mark: |
 
 ## Reporting a Vulnerability
 
@@ -42,7 +42,7 @@ This project is intentionally read-only. It **cannot**:
 - Path traversal attempts (e.g., `../etc/passwd`) are blocked
 - Maximum file size: 10MB
 - Maximum directory depth: 20 levels
-- Auth files (`auth`, `auth_provider.*`) are explicitly blocked
+- Auth files (`auth`, `auth_provider.*`, `onboarding`) are explicitly blocked
 
 ### Network
 
@@ -54,6 +54,6 @@ This project is intentionally read-only. It **cannot**:
 We monitor dependencies for known vulnerabilities. To check for vulnerabilities in your installation:
 
 ```bash
-pip install safety
-safety check -r requirements.txt
+pip install pip-audit
+pip-audit
 ```

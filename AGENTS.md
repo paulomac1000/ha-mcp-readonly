@@ -112,6 +112,7 @@ tests/
 ### Source Code
 
 ```
+version.py                    # Single source of truth for version number
 tools/
 ├── utils.py                 # Shared: make_ha_request(), load_registry(), sanitize_log_line()
 ├── yaml_utils.py            # HomeAssistantLoader for HA-specific YAML tags
@@ -120,6 +121,12 @@ tools/
 ├── storage.py               # Registry dump, Lovelace, helpers
 ├── diagnostics.py           # System health, energy, person tracking
 ├── config.py                # Configuration file tools
+├── manifests.py             # TOOL_MANIFESTS, risk prefix injection
+├── capabilities.py          # Zero-I/O MCP introspection tool catalog
+├── observability.py         # request_id, invocation counters
+├── categories.py            # Category management (automation, script, scene, helpers)
+├── helpers_health.py        # Helper entity health diagnostics
+├── validators.py            # Input validation and schema checks
 ├── ...
 └── composite.py             # Composite diagnostic tools
 

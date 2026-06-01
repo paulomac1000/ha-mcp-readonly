@@ -233,8 +233,8 @@ class TestGetIntegrationEntities:
             assert data["unavailable_count"] == 1
 
     @pytest.mark.asyncio
-    async def test_unknown_state_counted_as_unavailable(self, tools):
-        """State 'unknown' (not just 'unavailable') must increment unavailable_count."""
+    async def test_unknown_state_not_counted_as_unavailable(self, tools):
+        """State 'unknown' (entity not found in live states) must NOT increment unavailable_count."""
         states_with_unknown = [
             {
                 "entity_id": "sensor.mqtt_temperature",
@@ -254,7 +254,7 @@ class TestGetIntegrationEntities:
             result = await tools["get_integration_entities"]("mqtt")
             data = json.loads(result)
 
-        assert data["unavailable_count"] == 1
+        assert data["unavailable_count"] == 0
 
     @pytest.mark.asyncio
     async def test_orphaned_device_id_goes_to_no_device(self, tools):

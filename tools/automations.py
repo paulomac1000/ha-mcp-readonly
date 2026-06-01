@@ -12,7 +12,8 @@ from typing import Any, cast
 
 import yaml
 
-from tools.utils import _error_response, _success_response, make_ha_request
+from tools.manifests import make_manifest, register_manifest
+from tools.utils import _error_response, _success_response, load_registry, make_ha_request
 from tools.yaml_utils import HomeAssistantLoader
 
 _logger = logging.getLogger(__name__)
@@ -96,6 +97,21 @@ def _extract_templates(data: Any, path: str = "") -> list[dict[str, str]]:
     return templates
 
 
+def _detect_reversal(prev_service: str, next_service: str) -> bool:
+    """Return True if the two service calls reverse each other's state."""
+    if not prev_service or not next_service:
+        return False
+    reversal_pairs = {
+        ("turn_on", "turn_off"),
+        ("turn_off", "turn_on"),
+        ("open_cover", "close_cover"),
+        ("close_cover", "open_cover"),
+        ("lock", "unlock"),
+        ("unlock", "lock"),
+    }
+    return (prev_service, next_service) in reversal_pairs
+
+
 # ========================================
 # INTERNAL BUSINESS LOGIC FUNCTIONS
 # ========================================
@@ -132,10 +148,29 @@ def _do_search_automations(
     mode: str | None = None,
     uses_blueprint: bool | None = None,
     deep: bool = False,
+    category: str | None = None,
     config_path: str | None = None,
 ) -> dict[str, Any]:
     data = _load_automations(config_path)  # type: ignore[arg-type]
     results = []
+
+    category_id: str | None = None
+    if category and config_path:
+        cat_registry = load_registry("core.category_registry", config_path)
+        cat_entries = cat_registry.get("data", {}).get("categories", [])
+        for cat_entry in cat_entries:
+            if cat_entry.get("category_id") == category:
+                category_id = category
+                break
+            if cat_entry.get("name", "").lower() == category.lower():
+                category_id = cat_entry.get("category_id")
+                break
+        if (
+            category_id
+            and cat_entries is not None
+            and not any(c.get("category_id") == category_id for c in cat_entries)
+        ):
+            category_id = None
 
     for item in data:
         if search_term:
@@ -159,8 +194,26 @@ def _do_search_automations(
             if uses_blueprint != has_bp:
                 continue
 
+        auto_id = item.get("id", "")
+        alias = item.get("alias", "Unnamed")
+
+        if category_id:
+            auto_unique_id = str(auto_id) if auto_id else ""
+            auto_entity_id = f"automation.{re.sub(r'[^a-z0-9_]+', '_', str(auto_id or alias or '').lower()).strip('_')}"
+            entity_entries = load_registry("core.entity_registry", config_path)
+            entities = entity_entries.get("data", {}).get("entities", []) if entity_entries else []
+            matched_categories: dict[str, str] | None = None
+            for ent in entities:
+                ent_eid = ent.get("entity_id", "")
+                ent_uid = ent.get("unique_id", "")
+                if (ent_uid and ent_uid == auto_unique_id) or ent_eid == auto_entity_id:
+                    matched_categories = ent.get("categories", {})
+                    break
+            if not (matched_categories and matched_categories.get("automation") == category_id):
+                continue
+
         res = {
-            "alias": item.get("alias", "Unnamed"),
+            "alias": alias,
             "description": item.get("description"),
             "mode": item.get("mode", "single"),
             "uses_blueprint": "use_blueprint" in item,
@@ -860,6 +913,70 @@ def _do_diagnose_automation(
                 variables_index = idx
                 break
 
+    _STATE_CHANGING_SERVICES = {
+        "turn_on",
+        "turn_off",
+        "toggle",
+        "open_cover",
+        "close_cover",
+        "lock",
+        "unlock",
+        "set_temperature",
+        "set_hvac_mode",
+        "set_fan_mode",
+        "set_preset_mode",
+        "reload",
+    }
+    for idx, action in enumerate(actions):
+        if "delay" in action and idx > 0 and idx + 1 < len(actions):
+            prev_action = actions[idx - 1]
+            next_action = actions[idx + 1]
+            prev_svc = (
+                (prev_action.get("service") or "").split(".")[-1]
+                if "service" in prev_action
+                else ""
+            )
+            next_svc = (
+                (next_action.get("service") or "").split(".")[-1]
+                if "service" in next_action
+                else ""
+            )
+            _prev_target = prev_action.get("target", prev_action.get("entity_id", ""))
+            _next_target = next_action.get("target", next_action.get("entity_id", ""))
+            prev_changes_state = prev_svc in _STATE_CHANGING_SERVICES
+            next_changes_state = next_svc in _STATE_CHANGING_SERVICES
+            if prev_changes_state and next_changes_state:
+                _prev_domain = (prev_action.get("service") or "").split(".")[0]
+                _next_domain = (next_action.get("service") or "").split(".")[0]
+                reversing = _detect_reversal(prev_svc, next_svc)
+                result["issues"].append(  # type: ignore[attr-defined]
+                    {
+                        "severity": "error",
+                        "type": "fragile_delay_pattern",
+                        "message": (
+                            f"Action {idx}: delay between state-changing calls "
+                            f"({prev_action.get('service')} at {idx - 1} and "
+                            f"{next_action.get('service')} at {idx + 1}) — "
+                            f"fragile pattern. Use timer helpers instead."
+                        ),
+                        "detail": {
+                            "delay_action_index": idx,
+                            "previous_action": {
+                                "index": idx - 1,
+                                "service": prev_action.get("service"),
+                            },
+                            "next_action": {
+                                "index": idx + 1,
+                                "service": next_action.get("service"),
+                            },
+                            "reverses_state": reversing,
+                        },
+                        "fix": "Replace 'delay' with a timer helper (timer or schedule). "
+                        "Start the timer in the first action, trigger the second "
+                        "action on timer.finished event via a separate automation.",
+                    }
+                )
+
     if has_variables and variables_index > 0:
         result["recommendations"].append(  # type: ignore[attr-defined]
             {
@@ -1419,6 +1536,12 @@ def _do_diagnose_automation_aliases(
                 if not already:
                     aliases[alias].append(entry)
 
+    yaml_by_alias: dict[str, dict[str, Any]] = {}
+    for item in yaml_autos:
+        alias = item.get("alias", "Unknown")
+        if alias not in yaml_by_alias:
+            yaml_by_alias[alias] = item
+
     duplicates = []
     for alias, entries in aliases.items():
         if len(entries) > 1:
@@ -1429,17 +1552,560 @@ def _do_diagnose_automation_aliases(
                 impact = "all_enabled"
             else:
                 impact = "mixed"
-            duplicates.append(
-                {
-                    "alias": alias,
-                    "entities": entries,
-                    "impact": impact,
-                }
-            )
+
+            dup_entry: dict[str, Any] = {
+                "alias": alias,
+                "entities": entries,
+                "impact": impact,
+            }
+
+            _compute_overlap(dup_entry, entries, yaml_by_alias.get(alias), config_path)
+            duplicates.append(dup_entry)
 
     result["duplicates"] = duplicates
     result["total_duplicates"] = len(duplicates)
     return result
+
+
+def _compute_overlap(
+    dup_entry: dict[str, Any],
+    entries: list[dict[str, Any]],
+    yaml_auto: dict[str, Any] | None,
+    config_path: str,
+) -> None:
+    """Enrich a duplicate group with overlap score, trigger/action overlap, and stale detection."""
+    if not yaml_auto:
+        dup_entry["overlap_score"] = 0
+        dup_entry["trigger_overlap"] = []
+        dup_entry["action_target_overlap"] = []
+        return
+
+    triggers = yaml_auto.get("trigger", [])
+    if isinstance(triggers, dict):
+        triggers = [triggers]
+
+    actions = yaml_auto.get("action", [])
+    if isinstance(actions, dict):
+        actions = [actions]
+
+    primary_trigger_entities: set[str] = set()
+    primary_action_entities: set[str] = set()
+
+    for trigger in triggers:
+        entity_id = trigger.get("entity_id", "")
+        if isinstance(entity_id, str):
+            primary_trigger_entities.add(entity_id)
+        elif isinstance(entity_id, list):
+            primary_trigger_entities.update(entity_id)
+
+    def _collect_action_targets(obj: Any, targets: set[str]) -> None:
+        if isinstance(obj, dict):
+            eid = obj.get("entity_id", "")
+            if isinstance(eid, str):
+                targets.add(eid)
+            target = obj.get("target", {})
+            if isinstance(target, dict):
+                t_eid = target.get("entity_id", "")
+                if isinstance(t_eid, str):
+                    targets.add(t_eid)
+                elif isinstance(t_eid, list):
+                    targets.update(t_eid)
+            for val in obj.values():
+                _collect_action_targets(val, targets)
+        elif isinstance(obj, list):
+            for item in obj:
+                _collect_action_targets(item, targets)
+
+    _collect_action_targets(actions, primary_action_entities)
+
+    primary_trigger_entities.discard("")
+    primary_action_entities.discard("")
+
+    other_trigger_entities: set[str] = set()
+    other_action_entities: set[str] = set()
+
+    other_autos = _load_automations(config_path)
+    for other in other_autos:
+        other_alias = other.get("alias", "")
+        if other_alias != dup_entry.get("alias"):
+            continue
+        other_triggers = other.get("trigger", [])
+        if isinstance(other_triggers, dict):
+            other_triggers = [other_triggers]
+        other_actions = other.get("action", [])
+        if isinstance(other_actions, dict):
+            other_actions = [other_actions]
+
+        other_trigger_set: set[str] = set()
+        for t in other_triggers:
+            eid = t.get("entity_id", "")
+            if isinstance(eid, str):
+                other_trigger_set.add(eid)
+            elif isinstance(eid, list):
+                other_trigger_set.update(eid)
+        other_trigger_set.discard("")
+
+        other_action_set: set[str] = set()
+        _collect_action_targets(other_actions, other_action_set)
+        other_action_set.discard("")
+
+        other_trigger_entities |= other_trigger_set
+        other_action_entities |= other_action_set
+
+    trigger_entities = primary_trigger_entities | other_trigger_entities
+    action_entities = primary_action_entities | other_action_entities
+
+    for entry in entries:
+        entity_id = entry.get("entity_id", "")
+        auto_item = None
+        if yaml_auto and yaml_auto.get("alias") == dup_entry.get("alias"):
+            auto_item = yaml_auto
+        if not auto_item:
+            for other in other_autos:
+                if other.get("alias") == dup_entry.get("alias"):
+                    auto_item = other
+                    break
+
+    trigger_overlap_list: list[str] = sorted(trigger_entities)
+    action_overlap_list: list[str] = sorted(action_entities)
+
+    primary_condition_entities: set[str] = set()
+    conditions = yaml_auto.get("condition", [])
+    if isinstance(conditions, dict):
+        conditions = [conditions]
+    for cond in conditions:
+        eid = cond.get("entity_id", "")
+        if isinstance(eid, str):
+            primary_condition_entities.add(eid)
+        elif isinstance(eid, list):
+            primary_condition_entities.update(eid)
+    primary_condition_entities.discard("")
+
+    other_condition_entities: set[str] = set()
+    for other in other_autos:
+        other_alias = other.get("alias", "")
+        if other_alias != dup_entry.get("alias"):
+            continue
+        other_conds = other.get("condition", [])
+        if isinstance(other_conds, dict):
+            other_conds = [other_conds]
+        other_cond_set: set[str] = set()
+        for c in other_conds:
+            eid = c.get("entity_id", "")
+            if isinstance(eid, str):
+                other_cond_set.add(eid)
+            elif isinstance(eid, list):
+                other_cond_set.update(eid)
+        other_cond_set.discard("")
+        other_condition_entities |= other_cond_set
+
+    condition_entities = primary_condition_entities | other_condition_entities
+
+    # Compute overlap scores based on intersection of entities shared between
+    # the primary automation and other automations with the same alias.
+    # Ratio-based scoring prevents inflating scores when entities only exist
+    # in a single automation within the duplicate group.
+    trigger_intersection = primary_trigger_entities & other_trigger_entities
+    if len(trigger_entities) > 0:
+        trigger_score = int(40 * len(trigger_intersection) / len(trigger_entities))
+    else:
+        trigger_score = 0
+
+    action_intersection = primary_action_entities & other_action_entities
+    if len(action_entities) > 0:
+        action_score = int(40 * len(action_intersection) / len(action_entities))
+    else:
+        action_score = 0
+
+    condition_intersection = primary_condition_entities & other_condition_entities
+    if len(condition_entities) > 0:
+        condition_score = int(20 * len(condition_intersection) / len(condition_entities))
+    else:
+        condition_score = 0
+
+    overlap_score = trigger_score + action_score + condition_score
+
+    stale_entities: list[dict[str, Any]] = []
+    states_list = [e.get("state") for e in entries]
+    has_on = "on" in states_list
+    has_unavailable = "unavailable" in states_list
+    if has_on and has_unavailable:
+        for e in entries:
+            if e.get("state") == "unavailable":
+                stale_entities.append(
+                    {
+                        "entity_id": e.get("entity_id"),
+                        "state": "unavailable",
+                        "recommendation": "Consider deleting this stale duplicate entry.",
+                    }
+                )
+
+    dup_entry["overlap_score"] = overlap_score
+    dup_entry["trigger_overlap"] = trigger_overlap_list
+    dup_entry["action_target_overlap"] = action_overlap_list
+    if stale_entities:
+        dup_entry["stale_duplicates"] = stale_entities
+
+
+def _do_search_inside_automations(
+    pattern: str,
+    search_in: str = "all",
+    config_path: str | None = None,
+) -> dict[str, Any]:
+    if not pattern or not isinstance(pattern, str) or not pattern.strip():
+        return {"success": False, "error": "pattern is required and must be a non-empty string"}
+
+    try:
+        compiled = re.compile(pattern)
+    except re.error as e:
+        return {"success": False, "error": f"Invalid regex pattern: {e}"}
+
+    automations = _load_automations(config_path)  # type: ignore[arg-type]
+    matches: list[dict[str, Any]] = []
+
+    for auto in automations:
+        alias = auto.get("alias", "Unnamed")
+        sections: dict[str, Any] = {}
+        if search_in in ("all", "triggers"):
+            sections["trigger"] = auto.get("trigger")
+        if search_in in ("all", "conditions"):
+            sections["condition"] = auto.get("condition")
+        if search_in in ("all", "actions"):
+            sections["action"] = auto.get("action")
+
+        for section_name, section_data in sections.items():
+            if not section_data:
+                continue
+            yaml_str = yaml.dump(section_data, sort_keys=False, allow_unicode=True)
+            for match in compiled.finditer(yaml_str):
+                line_number = yaml_str[: match.start()].count("\n") + 1
+                matched_text = match.group()[:200]
+                matches.append(
+                    {
+                        "automation_alias": alias,
+                        "matched_field": section_name,
+                        "matched_text": matched_text,
+                        "line_number": line_number,
+                    }
+                )
+
+    return {
+        "success": True,
+        "total_automations": len(automations),
+        "pattern": pattern,
+        "search_in": search_in,
+        "match_count": len(matches),
+        "matches": matches,
+    }
+
+
+def _do_diagnose_uncategorized_automations(
+    scope: str = "automation",
+    auto_suggest: bool = True,
+    config_path: str | None = None,
+    ha_url: str | None = None,
+    ha_token: str | None = None,
+) -> dict[str, Any]:
+    uncategorized: list[dict[str, Any]] = []
+
+    entity_entries = load_registry("core.entity_registry", config_path)
+    entities = entity_entries.get("data", {}).get("entities", []) if entity_entries else []
+
+    for entity in entities:
+        categories = entity.get("categories", {})
+        if categories is None or categories == {}:
+            entity_id = entity.get("entity_id", "")
+            if scope != "automation" or entity_id.startswith("automation."):
+                domain = entity_id.split(".", 1)[0] if "." in entity_id else ""
+                if scope == "automation" and domain != "automation":
+                    continue
+                entry: dict[str, Any] = {
+                    "entity_id": entity_id,
+                    "alias": entity.get("name") or entity.get("original_name", entity_id),
+                    "area_id": entity.get("area_id"),
+                    "suggested_category": None,
+                }
+                if auto_suggest:
+                    alias = entry["alias"] or ""
+                    if alias and " " in alias:
+                        prefix = alias.split(" ", 1)[0].strip()
+                        if len(prefix) >= 3 and len(prefix) <= 20 and prefix.isalnum():
+                            entry["suggested_category"] = prefix.lower()
+                uncategorized.append(entry)
+
+    return {
+        "success": True,
+        "scope": scope,
+        "auto_suggest": auto_suggest,
+        "total_uncategorized": len(uncategorized),
+        "uncategorized": uncategorized,
+    }
+
+
+_CANONICAL_PREFIXES = frozenset(
+    {
+        "Heating",
+        "Light",
+        "Notify",
+        "Energy",
+        "Watchdog",
+        "Camera",
+        "Dashboard",
+        "OpenHASP",
+        "Device",
+        "System",
+        "Enhanced Smart Control",
+    }
+)
+
+_POLISH_CHARS = frozenset("\u0105\u0119\u015b\u0107\u0144\u00f3\u0142\u017c\u017a")
+_EMOJI_RANGE_RE = re.compile("[\U0001f300-\U0001f9ff]")
+
+_PREFIX_CATEGORY_MAP: dict[str, list[str]] = {
+    "Heating": ["Heating", "Climate"],
+    "Light": ["Lighting", "Light"],
+    "Notify": ["Notification", "Notify"],
+    "Energy": ["Energy"],
+    "Watchdog": ["Watchdog", "Monitoring"],
+    "Camera": ["Camera", "Security"],
+    "Dashboard": ["Dashboard"],
+    "OpenHASP": ["OpenHASP", "Display"],
+    "Device": ["Device"],
+    "System": ["System", "Core"],
+    "Enhanced Smart Control": ["Energy", "Smart Control"],
+}
+
+_TITLE_CASE_WORDS_RE = re.compile(r"\b[A-Z][a-z]*\b")
+
+
+def _do_validate_automation_names(
+    category_filter: str | None = None,
+    config_path: str | None = None,
+) -> dict[str, Any]:
+    automations = _load_automations(config_path)  # type: ignore[arg-type]
+    violations: list[dict[str, Any]] = []
+
+    if category_filter and config_path:
+        cat_registry = load_registry("core.category_registry", config_path)
+        cat_entries = cat_registry.get("data", {}).get("categories", [])
+        target_category_id: str | None = None
+        for cat_entry in cat_entries:
+            if cat_entry.get("category_id") == category_filter:
+                target_category_id = category_filter
+                break
+            if cat_entry.get("name", "").lower() == category_filter.lower():
+                target_category_id = cat_entry.get("category_id")
+                break
+
+    for item in automations:
+        alias = str(item.get("alias") or "")
+        entity_id = f"automation.{re.sub(r'[^a-z0-9_]+', '_', str(item.get('id') or alias).lower()).strip('_')}"
+
+        if category_filter and config_path:
+            auto_unique_id = str(item.get("id", ""))
+            entity_entries = load_registry("core.entity_registry", config_path)
+            entities = entity_entries.get("data", {}).get("entities", [])
+            matched = False
+            for ent in entities:
+                ent_uid = ent.get("unique_id", "")
+                ent_eid = ent.get("entity_id", "")
+                if (ent_uid and ent_uid == auto_unique_id) or ent_eid == entity_id:
+                    ent_cats = ent.get("categories", {}) or {}
+                    if ent_cats.get("automation") == target_category_id:
+                        matched = True
+                    break
+            if not matched:
+                continue
+
+        if not alias:
+            continue
+
+        # Rule 1: Separator must be " - " not " — ", " – ", ": "
+        if " - " not in alias and (" — " in alias or " – " in alias or ": " in alias):
+            violations.append(
+                {
+                    "entity_id": entity_id,
+                    "alias": alias,
+                    "violation_type": "wrong_separator",
+                    "current_value": alias,
+                    "suggested_fix": alias.replace(" — ", " - ")
+                    .replace(" – ", " - ")
+                    .replace(": ", " - "),
+                    "severity": "warning",
+                }
+            )
+            continue
+
+        # Rule 2: Prefix before first " - " must be canonical
+        parts = alias.split(" - ", 1)
+        prefix = parts[0].strip() if parts else ""
+        remainder = parts[1] if len(parts) > 1 else ""
+
+        if prefix not in _CANONICAL_PREFIXES:
+            violations.append(
+                {
+                    "entity_id": entity_id,
+                    "alias": alias,
+                    "violation_type": "missing_prefix",
+                    "current_value": prefix if prefix else "(empty)",
+                    "suggested_fix": f"Add canonical prefix from: {sorted(_CANONICAL_PREFIXES)}",
+                    "severity": "error",
+                }
+            )
+
+        # Rule 3: No Polish characters
+        polish_found = [c for c in alias if c.lower() in _POLISH_CHARS or c in _POLISH_CHARS]
+        if polish_found:
+            violations.append(
+                {
+                    "entity_id": entity_id,
+                    "alias": alias,
+                    "violation_type": "polish_characters",
+                    "current_value": "".join(polish_found),
+                    "suggested_fix": "Replace Polish characters with ASCII equivalents",
+                    "severity": "warning",
+                }
+            )
+
+        # Rule 4: No emoji in alias
+        if _EMOJI_RANGE_RE.search(alias):
+            violations.append(
+                {
+                    "entity_id": entity_id,
+                    "alias": alias,
+                    "violation_type": "emoji_in_alias",
+                    "current_value": alias,
+                    "suggested_fix": "Remove emoji characters from alias",
+                    "severity": "error",
+                }
+            )
+
+        # Rule 5: Title Case in purpose text (after prefix)
+        if remainder:
+            words = remainder.split()
+            title_words = _TITLE_CASE_WORDS_RE.findall(remainder)
+            if title_words and len(title_words) < len([w for w in words if w[0].isalpha()]) * 0.5:
+                violations.append(
+                    {
+                        "entity_id": entity_id,
+                        "alias": alias,
+                        "violation_type": "bad_capitalization",
+                        "current_value": remainder,
+                        "suggested_fix": remainder.title(),
+                        "severity": "warning",
+                    }
+                )
+
+        # Rule 6: Compound hyphens (e.g. "Auto-Off" should use hyphens not spaces)
+        compound_pattern = re.compile(
+            r"\b(Auto|Semi|Multi|Cross|Pre|Post|Co|Non|Sub|Super|Over|Under|"
+            r"Cache|Real|Time|Stage|Phase|Level|State|Self|Full|Half|Part"
+            r")[ -]([A-Z][a-z]+)\b"
+        )
+        matches = compound_pattern.findall(alias)
+        if matches:
+            for m in matches:
+                first, second = m
+                full = f"{first} {second}"
+                if f"{first} {second}" in alias and f"{first}-{second}" not in alias:
+                    violations.append(
+                        {
+                            "entity_id": entity_id,
+                            "alias": alias,
+                            "violation_type": "missing_compound_hyphen",
+                            "current_value": full,
+                            "suggested_fix": f"{first}-{second}",
+                            "severity": "warning",
+                        }
+                    )
+
+        # Rule 7: Version strings must be lowercase (v5.0, v2)
+        version_pattern = re.compile(r"\b[Vv]\d+(?:\.\d+)?\b")
+        for vmatch in version_pattern.finditer(alias):
+            vtext = vmatch.group()
+            if vtext[0].isupper():
+                violations.append(
+                    {
+                        "entity_id": entity_id,
+                        "alias": alias,
+                        "violation_type": "uppercase_version",
+                        "current_value": vtext,
+                        "suggested_fix": vtext.lower(),
+                        "severity": "warning",
+                    }
+                )
+
+    return {
+        "success": True,
+        "total_automations": len(automations),
+        "total_violations": len(violations),
+        "violations": violations,
+    }
+
+
+def _do_diagnose_category_alias_mismatch(
+    config_path: str | None = None,
+) -> dict[str, Any]:
+    automations = _load_automations(config_path)  # type: ignore[arg-type]
+    mismatches: list[dict[str, Any]] = []
+
+    entity_entries = load_registry("core.entity_registry", config_path)
+    entities = entity_entries.get("data", {}).get("entities", []) if entity_entries else []
+
+    cat_registry = load_registry("core.category_registry", config_path)
+    cat_entries = cat_registry.get("data", {}).get("categories", [])
+    cat_id_to_name: dict[str, str] = {}
+    for cat in cat_entries:
+        cid = cat.get("category_id", "")
+        if cid:
+            cat_id_to_name[cid] = cat.get("name", cid)
+
+    for item in automations:
+        alias = str(item.get("alias") or "")
+        if not alias:
+            continue
+
+        parts = alias.split(" - ", 1)
+        prefix = parts[0].strip() if parts else ""
+        if prefix not in _PREFIX_CATEGORY_MAP:
+            continue
+
+        auto_unique_id = str(item.get("id", ""))
+        auto_entity_id = f"automation.{re.sub(r'[^a-z0-9_]+', '_', str(item.get('id') or alias).lower()).strip('_')}"
+
+        assigned_cat_id: str | None = None
+        for ent in entities:
+            ent_uid = ent.get("unique_id", "")
+            ent_eid = ent.get("entity_id", "")
+            if (ent_uid and ent_uid == auto_unique_id) or ent_eid == auto_entity_id:
+                ent_cats = ent.get("categories", {}) or {}
+                assigned_cat_id = ent_cats.get("automation")
+                break
+
+        if not assigned_cat_id:
+            continue
+
+        assigned_cat_name = cat_id_to_name.get(assigned_cat_id, assigned_cat_id)
+        expected_names = _PREFIX_CATEGORY_MAP.get(prefix, [])
+
+        if not any(assigned_cat_name.lower() == expected.lower() for expected in expected_names):
+            mismatches.append(
+                {
+                    "entity_id": auto_entity_id,
+                    "alias": alias,
+                    "alias_prefix": prefix,
+                    "assigned_category_name": assigned_cat_name,
+                    "expected_category_name": " or ".join(expected_names),
+                    "severity": "warning",
+                }
+            )
+
+    return {
+        "success": True,
+        "total_automations": len(automations),
+        "total_mismatches": len(mismatches),
+        "mismatches": mismatches,
+    }
 
 
 # ========================================
@@ -1459,6 +2125,7 @@ def register_automation_tools(mcp, config_path, ha_url=None, ha_token=None) -> N
         mode: str | None = None,
         uses_blueprint: bool | None = None,
         deep: bool = False,
+        category: str | None = None,
     ) -> str:
         """[READ] Search automations by alias, description, mode, or blueprint usage. ~95% token savings vs listing all.
 
@@ -1471,6 +2138,7 @@ def register_automation_tools(mcp, config_path, ha_url=None, ha_token=None) -> N
             mode: Filter by mode: "single", "restart", "queued", "parallel"
             uses_blueprint: True = only blueprint, False = only native, None = all
             deep: Recursively search nested fields (variables, choose branches, sequences) (default: False)
+            category: Filter by category_id or category_name (default: None)
 
         Returns:
             JSON with matching automations, optional full code, and match_paths when deep=True
@@ -1480,6 +2148,7 @@ def register_automation_tools(mcp, config_path, ha_url=None, ha_token=None) -> N
             search_automations("dashboard", include_code=True)
             search_automations(mode="restart", uses_blueprint=True)
             search_automations("_hp_days", deep=True)
+            search_automations(category="Lighting")
         """
         try:
             result = _do_search_automations(
@@ -1488,6 +2157,7 @@ def register_automation_tools(mcp, config_path, ha_url=None, ha_token=None) -> N
                 mode=mode,
                 uses_blueprint=uses_blueprint,
                 deep=deep,
+                category=category,
                 config_path=config_path,
             )
             return (
@@ -1740,8 +2410,71 @@ def register_automation_tools(mcp, config_path, ha_url=None, ha_token=None) -> N
             return _error_response(str(exc))
 
     @mcp.tool()
+    def search_inside_automations(pattern: str, search_in: str = "all") -> str:
+        """Searches inside automation YAML for a pattern across triggers, conditions, or actions.
+
+        Searches within YAML dump of each automation for the given pattern.
+        Supports regex with safe validation.
+
+        Args:
+            pattern: Text or regex pattern to search for (e.g. "light.living_room", "turn_on").
+            search_in: Scope of search — "all", "triggers", "conditions", or "actions". Default: "all".
+
+        Returns:
+            JSON with matches list containing automation_alias, matched_field, matched_text, and line_number.
+        """
+        try:
+            result = _do_search_inside_automations(
+                pattern=pattern,
+                search_in=search_in,
+                config_path=config_path,
+            )
+            return (
+                _success_response(result)
+                if result.get("success")
+                else _error_response(result.get("error", "Unknown error"))
+            )
+        except Exception as exc:
+            _logger.exception("search_inside_automations failed")
+            return _error_response(str(exc))
+
+    @mcp.tool()
+    def diagnose_uncategorized_automations(
+        scope: str = "automation",
+        auto_suggest: bool = True,
+    ) -> str:
+        """Scans entity registry for automations without a category assigned.
+
+        Filters entities with empty categories dict and optionally suggests
+        a category based on the alias prefix.
+
+        Args:
+            scope: Entity domain to scan (default: "automation").
+            auto_suggest: If True, suggest category from alias prefix (default: True).
+
+        Returns:
+            JSON with uncategorized list containing entity_id, alias, area_id, and suggested_category.
+        """
+        try:
+            result = _do_diagnose_uncategorized_automations(
+                scope=scope,
+                auto_suggest=auto_suggest,
+                config_path=config_path,
+                ha_url=ha_url,
+                ha_token=ha_token,
+            )
+            return (
+                _success_response(result)
+                if result.get("success")
+                else _error_response(result.get("error", "Unknown error"))
+            )
+        except Exception as exc:
+            _logger.exception("diagnose_uncategorized_automations failed")
+            return _error_response(str(exc))
+
+    @mcp.tool()
     def diagnose_automation_aliases() -> str:
-        """[READ] Detect duplicate automation aliases from YAML and UI sources.
+        """Detect duplicate automation aliases from YAML and UI sources.
 
         Groups all automations by alias and flags groups of 2+ entries
         with the same display name, categorizing the impact as
@@ -1762,3 +2495,72 @@ def register_automation_tools(mcp, config_path, ha_url=None, ha_token=None) -> N
         except Exception as exc:
             _logger.exception("diagnose_automation_aliases failed")
             return _error_response(str(exc))
+
+    @mcp.tool()
+    def validate_automation_names(
+        category_filter: str | None = None,
+    ) -> str:
+        """Validate automation alias naming conventions against 7 quality rules.
+
+        Checks each automation alias for separator style, canonical prefix,
+        Polish characters, emoji, title case, compound hyphens, and version casing.
+
+        Args:
+            category_filter: Optional category ID or name to limit validation scope.
+
+        Returns:
+            JSON with violations list containing entity_id, alias, violation_type,
+            current_value, suggested_fix, and severity.
+        """
+        try:
+            result = _do_validate_automation_names(
+                category_filter=category_filter,
+                config_path=config_path,
+            )
+            return (
+                _success_response(result)
+                if result.get("success")
+                else _error_response(result.get("error", "Unknown error"))
+            )
+        except Exception as exc:
+            _logger.exception("validate_automation_names failed")
+            return _error_response(str(exc))
+
+    @mcp.tool()
+    def diagnose_category_alias_mismatch() -> str:
+        """Detect mismatches between automation alias prefixes and assigned categories.
+
+        For each automation, extracts the prefix from the alias and verifies
+        that the assigned category matches the canonical prefix-to-category mapping.
+
+        Returns:
+            JSON with mismatches list containing entity_id, alias, alias_prefix,
+            assigned_category_name, expected_category_name, and severity.
+        """
+        try:
+            result = _do_diagnose_category_alias_mismatch(
+                config_path=config_path,
+            )
+            return (
+                _success_response(result)
+                if result.get("success")
+                else _error_response(result.get("error", "Unknown error"))
+            )
+        except Exception as exc:
+            _logger.exception("diagnose_category_alias_mismatch failed")
+            return _error_response(str(exc))
+
+    register_manifest(
+        "search_inside_automations", make_manifest("search_inside_automations", latency="fast")
+    )
+    register_manifest(
+        "diagnose_uncategorized_automations",
+        make_manifest("diagnose_uncategorized_automations", latency="fast"),
+    )
+    register_manifest(
+        "validate_automation_names", make_manifest("validate_automation_names", latency="fast")
+    )
+    register_manifest(
+        "diagnose_category_alias_mismatch",
+        make_manifest("diagnose_category_alias_mismatch", latency="fast"),
+    )

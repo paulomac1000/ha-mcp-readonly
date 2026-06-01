@@ -21,7 +21,9 @@ from typing import Any
 
 import yaml
 
+from tools.manifests import make_manifest, register_manifest
 from tools.utils import _error_response, _success_response, load_registry, make_ha_request
+from tools.yaml_utils import HomeAssistantLoader
 
 _logger = logging.getLogger(__name__)
 
@@ -1925,6 +1927,423 @@ def _do_diagnose_post_update_integrations(
     return result
 
 
+def _do_diagnose_stale_entities(
+    stale_minutes: int = 15,
+    domain_filter: str | None = None,
+    ha_url: str | None = None,
+    ha_token: str | None = None,
+    config_path: str | None = None,
+) -> dict[str, Any]:
+    """Detects entities whose last_updated timestamp exceeds the threshold.
+
+    Scans camera, sensor, and binary_sensor entities (or a single domain
+    when domain_filter is set).  Each entity whose ``last_updated`` is
+    older than ``stale_minutes`` is flagged with a severity label.
+
+    Args:
+        stale_minutes: Age threshold in minutes (default 15).
+        domain_filter: Restrict scan to a single domain, e.g. ``"sensor"``.
+        ha_url: Home Assistant API URL.
+        ha_token: Authorization token.
+        config_path: Path to HA configuration directory.
+
+    Returns:
+        JSON with ``stale_entities`` list, ``total_scanned``, ``by_integration``
+        breakdown, and ``recommendations``.
+    """
+    states_res = make_ha_request(ha_url, ha_token, "/api/states")
+    if not states_res["success"]:
+        return {"success": False, "error": "Cannot fetch entity states"}
+
+    states = states_res["data"]
+    target_domains = {"camera", "sensor", "binary_sensor"}
+    if domain_filter:
+        target_domains = {domain_filter}
+
+    entity_reg = (
+        load_registry("core.entity_registry", config_path).get("data", {}).get("entities", [])
+    )
+    entity_to_platform: dict[str, str] = {}
+    for e in entity_reg:
+        entity_to_platform[e.get("entity_id", "")] = e.get("platform", "unknown")
+
+    now_ts = time.time()
+    stale_entities: list[dict[str, Any]] = []
+
+    for s in states:
+        eid = s.get("entity_id", "")
+        domain = eid.split(".")[0] if "." in eid else ""
+        if domain not in target_domains:
+            continue
+
+        last_updated = s.get("last_updated")
+        if not last_updated:
+            continue
+
+        try:
+            lu = datetime.fromisoformat(last_updated.replace("Z", "+00:00"))
+            age_seconds = now_ts - lu.timestamp()
+            age_minutes = age_seconds / 60.0
+        except (ValueError, TypeError, OSError):
+            continue
+
+        if age_minutes <= stale_minutes:
+            continue
+
+        if age_minutes > 60:
+            severity = "critical"
+        elif age_minutes > 15:
+            severity = "warning"
+        else:
+            severity = "info"
+
+        platform = entity_to_platform.get(eid, domain)
+
+        stale_entities.append(
+            {
+                "entity_id": eid,
+                "domain": domain,
+                "state": s.get("state", ""),
+                "last_updated": last_updated,
+                "age_minutes": round(age_minutes, 1),
+                "age_hours": round(age_minutes / 60.0, 2),
+                "severity": severity,
+                "integration": platform,
+            }
+        )
+
+    stale_entities.sort(key=lambda x: x["age_minutes"], reverse=True)
+
+    by_integration: dict[str, dict[str, Any]] = defaultdict(
+        lambda: {"count": 0, "entities": [], "max_age_minutes": 0.0}
+    )
+    for se in stale_entities:
+        integration = se["integration"]
+        by_integration[integration]["count"] += 1
+        if len(by_integration[integration]["entities"]) < 5:
+            by_integration[integration]["entities"].append(se["entity_id"])
+        by_integration[integration]["max_age_minutes"] = max(
+            by_integration[integration]["max_age_minutes"], se["age_minutes"]
+        )
+
+    by_severity = {
+        "critical": len([x for x in stale_entities if x["severity"] == "critical"]),
+        "warning": len([x for x in stale_entities if x["severity"] == "warning"]),
+        "info": len([x for x in stale_entities if x["severity"] == "info"]),
+    }
+
+    total_scanned = sum(1 for s in states if s.get("entity_id", "").split(".")[0] in target_domains)
+
+    recommendations: list[dict[str, str]] = []
+    if by_severity["critical"] > 0:
+        recommendations.append(
+            {
+                "priority": "critical",
+                "message": (
+                    f"{by_severity['critical']} entities stale >60min "
+                    f"— check integration connectivity"
+                ),
+            }
+        )
+    if by_severity["warning"] > 0:
+        recommendations.append(
+            {
+                "priority": "warning",
+                "message": (
+                    f"{by_severity['warning']} entities stale >15min "
+                    f"— possible slow polling or connection issues"
+                ),
+            }
+        )
+    if not stale_entities:
+        recommendations.append({"priority": "info", "message": "No stale entities detected"})
+
+    return {
+        "success": True,
+        "stale_entities": stale_entities,
+        "total_scanned": total_scanned,
+        "total_stale": len(stale_entities),
+        "by_integration": dict(by_integration),
+        "by_severity": by_severity,
+        "recommendations": recommendations,
+    }
+
+
+def _do_diagnose_orphan_references(
+    scope: str = "automations",
+    ha_url: str | None = None,
+    ha_token: str | None = None,
+    config_path: str | None = None,
+) -> dict[str, Any]:
+    """Finds entity_id references in automations/scripts that do not exist in HA.
+
+    Extracts every entity_id reference from automations.yaml (and optionally
+    scripts.yaml), then cross-references with ``/api/states`` to identify
+    references that no longer resolve to a live entity.
+
+    Args:
+        scope: Configurations to scan — ``"automations"``, ``"scripts"``, or ``"all"``.
+        ha_url: Home Assistant API URL.
+        ha_token: Authorization token.
+        config_path: Path to HA configuration directory.
+
+    Returns:
+        JSON with ``orphan_references`` list, each containing ``entity_id``,
+        ``referenced_in`` (list of automation/script names and contexts),
+        and ``severity``.
+    """
+    entity_pattern = re.compile(
+        r"\b(?:sensor|binary_sensor|light|switch|climate|cover|input_\w+|"
+        r"automation|script|person|device_tracker|media_player|camera|lock|fan|"
+        r"vacuum|weather|sun|zone|timer|counter|number|select|button|scene|"
+        r"update|todo|calendar|stt|tts|conversation)\.[a-z0-9_]+\b"
+    )
+
+    references: list[dict[str, str]] = []
+
+    if scope in ("automations", "all"):
+        if config_path:
+            auto_path = Path(config_path) / "automations.yaml"
+            if auto_path.exists():
+                try:
+                    with open(auto_path, encoding="utf-8") as f:
+                        automations = yaml.load(f, Loader=HomeAssistantLoader) or []  # nosec B506
+                    for auto in automations:
+                        auto_str = str(auto)
+                        alias = auto.get("alias", "Unknown")
+                        auto_id = auto.get("id", "")
+                        for entity_id in set(entity_pattern.findall(auto_str)):
+                            references.append(
+                                {
+                                    "entity_id": entity_id,
+                                    "referenced_in": alias,
+                                    "context": (
+                                        f"automation:{auto_id}"
+                                        if auto_id
+                                        else f"automation:{alias}"
+                                    ),
+                                }
+                            )
+                except Exception:
+                    pass
+
+    if scope in ("scripts", "all"):
+        if config_path:
+            script_path = Path(config_path) / "scripts.yaml"
+            if script_path.exists():
+                try:
+                    with open(script_path, encoding="utf-8") as f:
+                        raw = yaml.load(f, Loader=HomeAssistantLoader) or {}  # nosec B506
+                    scripts: dict[str, Any] = raw if isinstance(raw, dict) else {}
+                    for script_id, script_config in scripts.items():
+                        script_str = str(script_config)
+                        alias = (
+                            script_config.get("alias", script_id)
+                            if isinstance(script_config, dict)
+                            else script_id
+                        )
+                        for entity_id in set(entity_pattern.findall(script_str)):
+                            references.append(
+                                {
+                                    "entity_id": entity_id,
+                                    "referenced_in": alias,
+                                    "context": f"script:{script_id}",
+                                }
+                            )
+                except Exception:
+                    pass
+
+    if not references:
+        return {
+            "success": True,
+            "orphan_references": [],
+            "total_references_checked": 0,
+            "orphan_count": 0,
+            "scope": scope,
+        }
+
+    states_res = make_ha_request(ha_url, ha_token, "/api/states")
+    existing_entities: set[str] = set()
+    if states_res["success"]:
+        existing_entities = {s["entity_id"] for s in states_res["data"]}
+
+    by_entity: dict[str, list[dict[str, str]]] = defaultdict(list)
+    for ref in references:
+        by_entity[ref["entity_id"]].append(
+            {"name": ref["referenced_in"], "context": ref["context"]}
+        )
+
+    orphan_references: list[dict[str, Any]] = []
+    for entity_id, refs in sorted(by_entity.items()):
+        if entity_id not in existing_entities:
+            orphan_references.append(
+                {
+                    "entity_id": entity_id,
+                    "referenced_in": refs,
+                    "severity": "warning",
+                }
+            )
+
+    unique_referenced = len({r["entity_id"] for r in references})
+
+    return {
+        "success": True,
+        "orphan_references": orphan_references,
+        "total_references_checked": unique_referenced,
+        "orphan_count": len(orphan_references),
+        "scope": scope,
+    }
+
+
+def _do_diagnose_entity_threshold_proximity(
+    proximity_percent: int = 15,
+    area_filter: str | None = None,
+    ha_url: str | None = None,
+    ha_token: str | None = None,
+    config_path: str | None = None,
+) -> dict[str, Any]:
+    """Detect sensors approaching their input_number threshold limits.
+
+    Matches sensor.* entities to input_number.* threshold helpers by naming
+    convention (e.g. sensor.living_room_illuminance ↔ input_number.living_room_illuminance_lvl)
+    and flags pairs where the sensor value is within proximity_percent of the threshold.
+
+    Args:
+        proximity_percent: Alert when sensor is within this % of threshold (default: 15).
+        area_filter: Optional area ID or name to limit scope.
+        ha_url: Home Assistant API URL.
+        ha_token: Authorization token.
+        config_path: Path to HA configuration directory.
+
+    Returns:
+        JSON with threshold_alerts list containing sensor_entity, current_value,
+        threshold_entity, threshold_value, proximity_percent, and direction (above/below).
+    """
+    states_res = make_ha_request(ha_url, ha_token, "/api/states")
+    if not states_res["success"]:
+        return {"success": False, "error": "Cannot fetch entity states"}
+
+    states = states_res["data"]
+
+    entity_reg = (
+        load_registry("core.entity_registry", config_path).get("data", {}).get("entities", [])
+    )
+    area_reg = load_registry("core.area_registry", config_path).get("data", {}).get("areas", [])
+
+    entity_to_area: dict[str, str | None] = {}
+    dev_map = {
+        d.get("id"): d
+        for d in load_registry("core.device_registry", config_path)
+        .get("data", {})
+        .get("devices", [])
+    }
+
+    for ent in entity_reg:
+        eid = ent.get("entity_id", "")
+        aid = ent.get("area_id")
+        if aid:
+            entity_to_area[eid] = aid
+        else:
+            did = ent.get("device_id")
+            if did and did in dev_map:
+                daid = dev_map[did].get("area_id")
+                entity_to_area[eid] = daid
+
+    resolved_area_id: str | None = None
+    if area_filter:
+        for a in area_reg:
+            if a.get("id") == area_filter or a.get("name", "").lower() == area_filter.lower():
+                resolved_area_id = a.get("id")
+                break
+        if not resolved_area_id:
+            return {"success": False, "error": f"Area '{area_filter}' not found"}
+
+    sensors: dict[str, float] = {}
+    thresholds: dict[str, dict[str, Any]] = {}
+    sensor_area: dict[str, str | None] = {}
+
+    for s in states:
+        eid = s.get("entity_id", "")
+        state_val = s.get("state", "")
+        domain = eid.split(".")[0] if "." in eid else ""
+
+        if domain == "sensor":
+            try:
+                val = float(state_val)
+                sensor_area[eid] = entity_to_area.get(eid)
+                sensors[eid] = val
+            except (ValueError, TypeError):
+                pass
+
+        elif domain == "input_number":
+            try:
+                val = float(state_val)
+                thresholds[eid] = {
+                    "value": val,
+                    "friendly_name": s.get("attributes", {}).get("friendly_name", eid),
+                    "area_id": entity_to_area.get(eid),
+                }
+            except (ValueError, TypeError):
+                pass
+
+    threshold_alerts: list[dict[str, Any]] = []
+
+    for sensor_id, sensor_val in sensors.items():
+        if area_filter and sensor_area.get(sensor_id) != resolved_area_id:
+            continue
+
+        sensor_name = sensor_id.split(".", 1)[1] if "." in sensor_id else sensor_id
+
+        for threshold_id, threshold_info in thresholds.items():
+            if area_filter and threshold_info["area_id"] != resolved_area_id:
+                continue
+
+            threshold_name = threshold_id.split(".", 1)[1] if "." in threshold_id else threshold_id
+
+            # Match by naming convention: sensor base name should be a prefix or match
+            # pattern: sensor_name matches threshold_name after stripping common suffixes
+            tname_clean = re.sub(
+                r"_(lvl|level|limit|threshold|setpoint|target|min|max)$", "", threshold_name
+            )
+            sname_clean = sensor_name
+
+            if (
+                tname_clean == sname_clean
+                or sname_clean.startswith(tname_clean)
+                or tname_clean.startswith(sname_clean)
+            ):
+                threshold_val = threshold_info["value"]
+                if threshold_val == 0:
+                    continue
+
+                proximity = abs(sensor_val - threshold_val) / threshold_val * 100
+
+                if proximity <= proximity_percent:
+                    direction = "above" if sensor_val > threshold_val else "below"
+                    threshold_alerts.append(
+                        {
+                            "sensor_entity": sensor_id,
+                            "current_value": sensor_val,
+                            "threshold_entity": threshold_id,
+                            "threshold_value": threshold_val,
+                            "proximity_percent": round(proximity, 1),
+                            "direction": direction,
+                        }
+                    )
+
+    threshold_alerts.sort(key=lambda x: x["proximity_percent"])
+
+    return {
+        "success": True,
+        "proximity_threshold_percent": proximity_percent,
+        "area_filter": area_filter,
+        "threshold_alerts": threshold_alerts,
+        "total_alerts": len(threshold_alerts),
+        "sensors_scanned": len(sensors),
+        "thresholds_found": len(thresholds),
+    }
+
+
 # ========================================
 # TOOL REGISTRATION
 # ========================================
@@ -2255,4 +2674,117 @@ def register_diagnostics_tools(mcp, ha_url, ha_token, config_path) -> None:  # t
             return _success_response(result)
         except Exception as exc:
             _logger.exception("diagnose_post_update_integrations failed")
+            return _error_response(str(exc))
+
+    register_manifest(
+        "diagnose_stale_entities",
+        make_manifest("diagnose_stale_entities", cost="moderate"),
+    )
+
+    @mcp.tool()
+    def diagnose_stale_entities(
+        stale_minutes: int = 15,
+        domain_filter: str | None = None,
+    ) -> str:
+        """Detects entities whose last_updated timestamp exceeds the threshold.
+
+        Scans camera, sensor, and binary_sensor entities for stale data.
+        Flags entities with severity based on age: critical (>60min),
+        warning (>15min), info (>5min). Groups results by integration domain.
+
+        Args:
+            stale_minutes: Age threshold in minutes (default: 15).
+            domain_filter: Restrict scan to a single domain, e.g. "sensor".
+
+        Returns:
+            JSON with stale_entities, total_scanned, by_integration, and recommendations.
+        """
+        try:
+            result = _do_diagnose_stale_entities(
+                stale_minutes=stale_minutes,
+                domain_filter=domain_filter,
+                ha_url=ha_url,
+                ha_token=ha_token,
+                config_path=config_path,
+            )
+            return _success_response(result)
+        except Exception as exc:
+            _logger.exception("diagnose_stale_entities failed")
+            return _error_response(str(exc))
+
+    register_manifest(
+        "diagnose_orphan_references",
+        make_manifest(
+            "diagnose_orphan_references",
+            timeout_ms=60000,
+            latency="slow",
+            cost="expensive",
+        ),
+    )
+
+    @mcp.tool()
+    def diagnose_orphan_references(scope: str = "automations") -> str:
+        """Finds entity_id references in automations/scripts that do not exist in Home Assistant.
+
+        Extracts every entity_id referenced in automations.yaml (and optionally
+        scripts.yaml), then cross-references with the live entity list from
+        /api/states to identify orphaned references.
+
+        Args:
+            scope: Configurations to scan — "automations", "scripts", or "all".
+
+        Returns:
+            JSON with orphan_references list (entity_id, referenced_in, severity).
+        """
+        try:
+            result = _do_diagnose_orphan_references(
+                scope=scope,
+                ha_url=ha_url,
+                ha_token=ha_token,
+                config_path=config_path,
+            )
+            return _success_response(result)
+        except Exception as exc:
+            _logger.exception("diagnose_orphan_references failed")
+            return _error_response(str(exc))
+
+    register_manifest(
+        "diagnose_entity_threshold_proximity",
+        make_manifest(
+            "diagnose_entity_threshold_proximity",
+            latency="moderate",
+            cost="moderate",
+        ),
+    )
+
+    @mcp.tool()
+    def diagnose_entity_threshold_proximity(
+        proximity_percent: int = 15,
+        area_filter: str | None = None,
+    ) -> str:
+        """Detect sensors approaching their input_number threshold limits.
+
+        Matches sensor.* entities to input_number.* threshold helpers by naming
+        convention and flags pairs where the sensor value is within
+        proximity_percent of the threshold.
+
+        Args:
+            proximity_percent: Alert when sensor is within this % of threshold (default: 15).
+            area_filter: Optional area ID or name to limit scope.
+
+        Returns:
+            JSON with threshold_alerts list containing sensor_entity, current_value,
+            threshold_entity, threshold_value, proximity_percent, and direction.
+        """
+        try:
+            result = _do_diagnose_entity_threshold_proximity(
+                proximity_percent=proximity_percent,
+                area_filter=area_filter,
+                ha_url=ha_url,
+                ha_token=ha_token,
+                config_path=config_path,
+            )
+            return _success_response(result)
+        except Exception as exc:
+            _logger.exception("diagnose_entity_threshold_proximity failed")
             return _error_response(str(exc))

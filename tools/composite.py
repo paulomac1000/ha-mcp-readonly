@@ -803,7 +803,7 @@ def _do_audit_config_orphans(
 
     except Exception as exc:
         _logger.exception("_do_audit_config_orphans failed")
-        return {"error": str(exc)}
+        return {"success": False, "error": str(exc)}
 
 
 # ================================================================

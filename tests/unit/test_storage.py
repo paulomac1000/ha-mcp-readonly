@@ -1078,7 +1078,11 @@ class TestTemplateEntityTools:
             )
             data = json.loads(result)
             assert data["success"] is False
-            assert "not found" in data["error"].lower()
+            error = data["error"]
+            if isinstance(error, dict):
+                assert "not found" in error.get("message", "").lower()
+            else:
+                assert "not found" in str(error).lower()
 
     @pytest.mark.asyncio
     async def test_get_template_entity_code_empty_entity_id(self):
@@ -1293,3 +1297,33 @@ class TestGetNfcTags:
             data = json.loads(await mock_mcp._tools["get_nfc_tags"]())
         assert data["success"] is False
         assert "nfc fail" in data["error"]
+
+
+class TestBatchExceptionHandlers:
+    """Exception handler tests for batch wrapper tools (TEST-REG-3)."""
+
+    @pytest.mark.asyncio
+    async def test_get_template_entities_batch_exception(self, mock_mcp, config_path):
+        register_storage_tools(mock_mcp, config_path)
+        with patch(
+            "tools.storage._do_get_template_entities_batch",
+            side_effect=RuntimeError("boom"),
+        ):
+            data = json.loads(
+                await mock_mcp._tools["get_template_entities_batch"](entity_ids="sensor.test")
+            )
+        assert data["success"] is False
+        assert "boom" in data["error"]
+
+    @pytest.mark.asyncio
+    async def test_get_entity_registry_batch_exception(self, mock_mcp, config_path):
+        register_storage_tools(mock_mcp, config_path)
+        with patch(
+            "tools.storage._do_get_entity_registry_batch",
+            side_effect=RuntimeError("boom"),
+        ):
+            data = json.loads(
+                await mock_mcp._tools["get_entity_registry_batch"](entity_ids="sensor.test")
+            )
+        assert data["success"] is False
+        assert "boom" in data["error"]

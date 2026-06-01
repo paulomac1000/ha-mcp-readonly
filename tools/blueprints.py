@@ -221,7 +221,7 @@ def _do_get_blueprint_usage_summary(config_path: str) -> str:
     try:
         list_res = json.loads(_do_list_blueprints(config_path))
         if not list_res.get("success"):
-            return json.dumps(list_res)
+            return _error_response(list_res.get("error", str(list_res)))
 
         all_blueprints = list_res.get("blueprints", [])
         usage_stats = []

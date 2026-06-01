@@ -9,12 +9,7 @@ from itertools import islice
 from pathlib import Path
 from typing import Any
 
-from .constants import (
-    ENTITY_PATTERN,
-    HA_CONFIG_PATH,
-    LOG_HOURS_BACK,
-    VIRTUAL_ENTITY_DOMAINS,
-)
+from . import constants
 from .utils import (
     extract_controlled_entities,
     extract_entities_from_data,
@@ -280,7 +275,7 @@ class RegistryCollector:
     def is_virtual_entity(self, entity_id: str) -> bool:
         """Checks if entity is virtual (may not have a state)."""
         domain = entity_id.split(".")[0]
-        return domain in VIRTUAL_ENTITY_DOMAINS
+        return domain in constants.VIRTUAL_ENTITY_DOMAINS
 
 
 class AutomationAnalyzer:
@@ -353,7 +348,7 @@ class AutomationAnalyzer:
         Collects blueprints.
         Based on test_blueprints.py list_blueprints.
         """
-        blueprints_dir = Path(HA_CONFIG_PATH) / "blueprints"
+        blueprints_dir = Path(constants.HA_CONFIG_PATH) / "blueprints"
         if not blueprints_dir.exists():
             return
 
@@ -627,7 +622,7 @@ class DashboardAnalyzer:
         """Analyzes all dashboards."""
         print("Analyzing Lovelace dashboards...")
 
-        storage_path = Path(HA_CONFIG_PATH) / ".storage"
+        storage_path = Path(constants.HA_CONFIG_PATH) / ".storage"
         if not storage_path.exists():
             print("   Warning: Missing .storage folder")
             return
@@ -798,7 +793,7 @@ class DashboardAnalyzer:
 
             # Fallback: search for entities in entire card structure
             card_str = json.dumps(card)
-            found_entities = set(ENTITY_PATTERN.findall(card_str))
+            found_entities = set(constants.ENTITY_PATTERN.findall(card_str))
 
             for eid in found_entities:
                 # Add only if not yet added for this card
@@ -1076,14 +1071,14 @@ class LogAnalyzer:
         self.api_errors: list[dict] = []
         self.startup_errors: list[dict] = []  # NOWE
 
-    def analyze(self, hours: int = LOG_HOURS_BACK):
+    def analyze(self, hours: int = constants.LOG_HOURS_BACK):
         """
         Analyzes logs from the last X hours.
         Based on test_real_ha.py get_log_insights.
         """
         print(f"Analyzing logs (last {hours}h)...")
 
-        log_path = Path(HA_CONFIG_PATH) / "home-assistant.log"
+        log_path = Path(constants.HA_CONFIG_PATH) / "home-assistant.log"
         if not log_path.exists():
             print("   Warning: Missing home-assistant.log file")
             return
@@ -1147,7 +1142,7 @@ class LogAnalyzer:
         integration = self._extract_integration(component)
 
         # Extract entities
-        entities = set(ENTITY_PATTERN.findall(line))
+        entities = set(constants.ENTITY_PATTERN.findall(line))
         self.affected_entities.update(entities)
 
         # Message
@@ -1772,7 +1767,7 @@ class HacsAnalyzer:
         self.registry = registry
         self.hacs_repos: list[dict] = []
         self.custom_components: list[dict] = []
-        self.custom_components_dir = os.path.join(HA_CONFIG_PATH, "custom_components")
+        self.custom_components_dir = os.path.join(constants.HA_CONFIG_PATH, "custom_components")
 
     def collect(self):
         """Collect HACS and custom component data."""

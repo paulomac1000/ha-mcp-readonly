@@ -18,9 +18,11 @@ from tools.utils import _error_response, _success_response, make_ha_request, tai
 
 _logger = logging.getLogger(__name__)
 
+TOOLS_VERSION = "1.0.0"
+
 
 def collect_system_metrics(ha_url: str, ha_token: str | None, config_path: str) -> dict[str, Any]:
-    """Collect basic system metrics from HA API (lightweight)"""
+    """Collect basic system metrics from HA API (lightweight)."""
     try:
         metrics: dict[str, Any] = {"timestamp": datetime.now().isoformat()}
 
@@ -75,7 +77,7 @@ def collect_system_metrics(ha_url: str, ha_token: str | None, config_path: str) 
 def collect_log_summary_optimized(
     ha_url: str, ha_token: str | None, config_path: str, hours: int = 24
 ) -> dict[str, Any]:
-    """Collect and group log errors - OPTIMIZED version"""
+    """Collect and group log errors - OPTIMIZED version."""
     try:
         log_path = os.path.join(config_path, "home-assistant.log")
         if not os.path.exists(log_path):
@@ -174,7 +176,7 @@ def collect_log_summary_optimized(
 
 
 def collect_entity_health(ha_url: str, ha_token: str | None) -> dict[str, Any]:
-    """Analyze entity states - OPTIMIZED version"""
+    """Analyze entity states - OPTIMIZED version."""
     try:
         response = make_ha_request(ha_url, ha_token, "/api/states")
 
@@ -220,7 +222,7 @@ def collect_entity_health(ha_url: str, ha_token: str | None) -> dict[str, Any]:
 
 
 def collect_automation_health(ha_url: str, ha_token: str | None) -> dict[str, Any]:
-    """Check automation states - OPTIMIZED version"""
+    """Check automation states - OPTIMIZED version."""
     try:
         response = make_ha_request(ha_url, ha_token, "/api/states")
 
@@ -263,7 +265,7 @@ def collect_automation_health(ha_url: str, ha_token: str | None) -> dict[str, An
 
 
 def calculate_health_score(data: dict[str, Any]) -> dict[str, Any]:
-    """Calculate overall health score (0-100) based on collected metrics"""
+    """Calculate overall health score (0-100) based on collected metrics."""
     score = 100
     issues = []
 
@@ -328,7 +330,7 @@ def calculate_health_score(data: dict[str, Any]) -> dict[str, Any]:
 
 
 def prepare_report(data: dict[str, Any]) -> dict[str, Any]:
-    """Prepare final report with cleaned, aggregated data"""
+    """Prepare final report with cleaned, aggregated data."""
     health_score = calculate_health_score(data)
 
     report = {
@@ -386,7 +388,7 @@ def _do_trigger_health_report(ha_url: str, ha_token: str | None, config_path: st
 def register_health_reporter_tools(
     mcp: Any, ha_url: str, ha_token: str | None, config_path: str
 ) -> None:
-    """Register health reporter as MCP tool for manual triggering"""
+    """Register health reporter as MCP tool for manual triggering."""
 
     @mcp.tool()
     def trigger_health_report() -> str:

@@ -6,35 +6,10 @@ the ha-mcp-readonly directory.
 """
 
 import os
-from pathlib import Path
 
-
-def load_env():
-    """Load environment variables from .env file if available."""
-    env_paths = [
-        Path("/app/.env"),
-        Path(".env"),
-    ]
-    for env_path in env_paths:
-        if env_path.exists():
-            try:
-                with open(env_path) as f:
-                    for line in f:
-                        line = line.strip()
-                        if line and not line.startswith("#") and "=" in line:
-                            key, value = line.split("=", 1)
-                            os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
-                print(f"Loaded environment variables from {env_path}")
-                return
-            except Exception as e:
-                print(f"Warning: failed to load .env: {e}")
-
-
-load_env()
-
-# Configuration from environment
-HA_URL = os.getenv("HA_URL")
-HA_TOKEN = os.getenv("HA_TOKEN")
+# Configuration defaults — non-unit test suites load .env from their own conftest.py
+HA_URL = os.getenv("HA_URL", "http://localhost:8123")
+HA_TOKEN = os.getenv("HA_TOKEN", "test-token")
 HA_CONFIG_PATH = os.getenv("HA_CONFIG_PATH", "/config")
 
 

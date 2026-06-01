@@ -1,5 +1,4 @@
-"""
-Integration Analysis Tools (P3 - Nice to have).
+"""Integration Analysis Tools (P3 - Nice to have).
 
 Provides tools for integration analysis:
 - get_integration_entities(domain)
@@ -36,12 +35,167 @@ def _get_entities_for_domain(entities: list[dict[str, Any]], domain: str) -> lis
     return domain_entities
 
 
+# =========================================================================
+# _do_* FUNCTIONS (pure business logic, returns dict)
+# =========================================================================
+
+
+def _do_get_integration_entities(
+    domain: str,
+    include_disabled: bool,
+    config_path: str,
+    ha_url: str | None,
+    ha_token: str | None,
+) -> dict[str, Any]:
+    """Business logic for get_integration_entities."""
+    entities = _get_entities_for_domain(get_registry_entities(config_path), domain)
+
+    if not entities:
+        return {"error": f"No entities found for integration '{domain}'"}
+
+    devices = get_registry_devices(config_path)
+    devices_map = {d["id"]: d for d in devices}
+
+    states_map = {}
+    if ha_url and ha_token:
+        states_result = make_ha_request(ha_url, ha_token, "/api/states")
+        if states_result.get("success"):
+            states_map = {s["entity_id"]: s for s in states_result.get("data", [])}
+
+    by_device = {}
+    disabled_count = 0
+    unavailable_count = 0
+
+    by_device["no_device"] = {"device_name": "No Device Assigned", "entities": []}
+
+    for entity in entities:
+        if entity.get("disabled_by"):
+            disabled_count += 1
+            if not include_disabled:
+                continue
+
+        eid = entity.get("entity_id")
+        state = states_map.get(eid, {}).get("state", "unknown")
+        if state == "unavailable" and not entity.get("disabled_by"):
+            unavailable_count += 1
+
+        entity_info = {
+            "entity_id": eid,
+            "name": get_best_name(entity, "entity"),
+            "state": state,
+            "disabled_by": entity.get("disabled_by"),
+        }
+
+        device_id = entity.get("device_id")
+        if device_id and device_id in devices_map:
+            if device_id not in by_device:
+                device = devices_map[device_id]
+                by_device[device_id] = {
+                    "device_name": get_best_name(device, "device"),
+                    "model": device.get("model"),  # type: ignore[dict-item]
+                    "entities": [],
+                }
+            by_device[device_id]["entities"].append(entity_info)  # type: ignore[attr-defined]
+        else:
+            by_device["no_device"]["entities"].append(entity_info)  # type: ignore[attr-defined]
+
+    if not by_device["no_device"]["entities"]:
+        del by_device["no_device"]
+
+    returned_count = sum(len(d["entities"]) for d in by_device.values())
+
+    return {
+        "domain": domain,
+        "total_entities": len(entities),
+        "returned_entities": returned_count,
+        "disabled_count": disabled_count,
+        "unavailable_count": unavailable_count,
+        "by_device": by_device,
+    }
+
+
+def _do_get_integration_summary(
+    domain: str,
+    config_path: str,
+    ha_url: str | None,
+    ha_token: str | None,
+) -> dict[str, Any]:
+    """Business logic for get_integration_summary."""
+    entries = _get_entries_by_domain(get_registry_config_entries(config_path), domain)
+    entities = _get_entities_for_domain(get_registry_entities(config_path), domain)
+
+    if not entries and not entities:
+        return {"error": f"Integration '{domain}' not found"}
+
+    entries_summary = {
+        "total": len(entries),
+        "loaded": 0,
+        "disabled": 0,
+        "titles": [e.get("title") for e in entries[:5]],
+    }
+
+    for entry in entries:
+        if entry.get("disabled_by"):
+            entries_summary["disabled"] += 1  # type: ignore[operator]
+        else:
+            entries_summary["loaded"] += 1  # type: ignore[operator]
+
+    states_map = {}
+    if ha_url and ha_token:
+        states_result = make_ha_request(ha_url, ha_token, "/api/states")
+        if states_result.get("success"):
+            states_map = {s["entity_id"]: s for s in states_result.get("data", [])}
+
+    entities_summary = {
+        "total": len(entities),
+        "enabled": 0,
+        "disabled": 0,
+        "available": 0,
+        "unavailable": 0,
+    }
+
+    entity_platforms: Counter[str] = Counter()
+
+    for entity in entities:
+        eid = entity.get("entity_id", "unknown.unknown")
+        platform = eid.split(".")[0]
+        entity_platforms[platform] += 1
+
+        if entity.get("disabled_by"):
+            entities_summary["disabled"] += 1
+        else:
+            entities_summary["enabled"] += 1
+            state = states_map.get(eid, {}).get("state", "unknown")
+            if state in ["unavailable", "unknown"]:
+                entities_summary["unavailable"] += 1
+            else:
+                entities_summary["available"] += 1
+
+    devices = get_registry_devices(config_path)
+    entry_ids = {e["entry_id"] for e in entries}
+    domain_devices = [
+        d for d in devices if any(entry_id in entry_ids for entry_id in d.get("config_entries", []))
+    ]
+
+    health = "Healthy" if entities_summary["unavailable"] == 0 else "Issues Detected"
+
+    return {
+        "domain": domain,
+        "config_entries": entries_summary,
+        "devices_count": len(domain_devices),
+        "entities_summary": entities_summary,
+        "entity_platforms": dict(entity_platforms),
+        "health": health,
+    }
+
+
+# =========================================================================
+# TOOL REGISTRATION
+# =========================================================================
+
+
 def register_integration_tools(mcp, config_path: str, ha_url: str, ha_token: str) -> None:  # type: ignore[no-untyped-def]
     """Register integration analysis tools."""
-
-    # =========================================================================
-    # TOOLS
-    # =========================================================================
 
     @mcp.tool(name="get_integration_entities")
     async def get_integration_entities(domain: str, include_disabled: bool = False) -> str:
@@ -54,79 +208,19 @@ def register_integration_tools(mcp, config_path: str, ha_url: str, ha_token: str
         Returns:
             JSON string with domain summary, devices grouping, and availability stats.
         """
-        # Get entities
-        entities = _get_entities_for_domain(get_registry_entities(config_path), domain)
-
-        if not entities:
-            return _error_response(f"No entities found for integration '{domain}'")
-
-        # Get devices for context
-        devices = get_registry_devices(config_path)
-        devices_map = {d["id"]: d for d in devices}
-
-        # Get live states
-        states_map = {}
-        if ha_url and ha_token:
-            states_result = make_ha_request(ha_url, ha_token, "/api/states")
-            if states_result.get("success"):
-                states_map = {s["entity_id"]: s for s in states_result.get("data", [])}
-
-        # Process entities
-        by_device = {}
-        disabled_count = 0
-        unavailable_count = 0
-
-        # Add "No Device" category
-        by_device["no_device"] = {"device_name": "No Device Assigned", "entities": []}
-
-        for entity in entities:
-            if entity.get("disabled_by"):
-                disabled_count += 1
-                if not include_disabled:
-                    continue
-
-            # Check state
-            eid = entity.get("entity_id")
-            state = states_map.get(eid, {}).get("state", "unknown")
-            if state in ["unavailable", "unknown"] and not entity.get("disabled_by"):
-                unavailable_count += 1
-
-            # Prepare entity info
-            entity_info = {
-                "entity_id": eid,
-                "name": get_best_name(entity, "entity"),
-                "state": state,
-                "disabled_by": entity.get("disabled_by"),
-            }
-
-            # Group by device
-            device_id = entity.get("device_id")
-            if device_id and device_id in devices_map:
-                if device_id not in by_device:
-                    device = devices_map[device_id]
-                    by_device[device_id] = {
-                        "device_name": get_best_name(device, "device"),
-                        "model": device.get("model"),  # type: ignore[dict-item]
-                        "entities": [],
-                    }
-                by_device[device_id]["entities"].append(entity_info)  # type: ignore[attr-defined]
-            else:
-                by_device["no_device"]["entities"].append(entity_info)  # type: ignore[attr-defined]
-
-        # Remove empty "No Device" category
-        if not by_device["no_device"]["entities"]:
-            del by_device["no_device"]
-
-        return _success_response(
-            {
-                "domain": domain,
-                "total_entities": len(entities),
-                "returned_entities": sum(len(d["entities"]) for d in by_device.values()),
-                "disabled_count": disabled_count,
-                "unavailable_count": unavailable_count,
-                "by_device": by_device,
-            }
-        )
+        try:
+            result = _do_get_integration_entities(
+                domain=domain,
+                include_disabled=include_disabled,
+                config_path=config_path,
+                ha_url=ha_url,
+                ha_token=ha_token,
+            )
+            if "error" in result:
+                return _error_response(result["error"])
+            return _success_response(result)
+        except Exception as e:
+            return _error_response(str(e))
 
     @mcp.tool(name="get_integration_summary")
     async def get_integration_summary(domain: str) -> str:
@@ -138,73 +232,15 @@ def register_integration_tools(mcp, config_path: str, ha_url: str, ha_token: str
         Returns:
             JSON string with integration summary (entries, devices, entities, health).
         """
-        entries = _get_entries_by_domain(get_registry_config_entries(config_path), domain)
-        entities = _get_entities_for_domain(get_registry_entities(config_path), domain)
-
-        if not entries and not entities:
-            return _error_response(f"Integration '{domain}' not found")
-
-        # Analyze config entries
-        entries_summary = {
-            "total": len(entries),
-            "loaded": 0,
-            "disabled": 0,
-            "titles": [e.get("title") for e in entries[:5]],
-        }
-
-        for entry in entries:
-            if entry.get("disabled_by"):
-                entries_summary["disabled"] += 1  # type: ignore[operator]
-            else:
-                entries_summary["loaded"] += 1  # type: ignore[operator]
-
-        # Analyze entities
-        states_map = {}
-        if ha_url and ha_token:
-            states_result = make_ha_request(ha_url, ha_token, "/api/states")
-            if states_result.get("success"):
-                states_map = {s["entity_id"]: s for s in states_result.get("data", [])}
-
-        entities_summary = {
-            "total": len(entities),
-            "enabled": 0,
-            "disabled": 0,
-            "available": 0,
-            "unavailable": 0,
-        }
-
-        entity_platforms = Counter()  # type: ignore[var-annotated]
-
-        for entity in entities:
-            platform = entity.get("entity_id").split(".")[0]  # type: ignore[union-attr]
-            entity_platforms[platform] += 1
-
-            if entity.get("disabled_by"):
-                entities_summary["disabled"] += 1
-            else:
-                entities_summary["enabled"] += 1
-                state = states_map.get(entity.get("entity_id"), {}).get("state", "unknown")
-                if state in ["unavailable", "unknown"]:
-                    entities_summary["unavailable"] += 1
-                else:
-                    entities_summary["available"] += 1
-
-        # Analyze devices
-        devices = get_registry_devices(config_path)
-        entry_ids = {e["entry_id"] for e in entries}
-        domain_devices = [
-            d
-            for d in devices
-            if any(entry_id in entry_ids for entry_id in d.get("config_entries", []))
-        ]
-
-        return _success_response(
-            {
-                "domain": domain,
-                "config_entries": entries_summary,
-                "devices_count": len(domain_devices),
-                "entities_summary": entities_summary,
-                "entity_platforms": dict(entity_platforms),
-                "health": "Healthy" if entities_summary["unavailable"] == 0 else "Issues Detected",
-            }
-        )
+        try:
+            result = _do_get_integration_summary(
+                domain=domain,
+                config_path=config_path,
+                ha_url=ha_url,
+                ha_token=ha_token,
+            )
+            if "error" in result:
+                return _error_response(result["error"])
+            return _success_response(result)
+        except Exception as e:
+            return _error_response(str(e))

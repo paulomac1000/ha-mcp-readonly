@@ -9,6 +9,7 @@ Provides tools for analyzing entity history:
 import logging
 from collections import Counter, defaultdict
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from tools.utils import _error_response, _success_response, make_ha_request
 
@@ -53,9 +54,22 @@ def _calculate_duration(start: datetime, end: datetime) -> float:
 
 
 def _do_get_entity_state_history_summary(
-    entity_id: str, hours_back: int, ha_url: str, ha_token: str
+    entity_id: str,
+    hours_back: int,
+    ha_url: str,
+    ha_token: str,
+    group_by: str | None = None,
 ) -> str:
-    """Summarize entity state history instead of returning raw rows."""
+    """Summarize entity state history instead of returning raw rows.
+
+    Args:
+        entity_id: Entity identifier.
+        hours_back: Number of hours to analyze (capped to 168).
+        ha_url: Home Assistant API URL.
+        ha_token: Authorization token.
+        group_by: Optional aggregation — ``"hour"`` or ``"day"`` to return
+            grouped statistics instead of raw change entries.
+    """
     hours_back = min(max(int(hours_back), 1), MAX_HISTORY_HOURS)
 
     end_time = datetime.now(UTC)
@@ -136,19 +150,50 @@ def _do_get_entity_state_history_summary(
             "percentage": round((stats["total_duration_min"] / (hours_back * 60)) * 100, 1),
         }
 
-    return _success_response(
-        {
-            "entity_id": entity_id,
-            "period_hours": hours_back,
-            "total_changes": len(processed_changes),
-            "states_breakdown": final_stats,
-            "anomalies": anomalies,
-            "current_state_duration_min": processed_changes[-1]["duration_min"]
-            if processed_changes
-            else 0,
-            "last_5_changes": processed_changes[-5:],
-        }
-    )
+    grouped = None
+    if group_by in ("hour", "day") and processed_changes:
+        buckets: dict[str, list[float]] = {}
+        for ch in processed_changes:
+            ts = _parse_timestamp(ch["changed"])
+            if not ts:
+                continue
+            if group_by == "hour":
+                bucket_key = ts.strftime("%Y-%m-%dT%H:00")
+            else:
+                bucket_key = ts.strftime("%Y-%m-%d")
+            state_val = ch["state"]
+            try:
+                numeric_val = float(state_val)
+            except (ValueError, TypeError):
+                continue
+            buckets.setdefault(bucket_key, []).append(numeric_val)
+
+        grouped = {}
+        for bucket, values in sorted(buckets.items()):
+            grouped[bucket] = {
+                "count": len(values),
+                "min": round(min(values), 3),
+                "max": round(max(values), 3),
+                "avg": round(sum(values) / len(values), 3),
+            }
+
+    response_data: dict[str, Any] = {
+        "entity_id": entity_id,
+        "period_hours": hours_back,
+        "total_changes": len(processed_changes),
+        "states_breakdown": final_stats,
+        "anomalies": anomalies,
+        "current_state_duration_min": processed_changes[-1]["duration_min"]
+        if processed_changes
+        else 0,
+    }
+    if grouped is not None:
+        response_data["grouped_by"] = group_by
+        response_data["grouped"] = grouped
+    else:
+        response_data["last_5_changes"] = processed_changes[-5:]
+
+    return _success_response(response_data)
 
 
 def _do_get_recent_state_changes(
@@ -224,22 +269,32 @@ def register_history_tools(mcp, ha_url: str, ha_token: str) -> None:  # type: ig
     """Register history analysis tools on the MCP server."""
 
     @mcp.tool()
-    async def get_entity_state_history_summary(entity_id: str, hours_back: int = 24) -> str:
+    async def get_entity_state_history_summary(
+        entity_id: str,
+        hours_back: int = 24,
+        group_by: str | None = None,
+    ) -> str:
         """[READ] Summarize entity state history instead of returning raw rows.
 
         Args:
             entity_id: Entity identifier (e.g., ``switch.test``).
             hours_back: Number of hours to analyze (capped to 168).
+            group_by: Optional aggregation level — ``"hour"`` or ``"day"``.
+                When set, returns grouped statistics (count, min, max, avg)
+                instead of raw change entries (default: None).
 
         Returns:
             JSON string with summary fields:
             - state_changes: number of changes
             - states_breakdown: {state: {count, total_duration, avg_duration}}
             - anomalies: detected anomalies (e.g., rapid cycling)
-            - last_5_changes: tail of the processed changes
+            - grouped: when group_by is set, time-bucketed statistics
+            - last_5_changes: tail of the processed changes (when group_by is None)
         """
         try:
-            return _do_get_entity_state_history_summary(entity_id, hours_back, ha_url, ha_token)
+            return _do_get_entity_state_history_summary(
+                entity_id, hours_back, ha_url, ha_token, group_by
+            )
         except Exception as e:
             return _error_response(str(e))
 

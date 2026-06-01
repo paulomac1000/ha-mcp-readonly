@@ -6,6 +6,7 @@ Safe access to file system with allowlist validation.
 import json
 import tempfile
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -169,7 +170,7 @@ class TestFilesystemTools:
         register_filesystem_tools(mock_mcp)
         result = json.loads(mock_mcp.get_tool("list_directory")(path=str(temp_dir / "blocked")))
         assert "error" in result
-        assert "Access denied" in result["error"]
+        assert "Access denied" in str(result["error"])
 
     def test_list_directory_not_a_directory(
         self, mock_mcp, temp_dir, allow_temp_dir_in_security_context
@@ -180,12 +181,12 @@ class TestFilesystemTools:
             mock_mcp.get_tool("list_directory")(path=str(temp_dir / "allowed" / "file1.txt"))
         )
         assert "error" in result
-        assert "Not a directory" in result["error"]
+        assert "Not a directory" in str(result["error"])
 
     def test_list_directory_truncation(
         self, mock_mcp, temp_dir, allow_temp_dir_in_security_context
     ):
-        """max_entries=1 przy >1 fileu → truncated: True."""
+        """max_entries=1 with >1 files → truncated: True."""
         register_filesystem_tools(mock_mcp)
         result = json.loads(
             mock_mcp.get_tool("list_directory")(path=str(temp_dir / "allowed"), max_entries=1)
@@ -221,8 +222,8 @@ class TestFilesystemTools:
         result = json.loads(result_str)
 
         assert "error" in result
-        assert "binary" in result["error"].lower()
-        assert "db.sqlite" in result["error"]
+        assert "binary" in str(result["error"]).lower()
+        assert "db.sqlite" in str(result["error"])
 
     def test_read_file_not_a_file(self, mock_mcp, temp_dir, allow_temp_dir_in_security_context):
         """Directory passed as path → Not a file."""
@@ -231,7 +232,7 @@ class TestFilesystemTools:
             mock_mcp.get_tool("read_file")(file_path=str(temp_dir / "allowed" / "subdir"))
         )
         assert "error" in result
-        assert "Not a file" in result["error"]
+        assert "Not a file" in str(result["error"])
 
     def test_read_file_blocked_path(self, mock_mcp, temp_dir, allow_temp_dir_in_security_context):
         """Path outside allowlist → Access denied."""
@@ -240,12 +241,12 @@ class TestFilesystemTools:
             mock_mcp.get_tool("read_file")(file_path=str(temp_dir / "blocked" / "secret.txt"))
         )
         assert "error" in result
-        assert "Access denied" in result["error"]
+        assert "Access denied" in str(result["error"])
 
     def test_read_file_max_lines_truncation(
         self, mock_mcp, temp_dir, allow_temp_dir_in_security_context
     ):
-        """max_lines=1 dla fileu z 3 liniami → truncated: True."""
+        """max_lines=1 for a file with 3 lines → truncated: True."""
         register_filesystem_tools(mock_mcp)
         result = json.loads(
             mock_mcp.get_tool("read_file")(
@@ -284,7 +285,7 @@ class TestFilesystemTools:
             )
         )
         assert "error" in result
-        assert "Invalid search pattern" in result["error"]
+        assert "Invalid search pattern" in str(result["error"])
 
     def test_search_files_no_results(self, mock_mcp, temp_dir, allow_temp_dir_in_security_context):
         """Pattern not found → results_count: 0."""
@@ -296,6 +297,45 @@ class TestFilesystemTools:
         )
         assert result["success"] is True
         assert result["results_count"] == 0
+
+    def test_list_directory_exception_handler(
+        self, mock_mcp, temp_dir, allow_temp_dir_in_security_context
+    ):
+        """RuntimeError in _do_list_directory is caught by wrapper per [TEST-REG-3]."""
+        register_filesystem_tools(mock_mcp)
+        with patch(
+            "tools.filesystem_explorer._do_list_directory",
+            side_effect=RuntimeError("boom"),
+        ):
+            result = json.loads(mock_mcp.get_tool("list_directory")())
+        assert "success" in result
+        assert "boom" in str(result)
+
+    def test_read_file_exception_handler(
+        self, mock_mcp, temp_dir, allow_temp_dir_in_security_context
+    ):
+        """RuntimeError in _do_read_file is caught by wrapper per [TEST-REG-3]."""
+        register_filesystem_tools(mock_mcp)
+        with patch(
+            "tools.filesystem_explorer._do_read_file",
+            side_effect=RuntimeError("boom"),
+        ):
+            result = json.loads(mock_mcp.get_tool("read_file")(file_path="test.txt"))
+        assert "success" in result
+        assert "boom" in str(result)
+
+    def test_search_files_exception_handler(
+        self, mock_mcp, temp_dir, allow_temp_dir_in_security_context
+    ):
+        """RuntimeError in _do_search_files is caught by wrapper per [TEST-REG-3]."""
+        register_filesystem_tools(mock_mcp)
+        with patch(
+            "tools.filesystem_explorer._do_search_files",
+            side_effect=RuntimeError("boom"),
+        ):
+            result = json.loads(mock_mcp.get_tool("search_files")(pattern="test"))
+        assert "success" in result
+        assert "boom" in str(result)
 
 
 # =============================================================================
