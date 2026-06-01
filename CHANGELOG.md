@@ -10,7 +10,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.4.0] - 2026-05-17 (updated 2026-06-01)
+## [1.5.0] - 2026-06-01
 
 ### Added — 13 New Diagnostic Tools (21 gaps from todo.md)
 - `diagnose_stuck_helpers` (Gap 5) — detects input_boolean/timer/counter stuck in one state
@@ -103,7 +103,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Unit tests: 804→914 (+110)
 - Polish characters removed from comments, English-only throughout
 
-### Added (from v1.4.0 original release)
+## [1.4.0] - 2026-05-17
+
+### Added
 - Tool manifest system (`tools/manifests.py`) — `TOOL_MANIFESTS`, `register_manifest()`,
   `get_manifest()`, `get_all_manifests()`, `_make_manifest()`, `_make_write_manifest()`,
   `_make_destructive_manifest()` factory functions, `auto_register_all_read_tools()`
