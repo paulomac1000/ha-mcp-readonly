@@ -1,6 +1,6 @@
 ---
 description: Release history for HA-MCP-Readonly following Keep a Changelog
-last_verified: 2026-05-20
+last_verified: 2026-06-01
 ---
 
 # Changelog
@@ -10,9 +10,100 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.4.0] - 2026-05-17
+## [1.4.0] - 2026-05-17 (updated 2026-06-01)
 
-### Added
+### Added — 13 New Diagnostic Tools (21 gaps from todo.md)
+- `diagnose_stuck_helpers` (Gap 5) — detects input_boolean/timer/counter stuck in one state
+- `diagnose_stale_entities` (Gap 7) — detects silently-frozen entities via last_updated
+- `diagnose_orphan_references` (Gap 9) — cross-refs entity_ids vs /api/states for ghosts
+- `search_inside_automations` (Gap 10) — full-text search on loaded RAM automations (zero I/O)
+- `list_automation_categories` (Gap 15) — read-only category registry access
+- `get_entity_registry_batch` (Gap 17) — filtered entity registry reads by ID and field
+- `diagnose_uncategorized_automations` (Gap 18) — finds automations with empty categories
+- `validate_automation_names` (Gap 19) — 7-rule naming convention validator
+- `diagnose_category_alias_mismatch` (Gap 21) — cross-checks alias prefix vs assigned category
+- `get_device_triggers` (Gap 8) — reads MQTT/Zigbee device automation triggers
+- `diagnose_entity_threshold_proximity` (Gap 13) — sensors near automation thresholds
+- `get_template_entities_batch` (Gap 2) — batch reads for template entity code
+- `list_automation_categories` module (`tools/categories.py`) — new module
+- `diagnose_stuck_helpers` module (`tools/helpers_health.py`) — new module
+
+### Added — Extensions to Existing Tools
+- `get_template_entity_code`: YAML template scanning via HomeAssistantLoader (Gap 1),
+  includes file_path, line_start, line_end metadata (Gap 3)
+- `diagnose_template`: detects `now()` without periodic trigger — stale_timer_risk warning (Gap 4)
+- `diagnose_automation`: detects delay→state-change fragile pattern (Gap 6)
+- `diagnose_automation_aliases`: functional overlap detection — trigger overlap, action overlap,
+  stale duplicates, overlap score with conditions (Gap 11, 14)
+- `get_entity_state`, `get_all_states`, `get_states_filtered`: compact mode (Gap 12)
+- `get_entity_state_history_summary`: group_by=hour/day aggregation (Gap 12)
+- `search_automations`: category filter parameter (Gap 20)
+- `get_entity_registry`: added categories and labels fields (Gap 16)
+- `register_state_tools`: explicit HA_CONFIG_PATH parameter
+
+### Added — MCP Standard Compliance
+- Extended error format: `create_error_response(code, message, retryable, suggestion)`
+- `_error_response()` now accepts both str and dict (backward compatible)
+- Structured errors with `code`/`message`/`retryable` used in new tools
+- `GET /api/tools` now returns `tool_count` alongside `total` (Rule 2c)
+- `GET /api/health` and port 9091 `/health` return `tool_count` consistently
+- Explicit manifests for 12 dev_tools (not auto-READ)
+- `tool_count` field consistency across all 3 endpoints (9091, REST health, REST tools)
+
+### Fixed — L1/L2 Violations from Standard Audit
+- `filesystem_explorer.py`: rewrote all `_do_*` to return dicts (not JSON strings),
+  added `try/except Exception` to 3 tool wrappers, added structured error responses
+- Fixed 6 `_do_*` functions returning `{error: ...}` without `success: false` field
+  (storage.py, composite.py)
+- Replaced `json.dumps()` with `_error_response()` in 7 cache-miss error paths
+  (states.py, blueprints.py) — fixes `sanitize_response_data` bypass
+
+### Fixed — CI Gate
+- `ruff format`: 16 files reformatted, now clean
+- `mypy --strict`: 4 errors fixed, now 0
+- `bandit`: added `# nosec B506` to 2 yaml.load calls
+- `ci.yml`: tool count updated 122→134
+- `blocklist`: added prefix matching for `auth_provider.*`
+
+### Fixed — Test Infrastructure
+- Unit tests now hermetic — removed `.env` loading from `tests/fixtures.py`
+- `test_server.py`: mocked `make_ha_request` to prevent real I/O
+- `tests/integration/conftest.py`: added missing `register_blueprint_tools` import
+
+### Fixed — Two-Layer Pattern
+- `tools/entity_dependencies.py`: extracted `_do_get_entity_dependencies`,
+  `_do_get_entity_consumers`, added `try/except Exception` wrappers
+- `tools/integrations.py`: extracted `_do_get_integration_entities`,
+  `_do_get_integration_summary`, added exception handlers
+
+### Fixed — Bugs
+- Context generator early-binding: modules changed from `from .constants import HA_URL`
+  to `from . import constants` with `constants.HA_URL` access — `generate_context_file()`
+  parameters now propagate correctly
+- REST bridge: `call_tool_endpoint` now reflects tool's `success` field in HTTP response
+- Race condition: health server starts after tool_count is populated
+- E2E tests: added `_server_running()` socket check before tests
+
+### Fixed — Documentation
+- README: Python badge 3.14+→3.11+, tool count 122→134, test count 703→884,
+  6 missing modules added to source tree
+- SECURITY.md: supported version 1.2.x→1.4.x, safety→pip-audit, added onboarding
+- AGENTS.md: updated source tree and test counts
+- `.env.example`: HA_URL matches constants.py, dead HEALTH_REPORT vars marked planned
+- `list_scenes`/`list_scripts`: added Args:/Returns: docstrings
+- `.gitignore`: added `.opencode/` and `semgrep.sarif`
+
+### Changed
+- `tools/health_reporter.py`: added `TOOLS_VERSION`, fixed 7 docstrings
+- `tools/validators.py`: 100% test coverage (was 0%)
+- `tools/categories.py`: coverage 64%→98%
+- `tools/helpers_health.py`: coverage unmetered→98%
+- `tools/filesystem_explorer.py`: coverage 76%→80%
+- Overall tools/ coverage: 85%→86%
+- Unit tests: 804→914 (+110)
+- Polish characters removed from comments, English-only throughout
+
+### Added (from v1.4.0 original release)
 - Tool manifest system (`tools/manifests.py`) — `TOOL_MANIFESTS`, `register_manifest()`,
   `get_manifest()`, `get_all_manifests()`, `_make_manifest()`, `_make_write_manifest()`,
   `_make_destructive_manifest()` factory functions, `auto_register_all_read_tools()`
