@@ -277,28 +277,38 @@ def _do_search_automations(
     }
 
 
-def _do_list_automations(config_path: str) -> dict[str, Any]:
+def _do_list_automations(
+    config_path: str, detail_level: str = "full"
+) -> dict[str, Any]:
     data = _load_automations(config_path)
+    if detail_level not in ("summary", "full"):
+        return {"success": False, "error": f"Invalid detail_level '{detail_level}'. Must be 'summary' or 'full'."}
     summary = [
         {
             "id": item.get("id"),
             "alias": item.get("alias", "No Name"),
-            "description": item.get("description", ""),
             "mode": item.get("mode", "single"),
             "uses_blueprint": "use_blueprint" in item,
             "blueprint_path": item.get("use_blueprint", {}).get("path")
             if "use_blueprint" in item
             else None,
-            "trigger_count": len(item.get("trigger", []))
-            if isinstance(item.get("trigger"), list)
-            else 1
-            if item.get("trigger")
-            else 0,
-            "action_count": len(item.get("action", []))
-            if isinstance(item.get("action"), list)
-            else 1
-            if item.get("action")
-            else 0,
+            **(
+                {}
+                if detail_level == "summary"
+                else {
+                    "description": item.get("description", ""),
+                    "trigger_count": len(item.get("trigger", []))
+                    if isinstance(item.get("trigger"), list)
+                    else 1
+                    if item.get("trigger")
+                    else 0,
+                    "action_count": len(item.get("action", []))
+                    if isinstance(item.get("action"), list)
+                    else 1
+                    if item.get("action")
+                    else 0,
+                }
+            ),
         }
         for item in data
     ]
@@ -2346,13 +2356,20 @@ def register_automation_tools(mcp, config_path, ha_url=None, ha_token=None) -> N
             return _error_response(str(exc))
 
     @mcp.tool()
-    def list_automations() -> str:
+    def list_automations(detail_level: str = "full") -> str:
         """[READ] Fetches list of names and ids of all automations.
 
         Warning: returns all 111 automations - use search_automations() if looking for a specific one.
+
+        Args:
+            detail_level: "summary" (alias+mode only) or "full" (all metadata including
+                description, trigger_count, action_count). Default: "full".
+
+        Returns:
+            JSON with success, total_count, and automations list.
         """
         try:
-            result = _do_list_automations(config_path)
+            result = _do_list_automations(config_path, detail_level=detail_level)
             return (
                 _success_response(result)
                 if result.get("success")

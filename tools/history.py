@@ -59,6 +59,7 @@ def _do_get_entity_state_history_summary(
     ha_url: str,
     ha_token: str,
     group_by: str | None = None,
+    detail_level: str = "full",
 ) -> str:
     """Summarize entity state history instead of returning raw rows.
 
@@ -69,13 +70,19 @@ def _do_get_entity_state_history_summary(
         ha_token: Authorization token.
         group_by: Optional aggregation — ``"hour"`` or ``"day"`` to return
             grouped statistics instead of raw change entries.
+        detail_level: "summary" (minimal_response=True, fewer attributes) or
+            "full" (default, full attribute data).
     """
+    if detail_level not in ("summary", "full"):
+        return _error_response(f"Invalid detail_level '{detail_level}'. Must be 'summary' or 'full'.")
+
     hours_back = min(max(int(hours_back), 1), MAX_HISTORY_HOURS)
 
     end_time = datetime.now(UTC)
     start_time = end_time - timedelta(hours=hours_back)
 
-    url = f"/api/history/period/{start_time.isoformat()}?filter_entity_id={entity_id}&minimal_response=false"
+    minimal = "true" if detail_level == "summary" else "false"
+    url = f"/api/history/period/{start_time.isoformat()}?filter_entity_id={entity_id}&minimal_response={minimal}"
     result = make_ha_request(ha_url, ha_token, url)
 
     if not result["success"]:
@@ -273,6 +280,7 @@ def register_history_tools(mcp, ha_url: str, ha_token: str) -> None:  # type: ig
         entity_id: str,
         hours_back: int = 24,
         group_by: str | None = None,
+        detail_level: str = "full",
     ) -> str:
         """[READ] Summarize entity state history instead of returning raw rows.
 
@@ -282,6 +290,8 @@ def register_history_tools(mcp, ha_url: str, ha_token: str) -> None:  # type: ig
             group_by: Optional aggregation level — ``"hour"`` or ``"day"``.
                 When set, returns grouped statistics (count, min, max, avg)
                 instead of raw change entries (default: None).
+            detail_level: "summary" (minimal_response, fewer attributes) or
+                "full" (default, complete attribute data).
 
         Returns:
             JSON string with summary fields:
@@ -293,7 +303,7 @@ def register_history_tools(mcp, ha_url: str, ha_token: str) -> None:  # type: ig
         """
         try:
             return _do_get_entity_state_history_summary(
-                entity_id, hours_back, ha_url, ha_token, group_by
+                entity_id, hours_back, ha_url, ha_token, group_by, detail_level
             )
         except Exception as e:
             return _error_response(str(e))

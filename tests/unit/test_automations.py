@@ -100,6 +100,45 @@ class TestListAutomations:
         assert data["success"] is True
         assert data["total_count"] == 0
 
+    def test_list_automations_full_detail_level(self, mock_mcp, config_path):
+        """detail_level='full' (default) returns description, trigger_count, action_count."""
+        register_automation_tools(mock_mcp, config_path)
+
+        tool = mock_mcp._tools["list_automations"]
+        data = json.loads(tool(detail_level="full"))
+
+        assert data["success"] is True
+        for a in data["automations"]:
+            assert "description" in a
+            assert "trigger_count" in a
+            assert "action_count" in a
+
+    def test_list_automations_summary_detail_level(self, mock_mcp, config_path):
+        """detail_level='summary' strips description, trigger_count, action_count."""
+        register_automation_tools(mock_mcp, config_path)
+
+        tool = mock_mcp._tools["list_automations"]
+        data = json.loads(tool(detail_level="summary"))
+
+        assert data["success"] is True
+        for a in data["automations"]:
+            assert "id" in a
+            assert "alias" in a
+            assert "mode" in a
+            assert "description" not in a
+            assert "trigger_count" not in a
+            assert "action_count" not in a
+
+    def test_list_automations_invalid_detail_level(self, mock_mcp, config_path):
+        """Invalid detail_level returns error."""
+        register_automation_tools(mock_mcp, config_path)
+
+        tool = mock_mcp._tools["list_automations"]
+        data = json.loads(tool(detail_level="minimal"))
+
+        assert data["success"] is False
+        assert "Invalid detail_level" in data.get("error", "")
+
 
 class TestGetAutomationCode:
     def test_get_code_by_alias(self, mock_mcp, config_path):

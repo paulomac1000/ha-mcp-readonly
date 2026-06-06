@@ -1406,3 +1406,133 @@ class TestGetEntityDetailsBatch:
             data = json.loads(await mock_mcp._tools["get_entity_details"]("sensor.temp"))
         assert data["success"] is False
         assert "entity details fail" in data["error"]
+
+
+class TestGetEntityDetailsCompact:
+
+    @pytest.mark.asyncio
+    async def test_compact_mode_single(self, mock_mcp, config_path, mock_registry_data):
+        with (
+            patch("tools.storage.load_registry") as mock_load,
+            patch("tools.storage.make_ha_request") as mock_req,
+        ):
+            mock_load.side_effect = lambda name, path, use_cache=True: mock_registry_data.get(name, {})
+            mock_req.return_value = {
+                "success": True,
+                "data": {"state": "20", "attributes": {}},
+            }
+            register_storage_tools(mock_mcp, config_path, "http://ha", "token")
+            data = json.loads(
+                await mock_mcp._tools["get_entity_details"]("sensor.temp", compact=True)
+            )
+        assert data["success"] is True
+        assert data["entity_id"] == "sensor.temp"
+        assert data["name"] == "Temp"
+        assert data["platform"] == "mqtt"
+        assert data["device_id"] == "dev1"
+        assert "device_info" not in data
+        assert "area_info" not in data
+        assert "current_state" not in data
+        assert "entity_info" not in data
+        assert "related_entities" not in data
+
+    @pytest.mark.asyncio
+    async def test_compact_mode_batch(self, mock_mcp, config_path, mock_registry_data):
+        with (
+            patch("tools.storage.load_registry") as mock_load,
+            patch("tools.storage.make_ha_request") as mock_req,
+        ):
+            mock_load.side_effect = lambda name, path, use_cache=True: mock_registry_data.get(name, {})
+            mock_req.return_value = {
+                "success": True,
+                "data": {"state": "20", "attributes": {}},
+            }
+            register_storage_tools(mock_mcp, config_path, "http://ha", "token")
+            data = json.loads(
+                await mock_mcp._tools["get_entity_details"]("sensor.temp,light.room", compact=True)
+            )
+        assert data["success"] is True
+        assert "results" in data
+        temp = data["results"]["sensor.temp"]
+        assert temp["entity_id"] == "sensor.temp"
+        assert temp["name"] == "Temp"
+        assert temp["platform"] == "mqtt"
+        assert "device_info" not in temp
+        assert "area_info" not in temp
+        room = data["results"]["light.room"]
+        assert room["entity_id"] == "light.room"
+        assert room["name"] == "Room Light"
+        assert "device_info" not in room
+
+    @pytest.mark.asyncio
+    async def test_compact_null_values_no_crash(self, mock_mcp, config_path):
+        registry_data_minimal = {
+            "core.entity_registry": {
+                "data": {
+                    "entities": [
+                        {
+                            "entity_id": "sensor.bare",
+                            "name": None,
+                            "platform": None,
+                            "device_id": None,
+                        }
+                    ]
+                }
+            },
+            "core.device_registry": {"data": {"devices": []}},
+            "core.area_registry": {"data": {"areas": []}},
+            "core.config_entries": {"data": {"entries": []}},
+        }
+        with (
+            patch("tools.storage.load_registry") as mock_load,
+            patch("tools.storage.make_ha_request") as mock_req,
+        ):
+            mock_load.side_effect = lambda name, path, use_cache=True: registry_data_minimal.get(name, {})
+            mock_req.return_value = {
+                "success": True,
+                "data": {"state": "unknown", "attributes": {}},
+            }
+            register_storage_tools(mock_mcp, config_path, "http://ha", "token")
+            data = json.loads(
+                await mock_mcp._tools["get_entity_details"]("sensor.bare", compact=True)
+            )
+        assert data["success"] is True
+        assert data["entity_id"] == "sensor.bare"
+        assert "name" in data
+        assert "platform" in data
+
+    @pytest.mark.asyncio
+    async def test_compact_false_backward_compat(self, mock_mcp, config_path, mock_registry_data):
+        with (
+            patch("tools.storage.load_registry") as mock_load,
+            patch("tools.storage.make_ha_request") as mock_req,
+        ):
+            mock_load.side_effect = lambda name, path, use_cache=True: mock_registry_data.get(name, {})
+            mock_req.return_value = {
+                "success": True,
+                "data": {"state": "20", "attributes": {}},
+            }
+            register_storage_tools(mock_mcp, config_path, "http://ha", "token")
+            data = json.loads(
+                await mock_mcp._tools["get_entity_details"]("sensor.temp")
+            )
+        assert data["success"] is True
+        assert data["entity_id"] == "sensor.temp"
+        assert "entity_info" in data
+        assert "device_info" in data
+        assert "area_info" in data
+        assert "current_state" in data
+        assert data["entity_info"]["name"] == "Temp"
+
+    @pytest.mark.asyncio
+    async def test_exception_handler(self, mock_mcp, config_path):
+        register_storage_tools(mock_mcp, config_path)
+        with patch(
+            "tools.storage._do_get_entity_details",
+            side_effect=RuntimeError("compact fail"),
+        ):
+            data = json.loads(
+                await mock_mcp._tools["get_entity_details"]("sensor.temp", compact=True)
+            )
+        assert data["success"] is False
+        assert "compact fail" in data["error"]

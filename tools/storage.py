@@ -1732,11 +1732,29 @@ def _do_search_entity_by_name(
     )
 
 
+def _compact_entity_result(result: dict[str, Any]) -> dict[str, Any]:
+    """Strip registry metadata to essential fields for compact mode.
+
+    Args:
+        result: Full result dict from _do_get_entity_context().
+
+    Returns:
+        Flat dict with only entity_id, name, platform, device_id, area_id,
+        disabled_by, and hidden_by.
+    """
+    compact: dict[str, Any] = {"entity_id": result.get("entity_id")}
+    entity_info = result.get("entity_info", {})
+    for field in ("name", "platform", "device_id", "area_id", "disabled_by", "hidden_by"):
+        compact[field] = entity_info.get(field)
+    return compact
+
+
 def _do_get_entity_details(
     entity_ids: str,
     config_path: str,
     ha_url: str | None,
     ha_token: str | None,
+    compact: bool = False,
 ) -> dict[str, Any]:
     if not entity_ids or not entity_ids.strip():
         return {"success": False, "error": "entity_id is required and must be a non-empty string"}
@@ -1745,12 +1763,15 @@ def _do_get_entity_details(
 
     # Single entity (no comma) - backward compat
     if "," not in entity_ids:
-        return _do_get_entity_context(
+        result = _do_get_entity_context(
             entity_id=ids[0],
             config_path=config_path,
             ha_url=ha_url,
             ha_token=ha_token,
         )
+        if compact and not result.get("error"):
+            return _compact_entity_result(result)
+        return result
 
     # Batch mode
     if len(ids) > 100:
@@ -1771,6 +1792,8 @@ def _do_get_entity_details(
         if ctx.get("error"):
             not_found.append(eid)
         else:
+            if compact:
+                ctx = _compact_entity_result(ctx)
             results[eid] = ctx
 
     if not results:
@@ -2305,7 +2328,7 @@ def register_storage_tools(  # type: ignore[no-untyped-def]
             return _error_response(str(e))
 
     @mcp.tool()
-    async def get_entity_details(entity_id: str) -> str:
+    async def get_entity_details(entity_id: str, compact: bool = False) -> str:
         """[READ] Fetches detailed information about a specific entity from the registry.
         Contains related device and area.
 
@@ -2313,6 +2336,8 @@ def register_storage_tools(  # type: ignore[no-untyped-def]
 
         Args:
             entity_id: Entity id (e.g. "sensor.temperature_living_room")
+            compact: If True, return only essential fields: entity_id, name,
+                platform, device_id, area_id, disabled_by, hidden_by. Default: False.
         """
         try:
             result = _do_get_entity_details(
@@ -2320,6 +2345,7 @@ def register_storage_tools(  # type: ignore[no-untyped-def]
                 config_path=config_path,
                 ha_url=ha_url,
                 ha_token=ha_token,
+                compact=compact,
             )
             if "error" in result:
                 return _error_response(result["error"])
