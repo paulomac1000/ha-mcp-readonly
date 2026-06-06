@@ -93,7 +93,8 @@ HEALTH_STATE = {"status": "starting", "last_heartbeat": time.time()}
 class HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == "/health":
-            payload = {**HEALTH_STATE, "invocations": get_invocation_counts()}
+            payload = {**HEALTH_STATE, "invocations": get_invocation_counts(),
+                        "tool_count": get_tool_count(), "tools_version": __version__}
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
@@ -342,24 +343,161 @@ def create_rest_app():
             }
         )
 
+    # -- Tool description helpers ------------------------------------------------
+
+    def _extract_fn(tool):
+        """Extract the callable function from a FastMCP tool wrapper."""
+        if hasattr(tool, "fn") and callable(tool.fn):
+            return tool.fn
+        if callable(tool):
+            return tool
+        return None
+
+    def _extract_desc(tool):
+        """Return the first-line description of a tool (never None)."""
+        if hasattr(tool, "description") and tool.description:
+            return tool.description
+        fn = _extract_fn(tool)
+        if fn and fn.__doc__:
+            return fn.__doc__.strip().split("\n")[0]
+        return ""
+
+    def _signature_to_json_schema(fn):
+        """Convert a Python function signature to a JSON Schema parameters object."""
+        sig = inspect.signature(fn)
+        properties: dict[str, Any] = {}
+        required: list[str] = []
+
+        _JSON_TYPE = {
+            str: "string", int: "integer", float: "number",
+            bool: "boolean", dict: "object", list: "array",
+            type(None): "null",
+        }
+
+        for pname, param in sig.parameters.items():
+            if pname == "self":
+                continue
+
+            ann = param.annotation
+            if ann is inspect.Parameter.empty:
+                continue
+
+            # Unwrap Optional / Union[..., None]
+            origin = getattr(ann, "__origin__", None)
+            args = getattr(ann, "__args__", ())
+            if origin is not None and str(origin) in (
+                "typing.Union", "typing.Optional",
+            ):
+                non_none = [a for a in args if a is not type(None)]
+                ann = non_none[0] if len(non_none) == 1 else ann
+
+            json_type = _JSON_TYPE.get(ann)
+            if json_type is None:
+                # Fall back to string for unknown types (Any, complex generics)
+                json_type = "string"
+
+            prop: dict[str, Any] = {"type": json_type}
+            if param.default is not inspect.Parameter.empty:
+                prop["default"] = param.default if param.default is not None else None
+            else:
+                required.append(pname)
+
+            properties[pname] = prop
+
+        schema: dict[str, Any] = {"type": "object", "properties": properties}
+        if required:
+            schema["required"] = required
+        return schema
+
+    # -- Category prefix map (longest-prefix-first) ------------------------------
+
+    _CATEGORY_MAP: list[tuple[str, str]] = [
+        ("test_template", "Dev Tools"),
+        ("diagnose_entity", "Dev Tools"),
+        ("investigate_", "Composite"),
+        ("get_area_diagnostic", "Composite"),
+        ("compare_templates", "System"),
+        ("describe_", "System"),
+        ("diagnose_", "Diagnostics"),
+        ("trigger_health", "Diagnostics"),
+        ("get_entity", "States"),
+        ("search_entities", "States"),
+        ("get_states", "States"),
+        ("list_automations", "Automations"),
+        ("get_automation_", "Automations"),
+        ("list_scripts", "Scripts & Scenes"),
+        ("get_script_", "Scripts & Scenes"),
+        ("list_blueprints", "Blueprints"),
+        ("get_blueprint_", "Blueprints"),
+        ("get_device_", "Devices & Areas"),
+        ("search_devices", "Devices & Areas"),
+        ("search_in_config", "Config"),
+        ("read_config", "Config"),
+        ("get_log_", "Logs"),
+        ("search_logs", "Logs"),
+        ("analyze_log", "Logs"),
+        ("get_history_", "History"),
+        ("get_recent_", "History"),
+        ("search_lovelace", "Lovelace"),
+        ("get_lovelace", "Lovelace"),
+        ("bulk_", "Batch & Tools"),
+        ("compare_", "Batch & Tools"),
+        ("check_entities", "Batch & Tools"),
+        ("graph_", "Graph"),
+    ]
+    _CATEGORY_MAP.sort(key=lambda x: len(x[0]), reverse=True)
+
+    # -- REST endpoint: GET /api/tools ------------------------------------------
+
     async def list_tools_endpoint(request):
+        detail = request.query_params.get("detail", "minimal")
         tools = get_all_tools()
-        tool_list = []
-        for name, tool in tools.items():
-            desc = None
-            if hasattr(tool, "description") and tool.description:
-                desc = tool.description
-            elif hasattr(tool, "fn") and hasattr(tool.fn, "__doc__") and tool.fn.__doc__:
-                desc = tool.fn.__doc__.strip().split("\n")[0]
-            tool_list.append({"name": name, "description": desc})
-        return JSONResponse(
-            {
+
+        if detail == "full":
+            tool_list = []
+            for name, tool in tools.items():
+                fn = _extract_fn(tool)
+                entry: dict[str, Any] = {
+                    "name": name,
+                    "description": _extract_desc(tool),
+                }
+                if fn:
+                    entry["parameters"] = _signature_to_json_schema(fn)
+                tool_list.append(entry)
+            tool_list.sort(key=lambda x: x["name"])
+            return JSONResponse({
                 "success": True,
                 "total": len(tool_list),
                 "tool_count": len(tool_list),
-                "tools": sorted(tool_list, key=lambda x: x["name"]),
-            }
-        )
+                "tools": tool_list,
+            })
+
+        # detail == "minimal" (default)
+        categories: dict[str, list[dict[str, str]]] = {}
+        uncategorized: list[dict[str, str]] = []
+        for name, tool in tools.items():
+            desc = _extract_desc(tool)
+            entry = {"name": name, "description": desc}
+            cat = None
+            for prefix, category in _CATEGORY_MAP:
+                if name.startswith(prefix):
+                    cat = category
+                    break
+            if cat:
+                categories.setdefault(cat, []).append(entry)
+            else:
+                uncategorized.append(entry)
+
+        if uncategorized:
+            categories["Other"] = uncategorized
+
+        total = sum(len(v) for v in categories.values())
+        return JSONResponse({
+            "success": True,
+            "total": total,
+            "tool_count": total,
+            "categories": categories,
+        })
 
     async def call_tool_endpoint(request):
         tool_name = request.path_params.get("tool_name", "")
@@ -670,12 +808,36 @@ def create_rest_app():
             )
         return JSONResponse({"success": True, "manifest": manifest})
 
+    async def get_tool_schema(request):
+        """Return full JSON schema for a single tool including parameters and manifest."""
+        tool_name = request.path_params.get("tool_name", "")
+        tool = get_tool(tool_name)
+        if tool is None:
+            all_names = sorted(get_all_tools().keys())
+            return JSONResponse(
+                {"success": False, "error": f"Tool '{tool_name}' not found",
+                 "available_tools": all_names[:30], "total_tools": len(all_names)},
+                status_code=404,
+            )
+
+        fn = _extract_fn(tool)
+        from tools.manifests import get_manifest as _get_manifest
+
+        return JSONResponse({
+            "success": True,
+            "name": tool_name,
+            "description": _extract_desc(tool),
+            "parameters": _signature_to_json_schema(fn) if fn else {"type": "object", "properties": {}},
+            "manifest": _get_manifest(tool_name),
+        })
+
     routes = [
         Route("/health", endpoint=health, methods=["GET"]),
         Route("/api/health", endpoint=health, methods=["GET"]),
         Route("/api/tools", endpoint=list_tools_endpoint, methods=["GET"]),
         Route("/api/tools/{tool_name}", endpoint=call_tool_endpoint, methods=["POST"]),
         Route("/api/tools/{tool_name}/manifest", endpoint=get_tool_manifest, methods=["GET"]),
+        Route("/api/tools/{tool_name}/schema", endpoint=get_tool_schema, methods=["GET"]),
         Route("/api/openapi.json", endpoint=openapi_schema, methods=["GET"]),
         Route("/api/context/generate", endpoint=context_generate, methods=["POST"]),
         Route("/api/context/status", endpoint=context_status, methods=["GET"]),
