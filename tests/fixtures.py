@@ -544,3 +544,40 @@ MOCK_SAMPLE_STATES = [
         },
     },
 ]
+
+# Mock logbook entries for automation trace testing
+MOCK_LOGBOOK_ENTRIES = [
+    {
+        "when": "2026-06-01T08:00:00.000000+00:00",
+        "name": "Morning Routine",
+        "message": "triggered by state of binary_sensor.motion",
+        "entity_id": "automation.morning_routine",
+        "context_id": "ctx_001",
+        "domain": "automation"
+    },
+    {
+        "when": "2026-06-01T08:00:01.000000+00:00",
+        "name": "Living Room Light",
+        "message": "changed to on",
+        "entity_id": "light.living_room",
+        "context_id": "ctx_001",
+        "domain": "light"
+    },
+    {
+        "when": "2026-06-01T08:00:02.000000+00:00",
+        "name": "Sun",
+        "message": "changed to below_horizon",
+        "entity_id": "sun.sun",
+        "context_id": "ctx_002",
+        "domain": "sun"
+    }
+]
+
+# Mock automation alias to entity_id mappings
+MOCK_AUTOMATION_ENTITY_MAP = {
+    "Morning Routine": "automation.morning_routine",
+    "Motion Light": "automation.motion_light",
+    "Evening Lights": "automation.evening_lights",
+    "Enhanced Smart Control - AC Power Manager": "automation.enhanced_smart_control_air_conditioner_power_manager",
+    "Doorbell Alert": "automation.doorbell_alert",
+}
