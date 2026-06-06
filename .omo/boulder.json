@@ -18,9 +18,9 @@
       "work_id": "ha-semantic-graph-76d63ef2",
       "active_plan": "/home/pablo/ha-mcp-readonly/.omo/plans/ha-semantic-graph.md",
       "plan_name": "ha-semantic-graph",
-      "status": "active",
+      "status": "completed",
       "started_at": "2026-06-06T21:50:42.803Z",
-      "updated_at": "2026-06-06T21:59:04.694Z",
+      "updated_at": "2026-06-06T22:15:22.835Z",
       "session_ids": [
         "opencode:ses_1619fc89dffe3hKKyOL4vDO1T6",
         "opencode:ses_16110c82cffelvzA06cMJqKKXt",
@@ -50,10 +50,12 @@
           "category": "deep",
           "updated_at": "2026-06-06T21:55:55.602Z"
         }
-      }
+      },
+      "ended_at": "2026-06-06T22:15:22.835Z",
+      "elapsed_ms": 1480032
     }
   },
-  "status": "active",
+  "status": "completed",
   "session_ids": [
     "opencode:ses_1619fc89dffe3hKKyOL4vDO1T6",
     "opencode:ses_16110c82cffelvzA06cMJqKKXt",
@@ -86,6 +88,8 @@
   "active_plan": "/home/pablo/ha-mcp-readonly/.omo/plans/ha-semantic-graph.md",
   "plan_name": "ha-semantic-graph",
   "started_at": "2026-06-06T21:50:42.803Z",
-  "updated_at": "2026-06-06T21:59:04.694Z",
-  "agent": "atlas"
+  "updated_at": "2026-06-06T22:15:22.835Z",
+  "agent": "atlas",
+  "ended_at": "2026-06-06T22:15:22.835Z",
+  "elapsed_ms": 1480032
 }

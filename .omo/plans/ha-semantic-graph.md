@@ -67,13 +67,13 @@ Deliver the Phase 1 MVP of a read-only HA Semantic Graph: an in-memory dependenc
 - `tests/integration/conftest.py` — graph tool registration
 
 ### Definition of Done
-- [ ] `ha_graph/` package imports cleanly without errors
-- [ ] All 7 graph tools visible in MCP tool list (`describe_ha_capabilities`)
-- [ ] `pytest tests/unit/ -q` → all existing tests pass + new graph tests pass
-- [ ] `ruff check .` → zero errors
-- [ ] `get_entity_dependencies` output unchanged (backward compat)
-- [ ] Graph built from test fixtures produces correct node/edge counts
-- [ ] Coverage ≥ 85% on `ha_graph/`
+- [x] `ha_graph/` package imports cleanly without errors
+- [x] All 7 graph tools visible in MCP tool list (`describe_ha_capabilities`)
+- [x] `pytest tests/unit/ -q` → all existing tests pass + new graph tests pass
+- [x] `ruff check .` → zero errors
+- [x] `get_entity_dependencies` output unchanged (backward compat)
+- [x] Graph built from test fixtures produces correct node/edge counts
+- [x] Coverage ≥ 85% on `ha_graph/`
 
 ### Must Have
 - Read-only — graph is pure analysis, no writes to HA or filesystem
@@ -614,7 +614,7 @@ Max Concurrent: 4 (Wave 2), 3 (Wave 1)
   **Parallelization**: Wave 3
   **Commit**: NO (groups with Wave 3)
 
-- [ ] 12. `tests/unit/test_graph_queries.py` — query unit tests
+- [x] 12. `tests/unit/test_graph_queries.py` — query unit tests
 
   **What to do**: Test find_entity_references, entity_impact, get_neighbors (depth/direction), detect_ghost_references, detect_orphans (including ignorable domain filtering). 12-15 tests.
 
@@ -627,7 +627,7 @@ Max Concurrent: 4 (Wave 2), 3 (Wave 1)
   **Parallelization**: Wave 3
   **Commit**: NO (groups with Wave 3)
 
-- [ ] 13. `tests/unit/test_graph_tools.py` — MCP tool integration tests
+- [x] 13. `tests/unit/test_graph_tools.py` — MCP tool integration tests
 
   **What to do**: Register graph tools via mock MCP, test each of 7 tools. Test exception handlers. Test backward compat. 15-20 tests.
 
@@ -641,7 +641,7 @@ Max Concurrent: 4 (Wave 2), 3 (Wave 1)
   **Parallelization**: Wave 3
   **Commit**: NO (groups with Wave 3)
 
-- [ ] 14. `tests/unit/test_ha_graph_cache.py` — cache unit tests
+- [x] 14. `tests/unit/test_ha_graph_cache.py` — cache unit tests
 
   **What to do**: Test get_graph_index cache behavior, force rebuild, TTL expiry, concurrent access, build_graph_index non-cached variant. 5-8 tests.
 
@@ -653,7 +653,7 @@ Max Concurrent: 4 (Wave 2), 3 (Wave 1)
   **Recommended Agent Profile**: `quick`
   **Parallelization**: Wave 4 (with T15, T16)
 
-- [ ] 15. Integration conftest + server.py registration
+- [x] 15. Integration conftest + server.py registration
 
   **What to do**: Add `register_graph_tools()` to `server.py` and `tests/integration/conftest.py`. Verify `python3 server.py` starts without import errors.
 
@@ -667,7 +667,7 @@ Max Concurrent: 4 (Wave 2), 3 (Wave 1)
   **Parallelization**: Wave 4 (with T14, T16)
   **Commit**: NO (groups with Wave 4)
 
-- [ ] 16. Full test suite verification
+- [x] 16. Full test suite verification
 
   **What to do**: Run `pytest tests/unit/ -q --tb=short`, `ruff check .`, coverage check on `ha_graph/` ≥ 85%. Verify backward compat. Fix any failures.
 
