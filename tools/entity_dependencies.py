@@ -114,7 +114,7 @@ def _find_entity_lines_in_file(file_path: str, entity_id: str) -> list[dict]:  #
     except Exception:
         return []
 
-    results: list[dict] = []
+    results: list[dict[str, Any]] = []
     entity_re = re.compile(r"\b" + re.escape(entity_id) + r"\b")
 
     for i, line in enumerate(lines, 1):
@@ -221,18 +221,18 @@ def _find_entity_in_scripts(
         for script in scripts:
             entities_in_script = _extract_entities_from_data(script)
             if entity_id in entities_in_script:
-                entry: dict[str, Any] = {
+                script_entry: dict[str, Any] = {
                     "id": script.get("id", "unknown"),
                     "alias": script.get("alias", "Unnamed"),
                 }
                 if detail_level == "full":
-                    entry["file_path"] = "scripts.yaml"
+                    script_entry["file_path"] = "scripts.yaml"
                     if line_info_cache is None:
                         line_info_cache = _find_entity_lines_in_file(scripts_path, entity_id)
                     if line_info_cache:
-                        entry["line"] = line_info_cache[0].get("line")
-                        entry["context_lines"] = line_info_cache[0].get("context")
-                found.append(entry)
+                        script_entry["line"] = line_info_cache[0].get("line")
+                        script_entry["context_lines"] = line_info_cache[0].get("context")
+                found.append(script_entry)
 
     return found
 
@@ -442,7 +442,7 @@ def _do_get_entity_dependencies(
 
     used_detail = "full" if detail_level == "full" else "summary"
 
-    result = {
+    result: dict[str, Any] = {
         "entity_id": entity_id,
         "used_in": {
             "automations": _find_entity_in_automations(entity_id, config_path, used_detail),
@@ -454,23 +454,23 @@ def _do_get_entity_dependencies(
     }
 
     result["summary"] = {
-        "automations_count": len(result["used_in"]["automations"]),  # type: ignore[index]
-        "scripts_count": len(result["used_in"]["scripts"]),  # type: ignore[index]
-        "templates_count": len(result["used_in"]["templates"]),  # type: ignore[index]
-        "dashboards_count": len(result["used_in"]["dashboards"]),  # type: ignore[index]
+        "automations_count": len(result["used_in"]["automations"]),
+        "scripts_count": len(result["used_in"]["scripts"]),
+        "templates_count": len(result["used_in"]["templates"]),
+        "dashboards_count": len(result["used_in"]["dashboards"]),
         "total_usages": (
-            len(result["used_in"]["automations"])  # type: ignore[index]
-            + len(result["used_in"]["scripts"])  # type: ignore[index]
-            + len(result["used_in"]["templates"])  # type: ignore[index]
-            + len(result["used_in"]["dashboards"])  # type: ignore[index]
+            len(result["used_in"]["automations"])
+            + len(result["used_in"]["scripts"])
+            + len(result["used_in"]["templates"])
+            + len(result["used_in"]["dashboards"])
         ),
     }
 
     total_refs = (
-        result["summary"]["automations_count"]  # type: ignore[index]
-        + result["summary"]["scripts_count"]  # type: ignore[index]
-        + result["summary"]["templates_count"]  # type: ignore[index]
-        + result["summary"]["dashboards_count"]  # type: ignore[index]
+        result["summary"]["automations_count"]
+        + result["summary"]["scripts_count"]
+        + result["summary"]["templates_count"]
+        + result["summary"]["dashboards_count"]
     )
     result["total_references"] = total_refs
 

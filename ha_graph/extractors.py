@@ -275,7 +275,7 @@ def extract_entities_from_data(
 # =========================================================================
 
 
-def extract_trigger_info(triggers: list[dict]) -> list[tuple[str, str]]:
+def extract_trigger_info(triggers: list[dict[str, Any]]) -> list[tuple[str, Any]]:
     """Extract ``(entity_id, platform)`` pairs from automation triggers.
 
     Handles trigger types: state, numeric_state, template, event, zone,
@@ -288,7 +288,7 @@ def extract_trigger_info(triggers: list[dict]) -> list[tuple[str, str]]:
         List of ``(entity_id, trigger_platform)`` tuples ordered as they
         appear in the trigger list.
     """
-    results: list[tuple[str, str]] = []
+    results: list[tuple[str, Any]] = []
 
     if not isinstance(triggers, list):
         return results
@@ -352,7 +352,7 @@ def extract_trigger_info(triggers: list[dict]) -> list[tuple[str, str]]:
 # =========================================================================
 
 
-def extract_services(actions: list[dict]) -> set[str]:
+def extract_services(actions: list[dict[str, Any]]) -> set[str]:
     """Extract service names from automation or script action sequences.
 
     Recursively walks ``sequence``, ``choose`` branches, ``then``/``else``,
@@ -407,7 +407,7 @@ def extract_services(actions: list[dict]) -> set[str]:
 # =========================================================================
 
 
-def extract_controlled_entities(actions: list[dict]) -> set[str]:
+def extract_controlled_entities(actions: list[dict[str, Any]]) -> set[str]:
     """Extract entity IDs targeted by service calls in automation/script actions.
 
     Inspects ``target.entity_id``, ``data.entity_id``, scene activations,

@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "active_work_id": "ha-semantic-graph-76d63ef2",
+  "active_work_id": "ci-cd-compliance-v2-59ebacb4",
   "works": {
     "v1-6-0-endpoints-standards-58621f92": {
       "work_id": "v1-6-0-endpoints-standards-58621f92",
@@ -53,43 +53,63 @@
       },
       "ended_at": "2026-06-06T22:15:22.835Z",
       "elapsed_ms": 1480032
+    },
+    "ci-cd-compliance-v2-59ebacb4": {
+      "work_id": "ci-cd-compliance-v2-59ebacb4",
+      "active_plan": "/home/pablo/ha-mcp-readonly/.omo/plans/ci-cd-compliance-v2.md",
+      "plan_name": "ci-cd-compliance-v2",
+      "status": "active",
+      "started_at": "2026-06-06T23:00:27.358Z",
+      "updated_at": "2026-06-06T23:01:25.345Z",
+      "session_ids": [
+        "opencode:ses_1619fc89dffe3hKKyOL4vDO1T6",
+        "opencode:ses_160d4aac8ffeYeiTg50GaCHMwe",
+        "opencode:ses_160d49637ffeoB27NKPTWFgqrL"
+      ],
+      "session_origins": {
+        "opencode:ses_1619fc89dffe3hKKyOL4vDO1T6": "direct",
+        "opencode:ses_160d4aac8ffeYeiTg50GaCHMwe": "appended",
+        "opencode:ses_160d49637ffeoB27NKPTWFgqrL": "appended"
+      },
+      "agent": "atlas",
+      "task_sessions": {
+        "todo:1": {
+          "task_key": "todo:1",
+          "task_label": "1",
+          "task_title": "**CI-CDW-3**: Fix `actions/attest@v4` → `actions/attest-build-provenance@v2` in publish.yml",
+          "session_id": "opencode:ses_160d49637ffeoB27NKPTWFgqrL",
+          "agent": "Sisyphus-Junior",
+          "category": "deep",
+          "updated_at": "2026-06-06T23:01:25.345Z"
+        }
+      }
     }
   },
-  "status": "completed",
+  "status": "active",
   "session_ids": [
     "opencode:ses_1619fc89dffe3hKKyOL4vDO1T6",
-    "opencode:ses_16110c82cffelvzA06cMJqKKXt",
-    "opencode:ses_16110b502ffeV7RzvDpeqpj43Z",
-    "opencode:ses_1611084e0ffeg4xKt6k9BMqHxm",
-    "opencode:ses_161106c99ffeDPLgvdKYMMbb75",
-    "opencode:ses_1610dbd33ffeuHuS6sqDv5a1ii",
-    "opencode:ses_1610da314ffesqQDOih2yJoOUo"
+    "opencode:ses_160d4aac8ffeYeiTg50GaCHMwe",
+    "opencode:ses_160d49637ffeoB27NKPTWFgqrL"
   ],
   "session_origins": {
     "opencode:ses_1619fc89dffe3hKKyOL4vDO1T6": "direct",
-    "opencode:ses_16110c82cffelvzA06cMJqKKXt": "appended",
-    "opencode:ses_16110b502ffeV7RzvDpeqpj43Z": "appended",
-    "opencode:ses_1611084e0ffeg4xKt6k9BMqHxm": "appended",
-    "opencode:ses_161106c99ffeDPLgvdKYMMbb75": "appended",
-    "opencode:ses_1610dbd33ffeuHuS6sqDv5a1ii": "appended",
-    "opencode:ses_1610da314ffesqQDOih2yJoOUo": "appended"
+    "opencode:ses_160d4aac8ffeYeiTg50GaCHMwe": "appended",
+    "opencode:ses_160d49637ffeoB27NKPTWFgqrL": "appended"
   },
   "task_sessions": {
     "todo:1": {
       "task_key": "todo:1",
       "task_label": "1",
-      "task_title": "`find_entity_references(index, entity_id)` — all incoming edges",
-      "session_id": "opencode:ses_1611084e0ffeg4xKt6k9BMqHxm",
+      "task_title": "**CI-CDW-3**: Fix `actions/attest@v4` → `actions/attest-build-provenance@v2` in publish.yml",
+      "session_id": "opencode:ses_160d49637ffeoB27NKPTWFgqrL",
       "agent": "Sisyphus-Junior",
       "category": "deep",
-      "updated_at": "2026-06-06T21:55:55.602Z"
+      "updated_at": "2026-06-06T23:01:25.345Z"
     }
   },
-  "active_plan": "/home/pablo/ha-mcp-readonly/.omo/plans/ha-semantic-graph.md",
-  "plan_name": "ha-semantic-graph",
-  "started_at": "2026-06-06T21:50:42.803Z",
-  "updated_at": "2026-06-06T22:15:22.835Z",
-  "agent": "atlas",
-  "ended_at": "2026-06-06T22:15:22.835Z",
-  "elapsed_ms": 1480032
+  "active_plan": "/home/pablo/ha-mcp-readonly/.omo/plans/ci-cd-compliance-v2.md",
+  "plan_name": "ci-cd-compliance-v2",
+  "started_at": "2026-06-06T23:00:27.358Z",
+  "updated_at": "2026-06-06T23:01:25.345Z",
+  "agent": "atlas"
 }

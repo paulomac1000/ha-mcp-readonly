@@ -22,6 +22,7 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Topic :: Home Automation",
 ]
 dependencies = [
@@ -59,7 +60,7 @@ include = ["tools*", "context_generator*"]
 
 [tool.ruff]
 line-length = 100
-target-version = "py311"
+target-version = "py314"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "W", "UP"]
@@ -86,7 +87,6 @@ markers = [
 [tool.mypy]
 strict = true
 python_version = "3.14"
-ignore_missing_imports = true
 warn_unused_ignores = true
 exclude = [
     "tests/",
@@ -95,6 +95,10 @@ exclude = [
 disable_error_code = [
     "untyped-decorator",
 ]
+
+[[tool.mypy.overrides]]
+module = ["yaml.*"]
+ignore_missing_imports = true
 
 [tool.bandit]
 exclude = ["tests/", "build/"]

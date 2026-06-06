@@ -15,7 +15,7 @@ env:
 
 jobs:
   tag:
-    if: github.event.pull_request.merged == true
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.merged == true
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -24,6 +24,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
+          persist-credentials: false
           fetch-depth: 0
 
       - name: Extract version from pyproject.toml
@@ -46,7 +47,7 @@ jobs:
 
       - name: Trigger downstream publish
         run: |
-          gh workflow run "Create and publish a Docker image" \
+          gh workflow run publish.yml \
             --ref "v${{ steps.version.outputs.version }}" \
             || echo "::warning::Publish workflow trigger failed or workflow not found"
         env:

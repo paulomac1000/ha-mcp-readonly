@@ -81,7 +81,7 @@ class HomeAssistantGraphScanner:
     # Helpers
     # ------------------------------------------------------------------
 
-    def _load_yaml(self, *path_parts: str) -> list[dict] | dict | None:
+    def _load_yaml(self, *path_parts: str) -> list[dict[str, Any]] | dict[str, Any] | None:
         """Load a YAML file relative to *config_path*.
 
         Returns ``None`` if the file does not exist, an empty ``list``
@@ -101,7 +101,7 @@ class HomeAssistantGraphScanner:
             self.warnings.append(f"Failed to parse {file_path}: {e}")
             return []
 
-    def _load_storage(self, name: str) -> dict:
+    def _load_storage(self, name: str) -> dict[str, Any]:
         """Load a ``.storage/<name>`` JSON registry file.
 
         Returns an empty dict on failure (warning recorded).
@@ -307,12 +307,12 @@ class HomeAssistantGraphScanner:
         for node in index.nodes.values():
             if node.type != "entity":
                 continue
-            device_id = node.metadata.get("device_id")
-            if device_id:
+            entity_device_id: Any | None = node.metadata.get("device_id")
+            if entity_device_id:
                 index.add_edge(
                     GraphEdge(
                         source=node.id,
-                        target=f"device:{device_id}",
+                        target=f"device:{entity_device_id}",
                         relation="belongs_to_device",
                     )
                 )
@@ -451,7 +451,7 @@ class HomeAssistantGraphScanner:
                             )
                         )
 
-    def _find_template_fields(self, item: dict) -> list[str]:
+    def _find_template_fields(self, item: dict[str, Any]) -> list[str]:
         """Recursively collect Jinja2 template strings from a dict."""
         results: list[str] = []
         for value in item.values():

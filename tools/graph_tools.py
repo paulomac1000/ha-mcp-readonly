@@ -7,6 +7,7 @@ graph_export_mermaid.
 """
 
 import logging
+from typing import Any
 
 from ha_graph.cache import get_graph_index
 from ha_graph.export import export_mermaid
@@ -23,7 +24,7 @@ _logger = logging.getLogger(__name__)
 
 
 def register_graph_tools(
-    mcp, config_path: str, ha_url: str | None, ha_token: str | None
+    mcp: Any, config_path: str, ha_url: str | None, ha_token: str | None
 ) -> None:
     """Register all 7 graph exploration MCP tools."""
 
