@@ -1733,17 +1733,50 @@ def _do_search_entity_by_name(
 
 
 def _do_get_entity_details(
-    entity_id: str,
+    entity_ids: str,
     config_path: str,
     ha_url: str | None,
     ha_token: str | None,
 ) -> dict[str, Any]:
-    return _do_get_entity_context(
-        entity_id=entity_id,
-        config_path=config_path,
-        ha_url=ha_url,
-        ha_token=ha_token,
-    )
+    if not entity_ids or not entity_ids.strip():
+        return {"success": False, "error": "entity_id is required and must be a non-empty string"}
+
+    ids = [e.strip() for e in entity_ids.split(",") if e.strip()]
+
+    # Single entity (no comma) - backward compat
+    if "," not in entity_ids:
+        return _do_get_entity_context(
+            entity_id=ids[0],
+            config_path=config_path,
+            ha_url=ha_url,
+            ha_token=ha_token,
+        )
+
+    # Batch mode
+    if len(ids) > 100:
+        return {
+            "success": False,
+            "error": "Maximum of 100 entities per batch call",
+        }
+
+    results: dict[str, Any] = {}
+    not_found: list[str] = []
+    for eid in ids:
+        ctx = _do_get_entity_context(
+            entity_id=eid,
+            config_path=config_path,
+            ha_url=ha_url,
+            ha_token=ha_token,
+        )
+        if ctx.get("error"):
+            not_found.append(eid)
+        else:
+            results[eid] = ctx
+
+    if not results:
+        return {"success": False, "error": "No entities found"}
+
+    return {"results": results, "not_found": not_found}
 
 
 # ========================================
@@ -2283,7 +2316,7 @@ def register_storage_tools(  # type: ignore[no-untyped-def]
         """
         try:
             result = _do_get_entity_details(
-                entity_id=entity_id,
+                entity_ids=entity_id,
                 config_path=config_path,
                 ha_url=ha_url,
                 ha_token=ha_token,

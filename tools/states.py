@@ -153,13 +153,59 @@ def _minify_state(
 def _compact_state(state_obj: dict[str, Any]) -> dict[str, Any]:
     """Strip verbose fields from a state dict for compact/token-efficient output.
 
-    Keeps only: entity_id, state, friendly_name, last_changed, last_updated.
-    Drops: attributes, context, last_reported, and other large fields.
+    Keeps core fields (entity_id, state, friendly_name, last_changed, last_updated)
+    plus domain-specific essential attributes.
+
+    Domain rules:
+    - climate: keeps hvac_modes, hvac_action, current_temperature, temperature
+    - sensor: keeps unit_of_measurement, device_class
+    - light: keeps brightness, color_mode (if present)
+    - cover: keeps current_position (if present)
+    - binary_sensor: keeps device_class (if present)
+    - all others: no attributes kept
     """
-    return {
-        k: state_obj.get(k)
-        for k in ("entity_id", "state", "friendly_name", "last_changed", "last_updated")
+    entity_id = state_obj.get("entity_id", "")
+    domain = entity_id.split(".")[0] if entity_id else ""
+
+    friendly_name = state_obj.get("friendly_name")
+    if friendly_name is None:
+        attrs = state_obj.get("attributes", {}) or {}
+        friendly_name = attrs.get("friendly_name")
+
+    essentials = {
+        "entity_id": entity_id,
+        "state": state_obj.get("state"),
+        "friendly_name": friendly_name,
+        "last_changed": state_obj.get("last_changed"),
+        "last_updated": state_obj.get("last_updated"),
     }
+
+    attrs = state_obj.get("attributes", {}) or {}
+
+    keep_attrs: dict[str, Any] = {}
+    if domain == "climate":
+        for attr in ("hvac_modes", "hvac_action", "current_temperature", "temperature"):
+            if attr in attrs:
+                keep_attrs[attr] = attrs[attr]
+    elif domain == "sensor":
+        for attr in ("unit_of_measurement", "device_class"):
+            if attr in attrs:
+                keep_attrs[attr] = attrs[attr]
+    elif domain == "light":
+        for attr in ("brightness", "color_mode"):
+            if attr in attrs:
+                keep_attrs[attr] = attrs[attr]
+    elif domain == "cover":
+        if "current_position" in attrs:
+            keep_attrs["current_position"] = attrs["current_position"]
+    elif domain == "binary_sensor":
+        if "device_class" in attrs:
+            keep_attrs["device_class"] = attrs["device_class"]
+
+    if keep_attrs:
+        essentials["attributes"] = keep_attrs
+
+    return essentials
 
 
 def _get_entity_platform(entity_id: str, entity_registry: list[dict]) -> str:  # type: ignore[type-arg]
@@ -248,14 +294,11 @@ def _do_get_entity_state(
     entity_data.pop("context", None)
 
     if compact:
-        attrs = entity_data.get("attributes", {})
-        entity_data = {
-            "entity_id": entity_data.get("entity_id"),
-            "state": entity_data.get("state"),
-            "friendly_name": attrs.get("friendly_name"),
-            "last_changed": entity_data.get("last_changed"),
-            "last_updated": entity_data.get("last_updated"),
-        }
+        attrs = entity_data.get("attributes", {}) or {}
+        # Lift friendly_name to top level for _compact_state compatibility
+        if "friendly_name" in attrs and entity_data.get("friendly_name") is None:
+            entity_data["friendly_name"] = attrs["friendly_name"]
+        entity_data = _compact_state(entity_data)
 
     return {"success": True, "entity": entity_data}
 

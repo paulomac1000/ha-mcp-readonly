@@ -1327,3 +1327,82 @@ class TestBatchExceptionHandlers:
             )
         assert data["success"] is False
         assert "boom" in data["error"]
+
+
+class TestGetEntityDetailsBatch:
+    """Batch support for get_entity_details via comma-separated string."""
+
+    @pytest.mark.asyncio
+    async def test_batch_of_two(self, mock_mcp, config_path, mock_registry_data):
+        """Batch of 2 entities returns results dict with both."""
+        with (
+            patch("tools.storage.load_registry") as mock_load,
+            patch("tools.storage.make_ha_request") as mock_req,
+        ):
+            mock_load.side_effect = lambda name, path, use_cache=True: mock_registry_data.get(
+                name, {}
+            )
+            mock_req.return_value = {
+                "success": True,
+                "data": {"state": "20", "attributes": {}},
+            }
+            register_storage_tools(mock_mcp, config_path, "http://ha", "token")
+            data = json.loads(
+                await mock_mcp._tools["get_entity_details"]("sensor.temp,light.room")
+            )
+        assert data["success"] is True
+        assert "results" in data
+        assert "sensor.temp" in data["results"]
+        assert "light.room" in data["results"]
+        assert data["not_found"] == []
+
+    @pytest.mark.asyncio
+    async def test_batch_one_missing(self, mock_mcp, config_path, mock_registry_data):
+        """Batch with one missing entity adds it to not_found."""
+        with (
+            patch("tools.storage.load_registry") as mock_load,
+            patch("tools.storage.make_ha_request") as mock_req,
+        ):
+            mock_load.side_effect = lambda name, path, use_cache=True: mock_registry_data.get(
+                name, {}
+            )
+            mock_req.return_value = {
+                "success": True,
+                "data": {"state": "20", "attributes": {}},
+            }
+            register_storage_tools(mock_mcp, config_path, "http://ha", "token")
+            data = json.loads(
+                await mock_mcp._tools["get_entity_details"]("sensor.temp,sensor.missing")
+            )
+        assert data["success"] is True
+        assert "results" in data
+        assert "sensor.temp" in data["results"]
+        assert "sensor.missing" in data["not_found"]
+
+    @pytest.mark.asyncio
+    async def test_empty_string(self, mock_mcp, config_path):
+        """Empty entity_id string returns error."""
+        register_storage_tools(mock_mcp, config_path)
+        data = json.loads(await mock_mcp._tools["get_entity_details"](""))
+        assert data["success"] is False
+
+    @pytest.mark.asyncio
+    async def test_too_many_entities(self, mock_mcp, config_path):
+        """101+ entities returns error with max limit message."""
+        many_ids = ",".join([f"sensor.test_{i}" for i in range(101)])
+        register_storage_tools(mock_mcp, config_path)
+        data = json.loads(await mock_mcp._tools["get_entity_details"](many_ids))
+        assert data["success"] is False
+        assert "100" in data.get("error", "") or "limit" in data.get("error", "").lower()
+
+    @pytest.mark.asyncio
+    async def test_exception_handler(self, mock_mcp, config_path):
+        """Internal exception returns success: False with error message."""
+        register_storage_tools(mock_mcp, config_path)
+        with patch(
+            "tools.storage._do_get_entity_details",
+            side_effect=RuntimeError("entity details fail"),
+        ):
+            data = json.loads(await mock_mcp._tools["get_entity_details"]("sensor.temp"))
+        assert data["success"] is False
+        assert "entity details fail" in data["error"]

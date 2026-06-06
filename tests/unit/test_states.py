@@ -272,6 +272,166 @@ class TestGetEntityState:
         assert data["success"] is False
         assert "not found" in data["error"].lower()
 
+    def test_compact_climate_keeps_hvac_modes(self, mock_mcp, config_path, ha_url, ha_token):
+        """Compact on climate keeps hvac_modes, hvac_action, temperature attrs."""
+        climate_state = {
+            "entity_id": "climate.living_room",
+            "state": "heat",
+            "last_changed": "2026-06-01T08:00:00",
+            "last_updated": "2026-06-01T08:00:01",
+            "attributes": {
+                "friendly_name": "Living Room Climate",
+                "hvac_modes": ["heat", "cool", "off"],
+                "hvac_action": "heating",
+                "current_temperature": 21.5,
+                "temperature": 22.0,
+                "min_temp": 15,
+                "max_temp": 30,
+            },
+        }
+        with patch("tools.states.make_ha_request") as mock_req:
+            mock_req.return_value = {"success": True, "data": climate_state}
+            register_state_tools(mock_mcp, ha_url, ha_token, config_path)
+            tool = mock_mcp._tools["get_entity_state"]
+            result = run_async(tool(entity_id="climate.living_room", compact=True))
+            data = json.loads(result)
+
+        assert data["success"] is True
+        entity = data["entity"]
+        assert entity["entity_id"] == "climate.living_room"
+        assert entity["state"] == "heat"
+        assert entity["friendly_name"] == "Living Room Climate"
+        # Domain-specific attrs retained
+        assert entity["attributes"]["hvac_modes"] == ["heat", "cool", "off"]
+        assert entity["attributes"]["hvac_action"] == "heating"
+        assert entity["attributes"]["current_temperature"] == 21.5
+        assert entity["attributes"]["temperature"] == 22.0
+        # Non-domain attrs stripped
+        assert "min_temp" not in entity["attributes"]
+
+    def test_compact_sensor_keeps_unit_of_measurement(self, mock_mcp, config_path, ha_url, ha_token):
+        """Compact on sensor retains unit_of_measurement and device_class."""
+        sensor_state = {
+            "entity_id": "sensor.temperature",
+            "state": "22.5",
+            "last_changed": "2026-06-01T08:00:00",
+            "last_updated": "2026-06-01T08:00:01",
+            "attributes": {
+                "friendly_name": "Temperature",
+                "unit_of_measurement": "C",
+                "device_class": "temperature",
+                "icon": "mdi:thermometer",
+                "state_class": "measurement",
+            },
+        }
+        with patch("tools.states.make_ha_request") as mock_req:
+            mock_req.return_value = {"success": True, "data": sensor_state}
+            register_state_tools(mock_mcp, ha_url, ha_token, config_path)
+            tool = mock_mcp._tools["get_entity_state"]
+            result = run_async(tool(entity_id="sensor.temperature", compact=True))
+            data = json.loads(result)
+
+        assert data["success"] is True
+        entity = data["entity"]
+        assert entity["attributes"]["unit_of_measurement"] == "C"
+        assert entity["attributes"]["device_class"] == "temperature"
+        assert "icon" not in entity["attributes"]
+        assert "state_class" not in entity["attributes"]
+
+    def test_compact_switch_strips_all_attributes(self, mock_mcp, config_path, ha_url, ha_token):
+        """Compact on switch (no domain rules) strips all attributes."""
+        switch_state = {
+            "entity_id": "switch.kitchen",
+            "state": "off",
+            "last_changed": "2026-06-01T08:00:00",
+            "last_updated": "2026-06-01T08:00:01",
+            "attributes": {
+                "friendly_name": "Kitchen Switch",
+                "icon": "mdi:light-switch",
+            },
+        }
+        with patch("tools.states.make_ha_request") as mock_req:
+            mock_req.return_value = {"success": True, "data": switch_state}
+            register_state_tools(mock_mcp, ha_url, ha_token, config_path)
+            tool = mock_mcp._tools["get_entity_state"]
+            result = run_async(tool(entity_id="switch.kitchen", compact=True))
+            data = json.loads(result)
+
+        assert data["success"] is True
+        entity = data["entity"]
+        # No domain-specific attrs for switch -> no attributes key
+        assert "attributes" not in entity
+
+    def test_compact_climate_missing_hvac_action_does_not_crash(self, mock_mcp, config_path, ha_url, ha_token):
+        """Climate entity without hvac_action should not crash."""
+        climate_state = {
+            "entity_id": "climate.bedroom",
+            "state": "off",
+            "last_changed": "2026-06-01T08:00:00",
+            "last_updated": "2026-06-01T08:00:01",
+            "attributes": {
+                "friendly_name": "Bedroom Climate",
+                "hvac_modes": ["off"],
+                "current_temperature": 18.0,
+            },
+        }
+        with patch("tools.states.make_ha_request") as mock_req:
+            mock_req.return_value = {"success": True, "data": climate_state}
+            register_state_tools(mock_mcp, ha_url, ha_token, config_path)
+            tool = mock_mcp._tools["get_entity_state"]
+            result = run_async(tool(entity_id="climate.bedroom", compact=True))
+            data = json.loads(result)
+
+        assert data["success"] is True
+        entity = data["entity"]
+        assert entity["attributes"]["hvac_modes"] == ["off"]
+        assert entity["attributes"]["current_temperature"] == 18.0
+        # Missing from source -> absent from compact output
+        assert "hvac_action" not in entity["attributes"]
+        assert "temperature" not in entity["attributes"]
+
+    def test_get_entity_state_compact_false_returns_all_attributes(self, mock_mcp, config_path, ha_url, ha_token):
+        """Backward compat: compact=False returns ALL attributes unchanged."""
+        light_state = {
+            "entity_id": "light.living_room",
+            "state": "on",
+            "last_changed": "2026-06-01T08:00:00",
+            "last_updated": "2026-06-01T08:00:01",
+            "attributes": {
+                "friendly_name": "Living Room Light",
+                "brightness": 255,
+                "color_mode": "color_temp",
+                "icon": "mdi:lamp",
+                "min_mireds": 153,
+                "max_mireds": 500,
+            },
+        }
+        with patch("tools.states.make_ha_request") as mock_req:
+            mock_req.return_value = {"success": True, "data": light_state}
+            register_state_tools(mock_mcp, ha_url, ha_token, config_path)
+            tool = mock_mcp._tools["get_entity_state"]
+            result = run_async(tool(entity_id="light.living_room", compact=False))
+            data = json.loads(result)
+
+        assert data["success"] is True
+        entity = data["entity"]
+        assert entity["attributes"]["brightness"] == 255
+        assert entity["attributes"]["color_mode"] == "color_temp"
+        assert entity["attributes"]["icon"] == "mdi:lamp"
+        assert entity["attributes"]["min_mireds"] == 153
+        assert entity["attributes"]["max_mireds"] == 500
+
+    def test_get_entity_state_exception_handler(self, mock_mcp, config_path, ha_url, ha_token):
+        """Exception handler catches errors gracefully."""
+        with patch("tools.states.make_ha_request", side_effect=RuntimeError("test error")):
+            register_state_tools(mock_mcp, ha_url, ha_token, config_path)
+            tool = mock_mcp._tools["get_entity_state"]
+            result = run_async(tool(entity_id="sensor.any"))
+            data = json.loads(result)
+
+        assert data["success"] is False
+        assert "test error" in data["error"]
+
 
 class TestGetEntityStateBatch:
     def test_batch_entities(self, mock_mcp, config_path, ha_url, ha_token, sample_states):
