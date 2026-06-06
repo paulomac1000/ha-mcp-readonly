@@ -444,6 +444,7 @@ def _do_search_entities(
     search_term: str,
     domain: str | None = None,
     max_results: int = 50,
+    include_state: bool = False,
 ) -> dict[str, Any]:
     result = make_ha_request(ha_url, ha_token, "/api/states")
     if not result["success"]:
@@ -461,7 +462,14 @@ def _do_search_entities(
             continue
 
         if search_lower in entity_id.lower() or search_lower in friendly_name.lower():
-            results.append(_minify_state(s))
+            entry = _minify_state(s)
+            if include_state:
+                state_result = make_ha_request(
+                    ha_url, ha_token, f"/api/states/{entity_id}"
+                )
+                if state_result.get("success") and state_result.get("data"):
+                    entry["state_data"] = state_result["data"]
+            results.append(entry)
 
             if len(results) >= max_results:
                 break
@@ -1179,7 +1187,10 @@ def register_state_tools(mcp, ha_url, ha_token, config_path: str | None = None) 
 
     @mcp.tool()
     async def search_entities(
-        search_term: str, domain: str | None = None, max_results: int = 50
+        search_term: str,
+        domain: str | None = None,
+        max_results: int = 50,
+        include_state: bool = False,
     ) -> str:
         """[READ] Search entities by name or entity_id.
 
@@ -1187,10 +1198,19 @@ def register_state_tools(mcp, ha_url, ha_token, config_path: str | None = None) 
             search_term: Phrase to search (case-insensitive).
             domain: Optional domain restriction (e.g., 'sensor').
             max_results: Maximum results (default 50).
+            include_state: Whether to fetch full per-entity state via /api/states/{entity_id}
+                and include it as "state_data" in each result (default: False).
         """
         try:
             data = await asyncio.to_thread(
-                _do_search_entities, ha_url, ha_token, config_path, search_term, domain, max_results
+                _do_search_entities,
+                ha_url,
+                ha_token,
+                config_path,
+                search_term,
+                domain,
+                max_results,
+                include_state,
             )
         except Exception as e:
             _logger.exception("search_entities failed")

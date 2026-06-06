@@ -558,6 +558,40 @@ class TestSearchEntities:
             assert entity["entity_id"].startswith("sensor.")
 
 
+    def test_search_with_include_state(self, mock_mcp, config_path, ha_url, ha_token, sample_states):
+        with patch("tools.states.make_ha_request") as mock_req:
+
+            def mock_request_side_effect(url, token, endpoint, **kwargs):
+                if endpoint == "/api/states":
+                    return {"success": True, "data": sample_states}
+                # Per-entity endpoint: extract entity_id and return matching data
+                entity_id = endpoint.replace("/api/states/", "")
+                return {
+                    "success": True,
+                    "data": {
+                        "entity_id": entity_id,
+                        "state": "22.5",
+                        "attributes": {"unit_of_measurement": "°C"},
+                        "last_changed": "2024-01-01T00:00:00+00:00",
+                        "last_updated": "2024-01-01T00:00:00+00:00",
+                    },
+                }
+
+            mock_req.side_effect = mock_request_side_effect
+
+            register_state_tools(mock_mcp, ha_url, ha_token, config_path)
+
+            tool = mock_mcp._tools["search_entities"]
+            result = run_async(tool(search_term="living room", include_state=True))
+            data = json.loads(result)
+
+        assert data["success"] is True
+        assert data["count"] >= 1
+        for entity in data["results"]:
+            assert "state_data" in entity
+            assert entity["state_data"]["entity_id"] == entity["entity_id"]
+
+
 class TestGetDomainsSummary:
     def test_domains_summary(self, mock_mcp, config_path, ha_url, ha_token, sample_states):
         with patch("tools.states.make_ha_request") as mock_req:

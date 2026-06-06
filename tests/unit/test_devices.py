@@ -195,6 +195,99 @@ class TestGetDeviceDetails:
         # Total should match enabled + disabled
         assert summary["total"] == summary["enabled"] + summary["disabled"]
 
+    @pytest.mark.asyncio
+    async def test_get_device_details_include_entities_false(self):
+        """Test that include_entities=False omits entity list."""
+        with patch("tools.devices.get_registry_devices") as mock_devices:
+            mock_devices.return_value = self.mock_registry_data["core.device_registry"]["data"][
+                "devices"
+            ]
+
+            with patch("tools.devices.get_registry_entities") as mock_entities:
+                mock_entities.return_value = self.mock_registry_data["core.entity_registry"][
+                    "data"
+                ]["entities"]
+
+                with patch("tools.devices.get_registry_areas") as mock_areas:
+                    mock_areas.return_value = self.mock_registry_data["core.area_registry"]["data"][
+                        "areas"
+                    ]
+
+                    with patch("tools.devices.get_registry_config_entries") as mock_entries:
+                        mock_entries.return_value = self.mock_registry_data["core.config_entries"][
+                            "data"
+                        ]["entries"]
+
+                        with patch("tools.devices.make_ha_request") as mock_request:
+                            mock_request.return_value = {
+                                "success": True,
+                                "data": self.sample_states,
+                            }
+
+                            register_device_tools(
+                                self.mock_mcp,
+                                self.config_path,
+                                self.ha_url,
+                                self.ha_token,
+                            )
+
+                            result = await self.mock_mcp._tools["get_device_details"](
+                                "c67a8024bc53a3d38dacc8c8c6e01cf6", include_entities=False
+                            )
+
+        data = json.loads(result)
+
+        assert data["success"] is True
+        assert "entities_summary" in data
+        assert "entities" not in data
+        assert "entities_note" not in data
+
+    @pytest.mark.asyncio
+    async def test_get_device_details_include_entities_true(self):
+        """Test that include_entities=True (default) includes entity list."""
+        with patch("tools.devices.get_registry_devices") as mock_devices:
+            mock_devices.return_value = self.mock_registry_data["core.device_registry"]["data"][
+                "devices"
+            ]
+
+            with patch("tools.devices.get_registry_entities") as mock_entities:
+                mock_entities.return_value = self.mock_registry_data["core.entity_registry"][
+                    "data"
+                ]["entities"]
+
+                with patch("tools.devices.get_registry_areas") as mock_areas:
+                    mock_areas.return_value = self.mock_registry_data["core.area_registry"]["data"][
+                        "areas"
+                    ]
+
+                    with patch("tools.devices.get_registry_config_entries") as mock_entries:
+                        mock_entries.return_value = self.mock_registry_data["core.config_entries"][
+                            "data"
+                        ]["entries"]
+
+                        with patch("tools.devices.make_ha_request") as mock_request:
+                            mock_request.return_value = {
+                                "success": True,
+                                "data": self.sample_states,
+                            }
+
+                            register_device_tools(
+                                self.mock_mcp,
+                                self.config_path,
+                                self.ha_url,
+                                self.ha_token,
+                            )
+
+                            result = await self.mock_mcp._tools["get_device_details"](
+                                "c67a8024bc53a3d38dacc8c8c6e01cf6", include_entities=True
+                            )
+
+        data = json.loads(result)
+
+        assert data["success"] is True
+        assert data["entities"] is not None
+        assert isinstance(data["entities"], list)
+
 
 class TestGetDeviceEntities:
     """Tests for get_device_entities()."""

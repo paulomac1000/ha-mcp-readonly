@@ -70,7 +70,9 @@ def _get_area_name(area_id: str | None, config_path: str) -> str | None:
 # =============================================================================
 
 
-def _do_get_device_details(device_id: str, config_path: str, ha_url: str, ha_token: str) -> str:
+def _do_get_device_details(
+    device_id: str, config_path: str, ha_url: str, ha_token: str, include_entities: bool = True
+) -> str:
     """Fetch device details with full context."""
     device = _get_device_by_id(device_id, config_path)
 
@@ -165,11 +167,12 @@ def _do_get_device_details(device_id: str, config_path: str, ha_url: str, ha_tok
         "created_at": device.get("created_at"),
         "modified_at": device.get("modified_at"),
         "entities_summary": entities_summary,
-        "entities": entities_list[:30],
     }
 
-    if len(entities_list) > 30:
-        result["entities_note"] = f"Showing 30 of {len(entities_list)} entities"
+    if include_entities:
+        result["entities"] = entities_list[:30]
+        if len(entities_list) > 30:
+            result["entities_note"] = f"Showing 30 of {len(entities_list)} entities"
 
     return _success_response(result)
 
@@ -575,13 +578,16 @@ def register_device_tools(mcp, config_path: str, ha_url: str, ha_token: str) -> 
     """Register device management tools."""
 
     @mcp.tool()
-    async def get_device_details(device_id: str) -> str:
+    async def get_device_details(
+        device_id: str, include_entities: bool = True
+    ) -> str:
         """[READ] Fetches device details with full context.
 
         ~90% token savings vs get_device_registry() + filtering.
 
         Args:
             device_id: Device id (e.g. "c67a8024bc53a3d38dacc8c8c6e01cf6")
+            include_entities: Whether to include entity list (default: True).
 
         Returns:
             JSON with:
@@ -597,7 +603,7 @@ def register_device_tools(mcp, config_path: str, ha_url: str, ha_token: str) -> 
             - entities_summary: {total, available, unavailable, disabled}
         """
         try:
-            return _do_get_device_details(device_id, config_path, ha_url, ha_token)
+            return _do_get_device_details(device_id, config_path, ha_url, ha_token, include_entities)
         except Exception as e:
             return _error_response(str(e))
 

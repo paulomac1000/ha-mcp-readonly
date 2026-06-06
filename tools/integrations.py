@@ -43,6 +43,7 @@ def _get_entities_for_domain(entities: list[dict[str, Any]], domain: str) -> lis
 def _do_get_integration_entities(
     domain: str,
     include_disabled: bool,
+    include_options: bool,
     config_path: str,
     ha_url: str | None,
     ha_token: str | None,
@@ -104,7 +105,7 @@ def _do_get_integration_entities(
 
     returned_count = sum(len(d["entities"]) for d in by_device.values())
 
-    return {
+    result: dict[str, Any] = {
         "domain": domain,
         "total_entities": len(entities),
         "returned_entities": returned_count,
@@ -112,6 +113,19 @@ def _do_get_integration_entities(
         "unavailable_count": unavailable_count,
         "by_device": by_device,
     }
+
+    if include_options:
+        entries = _get_entries_by_domain(get_registry_config_entries(config_path), domain)
+        options_list = []
+        for entry in entries:
+            options_list.append({
+                "entry_id": entry.get("entry_id"),
+                "title": entry.get("title"),
+                "options": entry.get("options", {}),
+            })
+        result["config_entries_options"] = options_list
+
+    return result
 
 
 def _do_get_integration_summary(
@@ -198,12 +212,15 @@ def register_integration_tools(mcp, config_path: str, ha_url: str, ha_token: str
     """Register integration analysis tools."""
 
     @mcp.tool(name="get_integration_entities")
-    async def get_integration_entities(domain: str, include_disabled: bool = False) -> str:
+    async def get_integration_entities(
+        domain: str, include_disabled: bool = False, include_options: bool = False
+    ) -> str:
         """[READ] Get all entities for a given integration domain.
 
         Args:
             domain: Integration domain (e.g., "mqtt", "hue").
             include_disabled: Whether to include disabled entities.
+            include_options: Whether to include config entry options (default: False).
 
         Returns:
             JSON string with domain summary, devices grouping, and availability stats.
@@ -212,6 +229,7 @@ def register_integration_tools(mcp, config_path: str, ha_url: str, ha_token: str
             result = _do_get_integration_entities(
                 domain=domain,
                 include_disabled=include_disabled,
+                include_options=include_options,
                 config_path=config_path,
                 ha_url=ha_url,
                 ha_token=ha_token,

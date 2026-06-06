@@ -70,6 +70,7 @@ MOCK_CONFIG_ENTRIES = [
         "title": "MQTT Broker",
         "state": 1,
         "disabled_by": None,
+        "options": {"broker": "localhost", "port": 1883},
     },
     {
         "entry_id": "hue_entry_1",
@@ -77,6 +78,7 @@ MOCK_CONFIG_ENTRIES = [
         "title": "Philips Hue",
         "state": 1,
         "disabled_by": None,
+        "options": {"bridge_ip": "192.168.1.100"},
     },
     {
         "entry_id": "zha_entry_1",
@@ -84,6 +86,7 @@ MOCK_CONFIG_ENTRIES = [
         "title": "Zigbee",
         "state": 2,
         "disabled_by": None,
+        "options": {},
     },
 ]
 
@@ -351,6 +354,46 @@ class TestGetIntegrationEntities:
             assert data["success"] is True
             entities = data["by_device"]["dev1"]["entities"]
             assert all(e["state"] == "unknown" for e in entities)
+
+    @pytest.mark.asyncio
+    async def test_include_options(self, tools):
+        """Test that include_options=True returns config entry options."""
+        with (
+            patch(f"{_P}.get_registry_entities", return_value=MOCK_ENTITIES),
+            patch(f"{_P}.get_registry_devices", return_value=MOCK_DEVICES),
+            patch(f"{_P}.get_registry_config_entries", return_value=MOCK_CONFIG_ENTRIES),
+            patch(
+                f"{_P}.make_ha_request",
+                return_value={"success": True, "data": MOCK_STATES},
+            ),
+        ):
+            result = await tools["get_integration_entities"]("mqtt", include_options=True)
+            data = json.loads(result)
+
+            assert data["success"] is True
+            assert "config_entries_options" in data
+            options_list = data["config_entries_options"]
+            assert len(options_list) == 1
+            assert options_list[0]["entry_id"] == "mqtt_entry_1"
+            assert options_list[0]["options"] == {"broker": "localhost", "port": 1883}
+
+    @pytest.mark.asyncio
+    async def test_include_options_false(self, tools):
+        """Test that include_options=False (default) omits config entry options."""
+        with (
+            patch(f"{_P}.get_registry_entities", return_value=MOCK_ENTITIES),
+            patch(f"{_P}.get_registry_devices", return_value=MOCK_DEVICES),
+            patch(f"{_P}.get_registry_config_entries", return_value=MOCK_CONFIG_ENTRIES),
+            patch(
+                f"{_P}.make_ha_request",
+                return_value={"success": True, "data": MOCK_STATES},
+            ),
+        ):
+            result = await tools["get_integration_entities"]("mqtt")
+            data = json.loads(result)
+
+            assert data["success"] is True
+            assert "config_entries_options" not in data
 
 
 # =========================================================================
