@@ -4,6 +4,7 @@ on:
   pull_request:
     branches: [main]
     types: [closed]
+  workflow_dispatch:
 
 concurrency:
   group: auto-tag-${{ github.ref }}
@@ -18,6 +19,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      actions: write
 
     steps:
       - uses: actions/checkout@v6
@@ -41,3 +43,11 @@ jobs:
           fi
           git tag "v${{ steps.version.outputs.version }}"
           git push origin "v${{ steps.version.outputs.version }}"
+
+      - name: Trigger downstream publish
+        run: |
+          gh workflow run "Create and publish a Docker image" \
+            --ref "v${{ steps.version.outputs.version }}" \
+            || echo "::warning::Publish workflow trigger failed or workflow not found"
+        env:
+          GH_TOKEN: ${{ github.token }}

@@ -1,9 +1,11 @@
-.PHONY: test test-integration lint format docs-check docker-build docker-build-source docker-run help clean
+.PHONY: test test-integration test-all typecheck lint format docs-check docker-build docker-build-source docker-run help clean
 
 help:
 	@echo "Available targets:"
 	@echo "  test              - Run unit tests"
 	@echo "  test-integration  - Run integration tests (requires HA_URL + HA_TOKEN)"
+	@echo "  test-all          - Run all test suites (unit, smoke, e2e, integration)"
+	@echo "  typecheck         - Run mypy strict type checking on tools/"
 	@echo "  lint              - Run ruff linter"
 	@echo "  format            - Format code with ruff"
 	@echo "  docs-check        - Validate documentation against AFDS standard"
@@ -16,6 +18,12 @@ test:
 
 test-integration:
 	pytest tests/integration/ -v
+
+test-all:
+	pytest tests/unit/ tests/smoke/ tests/e2e/ tests/integration/ -q
+
+typecheck:
+	mypy tools/ --strict
 
 lint:
 	ruff check .

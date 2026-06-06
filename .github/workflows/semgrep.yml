@@ -12,6 +12,7 @@ concurrency:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  SEMGREP_BASELINE_REF: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || '' }}
 
 jobs:
   semgrep:
@@ -37,6 +38,7 @@ jobs:
             p/auto
             p/secrets
             p/owasp-top-ten
+          publishToken: ${{ secrets.SEMGREP_APP_TOKEN || '' }}
 
       - name: Upload SARIF to GitHub Security
         id: upload-sarif
