@@ -445,6 +445,7 @@ def _do_search_entities(
     domain: str | None = None,
     max_results: int = 50,
     include_state: bool = False,
+    compact: bool = False,
 ) -> dict[str, Any]:
     result = make_ha_request(ha_url, ha_token, "/api/states")
     if not result["success"]:
@@ -462,7 +463,10 @@ def _do_search_entities(
             continue
 
         if search_lower in entity_id.lower() or search_lower in friendly_name.lower():
-            entry = _minify_state(s)
+            if compact:
+                entry = {"entity_id": entity_id, "state": s["state"]}
+            else:
+                entry = _minify_state(s)
             if include_state:
                 state_result = make_ha_request(
                     ha_url, ha_token, f"/api/states/{entity_id}"
@@ -1191,6 +1195,7 @@ def register_state_tools(mcp, ha_url, ha_token, config_path: str | None = None) 
         domain: str | None = None,
         max_results: int = 50,
         include_state: bool = False,
+        compact: bool = False,
     ) -> str:
         """[READ] Search entities by name or entity_id.
 
@@ -1200,6 +1205,12 @@ def register_state_tools(mcp, ha_url, ha_token, config_path: str | None = None) 
             max_results: Maximum results (default 50).
             include_state: Whether to fetch full per-entity state via /api/states/{entity_id}
                 and include it as "state_data" in each result (default: False).
+            compact: If True, return only entity_id + state for each result.
+                Default False (returns entity_id, state, friendly_name,
+                last_changed, last_updated, attributes).
+
+        Returns:
+            JSON string with matching entities and their states.
         """
         try:
             data = await asyncio.to_thread(
@@ -1211,6 +1222,7 @@ def register_state_tools(mcp, ha_url, ha_token, config_path: str | None = None) 
                 domain,
                 max_results,
                 include_state,
+                compact,
             )
         except Exception as e:
             _logger.exception("search_entities failed")

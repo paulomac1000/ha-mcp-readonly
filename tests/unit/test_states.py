@@ -591,6 +591,38 @@ class TestSearchEntities:
             assert "state_data" in entity
             assert entity["state_data"]["entity_id"] == entity["entity_id"]
 
+    def test_search_compact_returns_minimal(self, mock_mcp, config_path, ha_url, ha_token, sample_states):
+        with patch("tools.states.make_ha_request") as mock_req:
+            mock_req.return_value = {"success": True, "data": sample_states}
+            register_state_tools(mock_mcp, ha_url, ha_token, config_path)
+            tool = mock_mcp._tools["search_entities"]
+            result = run_async(tool(search_term="living room", compact=True))
+            data = json.loads(result)
+
+        assert data["success"] is True
+        assert data["count"] >= 2
+        for entity in data["results"]:
+            assert set(entity.keys()) == {"entity_id", "state"}
+            assert "friendly_name" not in entity
+            assert "last_changed" not in entity
+            assert "attributes" not in entity
+
+    def test_search_compact_false_backward_compat(self, mock_mcp, config_path, ha_url, ha_token, sample_states):
+        with patch("tools.states.make_ha_request") as mock_req:
+            mock_req.return_value = {"success": True, "data": sample_states}
+            register_state_tools(mock_mcp, ha_url, ha_token, config_path)
+            tool = mock_mcp._tools["search_entities"]
+            result = run_async(tool(search_term="living room"))
+            data = json.loads(result)
+
+        assert data["success"] is True
+        assert data["count"] >= 2
+        for entity in data["results"]:
+            assert "entity_id" in entity
+            assert "state" in entity
+            assert "friendly_name" in entity
+            assert "last_changed" in entity
+
 
 class TestGetDomainsSummary:
     def test_domains_summary(self, mock_mcp, config_path, ha_url, ha_token, sample_states):
