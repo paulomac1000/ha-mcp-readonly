@@ -6,12 +6,12 @@ the graph index is correctly built.
 """
 
 import json
-import yaml
+
 import pytest
+import yaml
 
 from ha_graph.models import GraphIndex
-from ha_graph.scanner import HomeAssistantGraphScanner, build_graph_index
-
+from ha_graph.scanner import build_graph_index
 
 # Sample automations.yaml — one sensor-triggered, one light-controlling
 AUTOMATIONS_YAML = [

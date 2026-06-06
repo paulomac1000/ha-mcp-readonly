@@ -52,6 +52,7 @@ from tools.diagnostics import register_diagnostics_tools  # noqa: E402
 from tools.entity_context import register_entity_context_tools  # noqa: E402
 from tools.entity_dependencies import register_entity_dependency_tools  # noqa: E402
 from tools.filesystem_explorer import register_filesystem_tools  # noqa: E402
+from tools.graph_tools import register_graph_tools  # noqa: E402
 from tools.health_reporter import register_health_reporter_tools  # noqa: E402
 from tools.helpers_health import register_helpers_health_tools  # noqa: E402
 from tools.history import register_history_tools  # noqa: E402
@@ -151,6 +152,8 @@ register_diagnostics_tools(mcp, HA_URL, HA_TOKEN, HA_CONFIG_PATH)
 register_health_reporter_tools(mcp, HA_URL, HA_TOKEN, HA_CONFIG_PATH)
 
 register_filesystem_tools(mcp)
+
+register_graph_tools(mcp, HA_CONFIG_PATH, HA_URL, HA_TOKEN)
 
 register_composite_tools(mcp, HA_CONFIG_PATH, HA_URL, HA_TOKEN)
 

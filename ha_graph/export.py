@@ -1,7 +1,7 @@
 """HA Semantic Graph — Mermaid export."""
 from collections import deque
-from ha_graph.models import GraphIndex
 
+from ha_graph.models import GraphIndex
 
 MAX_NODES = 50
 

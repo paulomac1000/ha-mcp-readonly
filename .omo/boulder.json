@@ -1,0 +1,91 @@
+{
+  "schema_version": 2,
+  "active_work_id": "ha-semantic-graph-76d63ef2",
+  "works": {
+    "v1-6-0-endpoints-standards-58621f92": {
+      "work_id": "v1-6-0-endpoints-standards-58621f92",
+      "active_plan": "/home/pablo/ha-mcp-readonly/.omo/plans/v1.6.0-endpoints-standards.md",
+      "plan_name": "v1.6.0-endpoints-standards",
+      "status": "completed",
+      "started_at": "2026-06-06T20:10:04.334Z",
+      "updated_at": "2026-06-06T20:30:00.000Z",
+      "session_ids": [],
+      "agent": "atlas",
+      "task_sessions": {},
+      "session_origins": {}
+    },
+    "ha-semantic-graph-76d63ef2": {
+      "work_id": "ha-semantic-graph-76d63ef2",
+      "active_plan": "/home/pablo/ha-mcp-readonly/.omo/plans/ha-semantic-graph.md",
+      "plan_name": "ha-semantic-graph",
+      "status": "active",
+      "started_at": "2026-06-06T21:50:42.803Z",
+      "updated_at": "2026-06-06T21:59:04.694Z",
+      "session_ids": [
+        "opencode:ses_1619fc89dffe3hKKyOL4vDO1T6",
+        "opencode:ses_16110c82cffelvzA06cMJqKKXt",
+        "opencode:ses_16110b502ffeV7RzvDpeqpj43Z",
+        "opencode:ses_1611084e0ffeg4xKt6k9BMqHxm",
+        "opencode:ses_161106c99ffeDPLgvdKYMMbb75",
+        "opencode:ses_1610dbd33ffeuHuS6sqDv5a1ii",
+        "opencode:ses_1610da314ffesqQDOih2yJoOUo"
+      ],
+      "session_origins": {
+        "opencode:ses_1619fc89dffe3hKKyOL4vDO1T6": "direct",
+        "opencode:ses_16110c82cffelvzA06cMJqKKXt": "appended",
+        "opencode:ses_16110b502ffeV7RzvDpeqpj43Z": "appended",
+        "opencode:ses_1611084e0ffeg4xKt6k9BMqHxm": "appended",
+        "opencode:ses_161106c99ffeDPLgvdKYMMbb75": "appended",
+        "opencode:ses_1610dbd33ffeuHuS6sqDv5a1ii": "appended",
+        "opencode:ses_1610da314ffesqQDOih2yJoOUo": "appended"
+      },
+      "agent": "atlas",
+      "task_sessions": {
+        "todo:1": {
+          "task_key": "todo:1",
+          "task_label": "1",
+          "task_title": "`find_entity_references(index, entity_id)` — all incoming edges",
+          "session_id": "opencode:ses_1611084e0ffeg4xKt6k9BMqHxm",
+          "agent": "Sisyphus-Junior",
+          "category": "deep",
+          "updated_at": "2026-06-06T21:55:55.602Z"
+        }
+      }
+    }
+  },
+  "status": "active",
+  "session_ids": [
+    "opencode:ses_1619fc89dffe3hKKyOL4vDO1T6",
+    "opencode:ses_16110c82cffelvzA06cMJqKKXt",
+    "opencode:ses_16110b502ffeV7RzvDpeqpj43Z",
+    "opencode:ses_1611084e0ffeg4xKt6k9BMqHxm",
+    "opencode:ses_161106c99ffeDPLgvdKYMMbb75",
+    "opencode:ses_1610dbd33ffeuHuS6sqDv5a1ii",
+    "opencode:ses_1610da314ffesqQDOih2yJoOUo"
+  ],
+  "session_origins": {
+    "opencode:ses_1619fc89dffe3hKKyOL4vDO1T6": "direct",
+    "opencode:ses_16110c82cffelvzA06cMJqKKXt": "appended",
+    "opencode:ses_16110b502ffeV7RzvDpeqpj43Z": "appended",
+    "opencode:ses_1611084e0ffeg4xKt6k9BMqHxm": "appended",
+    "opencode:ses_161106c99ffeDPLgvdKYMMbb75": "appended",
+    "opencode:ses_1610dbd33ffeuHuS6sqDv5a1ii": "appended",
+    "opencode:ses_1610da314ffesqQDOih2yJoOUo": "appended"
+  },
+  "task_sessions": {
+    "todo:1": {
+      "task_key": "todo:1",
+      "task_label": "1",
+      "task_title": "`find_entity_references(index, entity_id)` — all incoming edges",
+      "session_id": "opencode:ses_1611084e0ffeg4xKt6k9BMqHxm",
+      "agent": "Sisyphus-Junior",
+      "category": "deep",
+      "updated_at": "2026-06-06T21:55:55.602Z"
+    }
+  },
+  "active_plan": "/home/pablo/ha-mcp-readonly/.omo/plans/ha-semantic-graph.md",
+  "plan_name": "ha-semantic-graph",
+  "started_at": "2026-06-06T21:50:42.803Z",
+  "updated_at": "2026-06-06T21:59:04.694Z",
+  "agent": "atlas"
+}

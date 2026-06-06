@@ -4,9 +4,7 @@ structured data, triggers, services, and controlled entities.
 """
 
 from ha_graph.extractors import (
-    DYNAMIC_TEMPLATE_PATTERN,
     ENTITY_PATTERN,
-    EXPAND_PATTERN,
     STATES_DOT_PATTERN,
     TEMPLATE_ENTITY_PATTERN,
     extract_controlled_entities,

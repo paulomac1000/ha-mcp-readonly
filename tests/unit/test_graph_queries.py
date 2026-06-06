@@ -131,7 +131,7 @@ class TestEntityImpact:
     def test_medium_risk_entity(self, graph):
         """Entity only on dashboards (no automation trigger/control) gets medium risk."""
         # Create a minimal graph where the entity is solely on a dashboard.
-        from ha_graph.models import GraphIndex, GraphNode, GraphEdge
+        from ha_graph.models import GraphEdge, GraphIndex, GraphNode
         g = GraphIndex()
         g.add_node(GraphNode(id="entity:sensor.display_only", type="entity", name="Display Only"))
         g.add_node(GraphNode(id="dashboard:main", type="dashboard", name="Main"))

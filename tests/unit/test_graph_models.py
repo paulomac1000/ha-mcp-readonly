@@ -5,13 +5,9 @@ Tests for ha_graph/models.py — GraphNode, GraphEdge, GraphIndex.
 import pytest
 
 from ha_graph.models import (
-    Confidence,
     GraphEdge,
-    GraphError,
     GraphIndex,
     GraphNode,
-    NodeType,
-    RelationType,
 )
 
 
