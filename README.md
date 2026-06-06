@@ -124,14 +124,14 @@ curl -X POST http://localhost:9093/api/context/generate \
   -d '{"mode": "hybrid"}'
 ```
 
-## Available Tools (134 with dev tools, 122 without)
+## Available Tools (136 with dev tools, 124 without)
 
 Tools are organized by category (53 shown in table below). All are **read-only** — no state changes, no service calls, no modifications.
 
 | Category | Key tools |
 |----------|-----------|
 | **States** | `get_entity_state`, `get_states_grouped`, `search_entities`, `get_domains_summary`, `get_system_overview` |
-| **Automations** | `list_automations`, `get_automation_code`, `get_automation_file_location`, `diagnose_automation`, `search_automations_by_entity`, `get_automation_conflicts` |
+| **Automations** | `list_automations`, `get_automation_code`, `get_automation_file_location`, `diagnose_automation`, `search_automations_by_entity`, `get_automation_conflicts`, `get_automation_entity_id` |
 | **Scripts & Scenes** | `list_scripts`, `get_script_code`, `list_scenes`, `get_scene_code` |
 | **Blueprints** | `list_blueprints`, `get_blueprint_code`, `get_blueprint_instances`, `get_blueprint_usage_summary` |
 | **Devices & Areas** | `get_device_details`, `search_devices`, `get_devices_by_area`, `get_area_devices_summary` |
@@ -146,7 +146,25 @@ Tools are organized by category (53 shown in table below). All are **read-only**
 | **Lovelace** | `get_lovelace_dashboards`, `get_lovelace_config`, `get_lovelace_resources`, `search_lovelace_config`, `get_lovelace_config_summary`, `diagnose_lovelace_setup` |
 | **Batch** | `bulk_search_entities`, `compare_entities_state`, `validate_yaml_batch`, `get_automation_codes_batch` |
 | **Composite** | `investigate_entity`, `get_area_diagnostic`, `get_entity_with_automations`, `diagnose_person_tracking` |
-| **Dev tools** | `test_template`, `diagnose_entity`, `check_entity_exists`, `validate_automation_trigger`, `diagnose_template` |
+| **Dev tools** | `test_template`, `compare_templates`, `diagnose_entity`, `check_entity_exists`, `validate_automation_trigger`, `diagnose_template` |
+
+## What's New in v1.6.0
+
+- **2 new tools**: `get_automation_entity_id` (Automations) and `compare_templates` (Dev tools)
+- **Parameter patterns**: `compact`, `include_state`, `include_entities`, `include_options`, and `detail_level` added across tools for flexible response control
+- **Batch improvements**: `get_entity_details` supports multiple entity IDs; compact mode for states
+- **Enhanced automation traces**: logbook context and `include_entity_id` in search
+
+### Parameter Patterns
+
+Several tools now support these cross-cutting parameter patterns for fine-grained response control:
+
+| Pattern | Description | Example tools |
+|---------|-------------|---------------|
+| `compact` | Strips attributes, context, and last_reported; keeps state, timestamps, and friendly_name | `get_entity_state`, `get_states_filtered`, `get_all_states` |
+| `detail_level` | Controls response detail: `summary`, `standard`, or `full` | `get_device_details`, `get_system_overview`, `get_overview` |
+| `include_*` | Selective inclusion of optional data fields | `include_state`, `include_entities`, `include_options` on various tools |
+| `include_entity_id` | When false, omits entity_id from responses for token-efficient summaries | `search_automations` |
 
 ## Claude Desktop Configuration
 
@@ -166,7 +184,7 @@ Add the following to your Claude Desktop config:
 }
 ```
 
-After restarting Claude Desktop, the 134 Home Assistant tools will be available (122 without dev tools enabled).
+After restarting Claude Desktop, the 136 Home Assistant tools will be available (124 without dev tools enabled).
 
 ### LibreChat
 

@@ -10,6 +10,49 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.0] - YYYY-MM-DD
+
+### Added — New Tools
+- `compare_templates` — evaluates two Jinja2 templates side by side and highlights differences
+- `get_automation_entity_id` — resolves automation alias or unique_id to the entity_id
+
+### Added — Parameter Extensions
+- `detail_level` parameter on `get_automation_usage_stats` — `full` mode adds logbook traces,
+  state changes, and context chain to usage statistics
+- `include_entity_id` parameter on `search_automations` — resolves entity_id from entity
+  registry for each matching automation
+- Batch support for `get_entity_details` — accepts comma-separated entity IDs for
+  multi-entity registry metadata retrieval
+- `compact` mode on `get_entity_details` — returns only essential fields (entity_id, name,
+  icon, area_id, platform, unique_id, original_name)
+- Enhanced `compact` mode on `get_entity_state` — domain-specific attribute retention
+  (preserves brightness/color for light, temperature/humidity for sensor/climate,
+  current_consumption for switch)
+- `detail_level` and `include_context` parameters on `get_entity_dependencies` —
+  controls verbosity and optionally includes surrounding YAML context
+- `detail_level` parameter on `list_automations` — `summary` mode for alias+mode only
+- `detail_level` parameter on `get_entity_state_history_summary` — controls verbosity
+  of history summary output
+- `include_entity_id`/`include_entities`/`include_disabled`/`include_states` parameters
+  on `search_entities`, `get_device`, `get_integration_entities` — consistent
+  `include_*` pattern for controlling entity detail in results
+- `compact` mode on `get_entity_state_history_summary` and `search_entities` — minimal
+  response format for token efficiency
+
+### Changed
+- Test dependencies moved from `requirements.txt` to `pyproject.toml` optional dev
+  dependencies (`[project.optional-dependencies] dev = [...]`)
+- Coverage configuration added to `pyproject.toml` under `[tool.coverage]` — `fail_under = 80`
+- Enforced comma-separated string convention for all batch entity ID parameters across
+  the codebase for consistency
+
+### Fixed — CI and Infrastructure
+- Fixed broken `docs-validation.yml` workflow — the `validate_docs.py` script referenced
+  in the workflow was not available in the repository; validation is now gracefully skipped
+  with a clear message
+- Added version sync check between `version.py` and `pyproject.toml` in CI pipeline —
+  ensures version strings stay aligned across builds
+
 ## [1.5.0] - 2026-06-01
 
 ### Added — 13 New Diagnostic Tools (21 gaps from todo.md)
