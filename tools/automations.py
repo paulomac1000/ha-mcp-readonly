@@ -3,6 +3,7 @@ Automation Management Tools
 Tools for listing, searching, analyzing, and debugging Home Assistant automations.
 """
 
+import json
 import logging
 import os
 import re
@@ -149,10 +150,24 @@ def _do_search_automations(
     uses_blueprint: bool | None = None,
     deep: bool = False,
     category: str | None = None,
+    include_entity_id: bool = False,
     config_path: str | None = None,
 ) -> dict[str, Any]:
     data = _load_automations(config_path)  # type: ignore[arg-type]
     results = []
+
+    # Pre-load entity registry for entity_id resolution if needed
+    entity_map: dict[str, str] = {}
+    if include_entity_id and config_path:
+        entity_entries = load_registry("core.entity_registry", config_path)
+        if entity_entries:
+            entities = entity_entries.get("data", {}).get("entities", [])
+            for ent in entities:
+                ent_eid = ent.get("entity_id", "")
+                if ent_eid.startswith("automation."):
+                    ent_uid = ent.get("unique_id", "")
+                    if ent_uid:
+                        entity_map[ent_uid] = ent_eid
 
     category_id: str | None = None
     if category and config_path:
@@ -242,6 +257,10 @@ def _do_search_automations(
             clean_item.pop("id", None)
             res["code"] = yaml.dump(clean_item, sort_keys=False, allow_unicode=True)
 
+        if include_entity_id:
+            auto_unique_id = str(auto_id) if auto_id else ""
+            res["entity_id"] = entity_map.get(auto_unique_id, None)
+
         results.append(res)
 
     def _sort_key(r):  # type: ignore[no-untyped-def]
@@ -285,6 +304,87 @@ def _do_list_automations(config_path: str) -> dict[str, Any]:
     ]
 
     return {"success": True, "total_count": len(summary), "automations": summary}
+
+
+def _do_get_automation_entity_id(
+    identifier: str,
+    config_path: str,
+    ha_url: str | None = None,
+    ha_token: str | None = None,
+) -> dict[str, Any]:
+    """Resolve automation alias to entity_id via entity registry.
+
+    Searches the HA entity registry for automation.* entities matching by
+    alias (friendly_name). Finds BOTH YAML and UI-created automations.
+
+    Args:
+        identifier: Automation alias or partial name to search for.
+        config_path: Path to HA config directory.
+        ha_url: Optional HA URL (for future use).
+        ha_token: Optional HA token (for future use).
+
+    Returns:
+        Dict with alias, entity_id, unique_id on match, or error on no match.
+    """
+    if not identifier or not isinstance(identifier, str) or not identifier.strip():
+        return {
+            "success": False,
+            "error": "identifier is required and must be a non-empty string",
+        }
+
+    identifier = identifier.strip()
+
+    entity_entries = load_registry("core.entity_registry", config_path)
+    entities = entity_entries.get("data", {}).get("entities", []) if entity_entries else []
+
+    exact_match: dict[str, Any] | None = None
+    partial_matches: list[dict[str, Any]] = []
+
+    for entity in entities:
+        entity_id: str = entity.get("entity_id", "")
+        if not entity_id.startswith("automation."):
+            continue
+
+        alias: str = entity.get("name") or entity.get("original_name", entity_id)
+        unique_id: str = entity.get("unique_id", "")
+
+        if alias and identifier.lower() == alias.lower():
+            exact_match = {
+                "alias": alias,
+                "entity_id": entity_id,
+                "unique_id": unique_id,
+            }
+            break
+
+        if alias and identifier.lower() in alias.lower():
+            partial_matches.append(
+                {
+                    "alias": alias,
+                    "entity_id": entity_id,
+                    "unique_id": unique_id,
+                }
+            )
+
+    if exact_match:
+        return {
+            "success": True,
+            **exact_match,
+        }
+
+    if partial_matches:
+        first = partial_matches[0]
+        return {
+            "success": True,
+            "alias": first["alias"],
+            "entity_id": first["entity_id"],
+            "unique_id": first["unique_id"],
+            "matches_count": len(partial_matches),
+        }
+
+    return {
+        "success": False,
+        "error": f"No automation found matching '{identifier}'",
+    }
 
 
 def _do_get_automation_code(automation_id: str, config_path: str) -> dict[str, Any]:
@@ -1081,9 +1181,13 @@ def _do_get_automation_usage_stats(
     config_path: str | None = None,
     ha_url: str | None = None,
     ha_token: str | None = None,
+    detail_level: str = "summary",
 ) -> dict[str, Any]:
     if not ha_url or not ha_token:
         return {"success": False, "error": "HA API not configured (ha_url/ha_token missing)"}
+
+    if detail_level not in ("summary", "full"):
+        return {"success": False, "error": f"Invalid detail_level '{detail_level}'. Must be 'summary' or 'full'."}
 
     data = _load_automations(config_path)  # type: ignore[arg-type]
     automation = _get_automation_by_id_or_alias(data, automation_id)
@@ -1205,7 +1309,7 @@ def _do_get_automation_usage_stats(
 
         is_working = bool(is_enabled and (run_count > 0 or recently_triggered))
 
-    response = {
+    response: dict[str, Any] = {
         "success": True,
         "automation": {
             "alias": automation.get("alias")  # type: ignore[union-attr]
@@ -1225,6 +1329,75 @@ def _do_get_automation_usage_stats(
         },
         "missing_entities": missing_entities,
     }
+
+    if detail_level == "full":
+        try:
+            logbook_result = make_ha_request(
+                ha_url, ha_token, f"/api/logbook/{start_time}?entity={entity_id}"
+            )
+            recent_activity: list[dict[str, Any]] = []
+            if logbook_result.get("success") and isinstance(logbook_result.get("data"), list):
+                for entry in logbook_result["data"][-10:]:
+                    recent_activity.append({
+                        "when": entry.get("when"),
+                        "message": entry.get("message"),
+                        "context_id": entry.get("context_id"),
+                        "domain": entry.get("domain"),
+                    })
+            response["recent_activity"] = recent_activity
+
+            state_changes: list[dict[str, Any]] = []
+            entity_candidates = set(entities)
+            if not entity_candidates and not from_api:
+                deps_result = _do_get_automation_dependencies(automation_id, config_path)  # type: ignore[arg-type]
+                if deps_result.get("success"):
+                    for ent in deps_result.get("dependencies", {}).get("entities", []):
+                        if isinstance(ent, str) and not ent.startswith("script."):
+                            entity_candidates.add(ent)
+
+            sample_entities = sorted(entity_candidates)[:5]
+            if sample_entities:
+                history_filter = ",".join(sample_entities)
+                entity_hist_result = make_ha_request(
+                    ha_url, ha_token,
+                    f"/api/history/period/{start_time}?filter_entity_id={history_filter}",
+                )
+                if entity_hist_result.get("success") and isinstance(entity_hist_result.get("data"), list):
+                    for series in entity_hist_result["data"]:
+                        if not isinstance(series, list) or len(series) < 2:
+                            continue
+                        eid = series[0].get("entity_id", "unknown") if series else "unknown"
+                        for point in series[-5:]:
+                            idx = series.index(point)
+                            prev_point = series[idx - 1] if idx > 0 else None
+                            state_changes.append({
+                                "entity_id": eid,
+                                "from": prev_point.get("state") if prev_point else None,
+                                "to": point.get("state"),
+                                "when": point.get("last_changed") or point.get("last_updated"),
+                            })
+            response["state_changes"] = state_changes
+
+            context_chain: list[dict[str, Any]] = []
+            if logbook_result.get("success") and isinstance(logbook_result.get("data"), list):
+                context_ids_seen: dict[str, dict[str, Any]] = {}
+                for entry in logbook_result["data"]:
+                    ctx_id = entry.get("context_id")
+                    if ctx_id and ctx_id not in context_ids_seen:
+                        context_ids_seen[ctx_id] = {
+                            "context_id": ctx_id,
+                            "parent_id": entry.get("context_parent_id"),
+                            "entries_count": 1,
+                        }
+                    elif ctx_id:
+                        context_ids_seen[ctx_id]["entries_count"] += 1
+                context_chain = list(context_ids_seen.values())
+            response["context_chain"] = context_chain
+
+        except Exception:
+            response.setdefault("recent_activity", [])
+            response.setdefault("state_changes", [])
+            response.setdefault("context_chain", [])
 
     return response
 
@@ -2126,11 +2299,12 @@ def register_automation_tools(mcp, config_path, ha_url=None, ha_token=None) -> N
         uses_blueprint: bool | None = None,
         deep: bool = False,
         category: str | None = None,
+        include_entity_id: bool = False,
     ) -> str:
         """[READ] Search automations by alias, description, mode, or blueprint usage. ~95% token savings vs listing all.
 
         ~95% token savings when searching for a specific automation.
-        Instead of: list_automations() (111 items) → search (1-5 items)
+        Instead of: list_automations() (111 items) -> search (1-5 items)
 
         Args:
             search_term: Searches in id, alias, description (case-insensitive)
@@ -2139,6 +2313,7 @@ def register_automation_tools(mcp, config_path, ha_url=None, ha_token=None) -> N
             uses_blueprint: True = only blueprint, False = only native, None = all
             deep: Recursively search nested fields (variables, choose branches, sequences) (default: False)
             category: Filter by category_id or category_name (default: None)
+            include_entity_id: Whether to include resolved entity_id from entity registry (default: False)
 
         Returns:
             JSON with matching automations, optional full code, and match_paths when deep=True
@@ -2158,6 +2333,7 @@ def register_automation_tools(mcp, config_path, ha_url=None, ha_token=None) -> N
                 uses_blueprint=uses_blueprint,
                 deep=deep,
                 category=category,
+                include_entity_id=include_entity_id,
                 config_path=config_path,
             )
             return (
@@ -2311,22 +2487,23 @@ def register_automation_tools(mcp, config_path, ha_url=None, ha_token=None) -> N
             return _error_response(str(exc))
 
     @mcp.tool()
-    def get_automation_usage_stats(automation_id: str, hours_back: int = 24) -> str:
+    def get_automation_usage_stats(
+        automation_id: str, hours_back: int = 24, detail_level: str = "summary"
+    ) -> str:
         """[READ] Get automation usage statistics: run count, last triggered time, recent activity from history.
 
         Target: Automation usage statistics.
 
-        returns:
-            - last_run: Last run (based on history + last_triggered)
-            - run_count: Run count from logs (history)
-            - is_working: Whether automation actually works (active state + recent triggers)
-            - missing_entities: Entities used in automation that no longer exist in HA
-
-        Useful for debugging "does the automation even trigger".
-
         Args:
-            automation_id: Alias or id from automations.yaml (prefer alias)
-            hours_back: How many hours back to check history (default: 24)
+            automation_id: Alias or id from automations.yaml (prefer alias).
+            hours_back: How many hours back to check history (default: 24).
+            detail_level: 'summary' (default, backward compatible) or 'full'. 'full' adds
+                recent_activity (logbook entries), state_changes (dependency entity state
+                transitions), and context_chain (context_id relationships).
+
+        Returns:
+            JSON with success, automation metadata, stats, and optionally recent_activity,
+            state_changes, and context_chain when detail_level='full'.
         """
         try:
             result = _do_get_automation_usage_stats(
@@ -2335,6 +2512,7 @@ def register_automation_tools(mcp, config_path, ha_url=None, ha_token=None) -> N
                 config_path=config_path,
                 ha_url=ha_url,
                 ha_token=ha_token,
+                detail_level=detail_level,
             )
             return (
                 _success_response(result)
@@ -2527,6 +2705,29 @@ def register_automation_tools(mcp, config_path, ha_url=None, ha_token=None) -> N
             return _error_response(str(exc))
 
     @mcp.tool()
+    async def get_automation_entity_id(identifier: str) -> str:
+        """[READ] Resolve automation alias to entity_id. Searches HA entity registry for automation.* entities matching by friendly_name (alias).
+
+        Args:
+            identifier: Automation alias or partial name to search for (e.g., "Morning Routine").
+
+        Returns:
+            JSON with alias, entity_id, unique_id, and optionally matches_count for partial matches.
+        """
+        try:
+            result = _do_get_automation_entity_id(
+                identifier, config_path, ha_url, ha_token
+            )
+            return (
+                _success_response(result)
+                if result.get("entity_id")
+                else json.dumps(result)
+            )
+        except Exception as exc:
+            _logger.exception("get_automation_entity_id failed")
+            return _error_response(str(exc))
+
+    @mcp.tool()
     def diagnose_category_alias_mismatch() -> str:
         """Detect mismatches between automation alias prefixes and assigned categories.
 
@@ -2550,6 +2751,9 @@ def register_automation_tools(mcp, config_path, ha_url=None, ha_token=None) -> N
             _logger.exception("diagnose_category_alias_mismatch failed")
             return _error_response(str(exc))
 
+    register_manifest(
+        "get_automation_entity_id", make_manifest("get_automation_entity_id", latency="fast")
+    )
     register_manifest(
         "search_inside_automations", make_manifest("search_inside_automations", latency="fast")
     )

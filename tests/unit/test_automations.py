@@ -187,6 +187,85 @@ class TestSearchAutomations:
         assert data["matched_count"] == 2
 
 
+    def test_backward_compat_no_entity_id(self, mock_mcp, config_path):
+        """include_entity_id=False (default) produces same output as before."""
+        register_automation_tools(mock_mcp, config_path)
+
+        tool = mock_mcp._tools["search_automations"]
+
+        # Default call (no include_entity_id)
+        data_default = json.loads(tool(search_term="Test"))
+        # Explicit False
+        data_explicit = json.loads(tool(search_term="Test", include_entity_id=False))
+
+        assert data_default["success"] is True
+        assert data_explicit["success"] is True
+        assert data_default["matched_count"] == data_explicit["matched_count"]
+        # No entity_id field when include_entity_id is False/omitted
+        for result in data_default["results"]:
+            assert "entity_id" not in result
+        for result in data_explicit["results"]:
+            assert "entity_id" not in result
+
+    def test_include_entity_id_adds_field(self, mock_mcp, config_path):
+        """include_entity_id=True adds entity_id field to each result."""
+        mock_registry = {
+            "data": {
+                "entities": [
+                    {
+                        "entity_id": "automation.test_one",
+                        "unique_id": "123",
+                        "name": "Test Automation One",
+                        "original_name": "Test Automation One",
+                    },
+                    {
+                        "entity_id": "automation.another",
+                        "unique_id": "456",
+                        "name": "Another Automation",
+                        "original_name": "Another Automation",
+                    },
+                ]
+            }
+        }
+
+        with patch("tools.automations.load_registry", return_value=mock_registry):
+            register_automation_tools(mock_mcp, config_path)
+            tool = mock_mcp._tools["search_automations"]
+            data = json.loads(tool(search_term="Test", include_entity_id=True))
+
+        assert data["success"] is True
+        assert data["matched_count"] == 1
+        result = data["results"][0]
+        assert result["entity_id"] == "automation.test_one"
+        # Other fields unchanged
+        assert result["alias"] == "Test Automation One"
+
+    def test_include_entity_id_null_when_not_found(self, mock_mcp, config_path):
+        """include_entity_id=True shows null when no entity registry match."""
+        register_automation_tools(mock_mcp, config_path)
+
+        tool = mock_mcp._tools["search_automations"]
+        data = json.loads(tool(search_term="Test", include_entity_id=True))
+
+        assert data["success"] is True
+        assert data["matched_count"] == 1
+        # No .storage/core.entity_registry file exists, so entity_id is null
+        assert data["results"][0]["entity_id"] is None
+
+    def test_include_entity_id_exception_handler(self, mock_mcp, config_path):
+        """Exception handler catches failure and returns error."""
+        with patch(
+            "tools.automations._do_search_automations",
+            side_effect=RuntimeError("entity_id lookup failed"),
+        ):
+            register_automation_tools(mock_mcp, config_path)
+            tool = mock_mcp._tools["search_automations"]
+            data = json.loads(tool(search_term="Test", include_entity_id=True))
+
+        assert data["success"] is False
+        assert "entity_id lookup failed" in data.get("error", "")
+
+
 class TestAutomationDependencies:
     def test_get_automation_dependencies(self, mock_mcp, config_path):
         register_automation_tools(mock_mcp, config_path)
@@ -402,6 +481,238 @@ class TestAutomationUsageStats:
 
         assert data["success"] is False
         assert "HA API" in data["error"] or "ha_url" in data["error"]
+
+    def test_detail_level_full(self, mock_mcp, config_path, ha_url, ha_token):
+        """detail_level='full' adds recent_activity, state_changes, and context_chain."""
+        automation_state = {
+            "entity_id": "automation.123",
+            "state": "on",
+            "attributes": {
+                "last_triggered": "2025-01-01T12:00:00+00:00",
+                "friendly_name": "Test Automation One",
+            },
+        }
+        history_series = [
+            [
+                {
+                    "entity_id": "automation.123",
+                    "state": "off",
+                    "last_changed": "2025-01-01T10:00:00+00:00",
+                },
+                {
+                    "entity_id": "automation.123",
+                    "state": "on",
+                    "last_changed": "2025-01-01T11:00:00+00:00",
+                },
+                {
+                    "entity_id": "automation.123",
+                    "state": "off",
+                    "last_changed": "2025-01-01T12:00:00+00:00",
+                },
+            ]
+        ]
+        logbook_entries = [
+            {
+                "when": "2025-01-01T11:00:00.000000+00:00",
+                "name": "Test Automation One",
+                "message": "triggered by state of binary_sensor.door",
+                "entity_id": "automation.123",
+                "context_id": "ctx_001",
+                "domain": "automation",
+            },
+            {
+                "when": "2025-01-01T11:00:01.000000+00:00",
+                "name": "Light Room",
+                "message": "changed to on",
+                "entity_id": "light.room",
+                "context_id": "ctx_001",
+                "context_parent_id": "parent_ctx",
+                "domain": "light",
+            },
+        ]
+        entity_history = [
+            [
+                {
+                    "entity_id": "light.room",
+                    "state": "off",
+                    "last_changed": "2025-01-01T10:00:00+00:00",
+                    "last_updated": "2025-01-01T10:00:00+00:00",
+                },
+                {
+                    "entity_id": "light.room",
+                    "state": "on",
+                    "last_changed": "2025-01-01T11:00:01+00:00",
+                    "last_updated": "2025-01-01T11:00:01+00:00",
+                },
+            ]
+        ]
+
+        call_log = []
+
+        def make_ha_request_side_effect(
+            ha_url_, ha_token_, endpoint, method="GET", data=None, **kwargs
+        ):
+            call_log.append(endpoint)
+            if endpoint == "/api/states":
+                return {"success": True, "data": [automation_state]}
+            if endpoint.startswith("/api/states/automation."):
+                return {"success": True, "data": automation_state}
+            if endpoint.startswith("/api/history/period/") and "automation.123" in endpoint:
+                return {"success": True, "data": history_series}
+            if endpoint.startswith("/api/logbook/"):
+                return {"success": True, "data": logbook_entries}
+            if endpoint.startswith("/api/history/period/") and "light.room" in endpoint:
+                return {"success": True, "data": entity_history}
+            return {"success": False, "error": "Unexpected endpoint"}
+
+        with patch("tools.automations.make_ha_request", side_effect=make_ha_request_side_effect):
+            register_automation_tools(mock_mcp, config_path, ha_url, ha_token)
+            tool = mock_mcp._tools["get_automation_usage_stats"]
+            result = tool("Test Automation One", hours_back=24, detail_level="full")
+            data = json.loads(result)
+
+        assert data["success"] is True
+        assert "recent_activity" in data
+        assert "state_changes" in data
+        assert "context_chain" in data
+        assert len(data["recent_activity"]) > 0
+        assert data["recent_activity"][0]["context_id"] == "ctx_001"
+        assert len(data["context_chain"]) > 0
+
+    def test_detail_level_full_empty_logbook(self, mock_mcp, config_path, ha_url, ha_token):
+        """Empty logbook response yields recent_activity=[] without error."""
+        automation_state = {
+            "entity_id": "automation.123",
+            "state": "on",
+            "attributes": {
+                "last_triggered": "2025-01-01T12:00:00+00:00",
+                "friendly_name": "Test Automation One",
+            },
+        }
+        history_series: list = []
+
+        def make_ha_request_side_effect(
+            ha_url_, ha_token_, endpoint, method="GET", data=None, **kwargs
+        ):
+            if endpoint == "/api/states":
+                return {"success": True, "data": [automation_state]}
+            if endpoint.startswith("/api/states/automation."):
+                return {"success": True, "data": automation_state}
+            if endpoint.startswith("/api/history/period/") and "automation.123" in endpoint:
+                return {"success": True, "data": history_series}
+            if endpoint.startswith("/api/logbook/"):
+                return {"success": True, "data": []}
+            return {"success": False, "error": "Unexpected endpoint"}
+
+        with patch("tools.automations.make_ha_request", side_effect=make_ha_request_side_effect):
+            register_automation_tools(mock_mcp, config_path, ha_url, ha_token)
+            tool = mock_mcp._tools["get_automation_usage_stats"]
+            result = tool("Test Automation One", hours_back=24, detail_level="full")
+            data = json.loads(result)
+
+        assert data["success"] is True
+        assert data["recent_activity"] == []
+        assert data["state_changes"] == []
+        assert data["context_chain"] == []
+
+    def test_detail_level_full_logbook_error(self, mock_mcp, config_path, ha_url, ha_token):
+        """Logbook API error is handled gracefully with empty lists."""
+        automation_state = {
+            "entity_id": "automation.123",
+            "state": "on",
+            "attributes": {
+                "last_triggered": "2025-01-01T12:00:00+00:00",
+                "friendly_name": "Test Automation One",
+            },
+        }
+        history_series: list = []
+
+        def make_ha_request_side_effect(
+            ha_url_, ha_token_, endpoint, method="GET", data=None, **kwargs
+        ):
+            if endpoint == "/api/states":
+                return {"success": True, "data": [automation_state]}
+            if endpoint.startswith("/api/states/automation."):
+                return {"success": True, "data": automation_state}
+            if endpoint.startswith("/api/history/period/") and "automation.123" in endpoint:
+                return {"success": True, "data": history_series}
+            if endpoint.startswith("/api/logbook/"):
+                return {"success": False, "error": "API unavailable"}
+            return {"success": False, "error": "Unexpected endpoint"}
+
+        with patch("tools.automations.make_ha_request", side_effect=make_ha_request_side_effect):
+            register_automation_tools(mock_mcp, config_path, ha_url, ha_token)
+            tool = mock_mcp._tools["get_automation_usage_stats"]
+            result = tool("Test Automation One", hours_back=24, detail_level="full")
+            data = json.loads(result)
+
+        assert data["success"] is True
+        assert data["recent_activity"] == []
+        assert data["context_chain"] == []
+
+    def test_detail_level_invalid(self, mock_mcp, config_path, ha_url, ha_token):
+        """Invalid detail_level value returns a clear validation error."""
+        register_automation_tools(mock_mcp, config_path, ha_url, ha_token)
+        tool = mock_mcp._tools["get_automation_usage_stats"]
+        result = tool("Test Automation One", hours_back=24, detail_level="invalid")
+        data = json.loads(result)
+
+        assert data["success"] is False
+        assert "detail_level" in data.get("error", "").lower()
+
+    def test_detail_level_summary_same_output(self, mock_mcp, config_path, ha_url, ha_token):
+        """detail_level='summary' (default) produces same output structure as before."""
+        automation_state = {
+            "entity_id": "automation.123",
+            "state": "on",
+            "attributes": {
+                "last_triggered": "2025-01-01T12:00:00+00:00",
+                "friendly_name": "Test Automation One",
+            },
+        }
+        history_series = [
+            [
+                {
+                    "entity_id": "automation.123",
+                    "state": "off",
+                    "last_changed": "2025-01-01T10:00:00+00:00",
+                },
+                {
+                    "entity_id": "automation.123",
+                    "state": "on",
+                    "last_changed": "2025-01-01T11:00:00+00:00",
+                },
+                {
+                    "entity_id": "automation.123",
+                    "state": "off",
+                    "last_changed": "2025-01-01T12:00:00+00:00",
+                },
+            ]
+        ]
+
+        def make_ha_request_side_effect(
+            ha_url_, ha_token_, endpoint, method="GET", data=None, **kwargs
+        ):
+            if endpoint == "/api/states":
+                return {"success": True, "data": [automation_state]}
+            if endpoint.startswith("/api/states/automation."):
+                return {"success": True, "data": automation_state}
+            if endpoint.startswith("/api/history/period/"):
+                return {"success": True, "data": history_series}
+            return {"success": False, "error": "Unexpected endpoint"}
+
+        with patch("tools.automations.make_ha_request", side_effect=make_ha_request_side_effect):
+            register_automation_tools(mock_mcp, config_path, ha_url, ha_token)
+            tool = mock_mcp._tools["get_automation_usage_stats"]
+            result = tool("Test Automation One", hours_back=24)
+            data = json.loads(result)
+
+        assert data["success"] is True
+        assert "recent_activity" not in data
+        assert "state_changes" not in data
+        assert "context_chain" not in data
+        assert "stats" in data
+        assert "missing_entities" in data
 
 
 VALIDATE_TRIGGERS_YAML = """
@@ -1309,6 +1620,131 @@ class TestExceptionHandler:
 
         assert data["success"] is False
         assert "listing failed" in data.get("error", "")
+
+    def test_exception_in_usage_stats_returns_error(
+        self, mock_mcp, config_path, ha_url, ha_token
+    ):
+        """When _do_get_automation_usage_stats raises, wrapper returns error."""
+        register_automation_tools(mock_mcp, config_path, ha_url, ha_token)
+
+        with patch(
+            "tools.automations._do_get_automation_usage_stats",
+            side_effect=RuntimeError("stats explosion"),
+        ):
+            tool = mock_mcp._tools["get_automation_usage_stats"]
+            data = json.loads(tool("Test Automation One"))
+
+        assert data["success"] is False
+        assert "stats explosion" in data.get("error", "")
+
+
+MOCK_AUTOMATION_REGISTRY = {
+    "data": {
+        "entities": [
+            {
+                "entity_id": "automation.morning_routine",
+                "name": "Morning Routine",
+                "original_name": "Morning Routine",
+                "unique_id": "abc123",
+            },
+            {
+                "entity_id": "automation.motion_light",
+                "name": "Motion Light",
+                "original_name": "Motion Light",
+                "unique_id": "def456",
+            },
+            {
+                "entity_id": "automation.evening_lights",
+                "name": "Evening Lights",
+                "original_name": "Evening Lights",
+                "unique_id": "ghi789",
+            },
+            {
+                "entity_id": "automation.enhanced_smart_control_air_conditioner_power_manager",
+                "name": "Enhanced Smart Control - AC Power Manager",
+                "original_name": "Enhanced Smart Control - AC Power Manager",
+                "unique_id": "jkl012",
+            },
+            {
+                "entity_id": "automation.doorbell_alert",
+                "name": "Doorbell Alert",
+                "original_name": "Doorbell Alert",
+                "unique_id": "mno345",
+            },
+        ]
+    }
+}
+
+
+class TestGetAutomationEntityId:
+    """Tests for get_automation_entity_id tool."""
+
+    @pytest.mark.asyncio
+    async def test_exact_match(self, mock_mcp, config_path):
+        """Exact alias match returns entity_id and unique_id."""
+        with patch("tools.automations.load_registry", return_value=MOCK_AUTOMATION_REGISTRY):
+            register_automation_tools(mock_mcp, config_path)
+            tool = mock_mcp._tools["get_automation_entity_id"]
+            data = json.loads(await tool("Morning Routine"))
+        assert data["success"] is True
+        assert data["alias"] == "Morning Routine"
+        assert data["entity_id"] == "automation.morning_routine"
+        assert data["unique_id"] == "abc123"
+        assert "matches_count" not in data
+
+    @pytest.mark.asyncio
+    async def test_case_insensitive_match(self, mock_mcp, config_path):
+        """Match is case-insensitive."""
+        with patch("tools.automations.load_registry", return_value=MOCK_AUTOMATION_REGISTRY):
+            register_automation_tools(mock_mcp, config_path)
+            tool = mock_mcp._tools["get_automation_entity_id"]
+            data = json.loads(await tool("morning routine"))
+        assert data["success"] is True
+        assert data["entity_id"] == "automation.morning_routine"
+
+    @pytest.mark.asyncio
+    async def test_partial_match(self, mock_mcp, config_path):
+        """Partial match returns first match with matches_count."""
+        with patch("tools.automations.load_registry", return_value=MOCK_AUTOMATION_REGISTRY):
+            register_automation_tools(mock_mcp, config_path)
+            tool = mock_mcp._tools["get_automation_entity_id"]
+            data = json.loads(await tool("Light"))
+        assert data["success"] is True
+        assert data["matches_count"] == 2
+        assert "light" in data["alias"].lower()
+
+    @pytest.mark.asyncio
+    async def test_no_match(self, mock_mcp, config_path):
+        """No match returns error."""
+        with patch("tools.automations.load_registry", return_value=MOCK_AUTOMATION_REGISTRY):
+            register_automation_tools(mock_mcp, config_path)
+            tool = mock_mcp._tools["get_automation_entity_id"]
+            data = json.loads(await tool("Nonexistent"))
+        assert data["success"] is False
+        assert "No automation found matching" in data["error"]
+
+    @pytest.mark.asyncio
+    async def test_empty_string_returns_error(self, mock_mcp, config_path):
+        """Empty identifier returns error."""
+        with patch("tools.automations.load_registry", return_value=MOCK_AUTOMATION_REGISTRY):
+            register_automation_tools(mock_mcp, config_path)
+            tool = mock_mcp._tools["get_automation_entity_id"]
+            data = json.loads(await tool(""))
+        assert data["success"] is False
+        assert "non-empty" in data["error"].lower()
+
+    @pytest.mark.asyncio
+    async def test_exception_handler(self, mock_mcp, config_path):
+        """Exception in _do_get_automation_entity_id returns error."""
+        register_automation_tools(mock_mcp, config_path)
+        with patch(
+            "tools.automations._do_get_automation_entity_id",
+            side_effect=RuntimeError("boom"),
+        ):
+            tool = mock_mcp._tools["get_automation_entity_id"]
+            data = json.loads(await tool("Morning Routine"))
+        assert data["success"] is False
+        assert "boom" in data.get("error", "")
 
 
 class TestDiagnoseAutomationAliases:
