@@ -6,9 +6,9 @@
       "work_id": "mcp-standard-v2-compliance-18dd5833",
       "active_plan": "/home/pablo/ha-mcp-readonly/.omo/plans/mcp-standard-v2-compliance.md",
       "plan_name": "mcp-standard-v2-compliance",
-      "status": "active",
+      "status": "completed",
       "started_at": "2026-06-06T23:20:20.104Z",
-      "updated_at": "2026-06-06T23:21:00.844Z",
+      "updated_at": "2026-06-06T23:28:15.514Z",
       "session_ids": [
         "opencode:ses_1619fc89dffe3hKKyOL4vDO1T6",
         "opencode:ses_160c2b594fferLtOw36hVhrvn6",
@@ -30,13 +30,15 @@
           "category": "quick",
           "updated_at": "2026-06-06T23:21:00.844Z"
         }
-      }
+      },
+      "ended_at": "2026-06-06T23:28:15.514Z",
+      "elapsed_ms": 475410
     }
   },
   "active_plan": "/home/pablo/ha-mcp-readonly/.omo/plans/mcp-standard-v2-compliance.md",
   "started_at": "2026-06-06T23:20:20.104Z",
-  "status": "active",
-  "updated_at": "2026-06-06T23:21:00.844Z",
+  "status": "completed",
+  "updated_at": "2026-06-06T23:28:15.514Z",
   "session_ids": [
     "opencode:ses_1619fc89dffe3hKKyOL4vDO1T6",
     "opencode:ses_160c2b594fferLtOw36hVhrvn6",
@@ -59,5 +61,7 @@
       "updated_at": "2026-06-06T23:21:00.844Z"
     }
   },
-  "agent": "atlas"
+  "agent": "atlas",
+  "ended_at": "2026-06-06T23:28:15.514Z",
+  "elapsed_ms": 475410
 }
