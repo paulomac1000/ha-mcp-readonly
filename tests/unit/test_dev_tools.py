@@ -223,6 +223,20 @@ class TestTemplateTesting:
         assert data["success"] is True
         assert data["analysis"]["complexity_score"] >= 3
 
+    def test_get_template_performance_invalid_template(
+        self, mock_mcp, ha_url, ha_token, config_path
+    ):
+        """Template that causes make_ha_request to raise -> wrapper exception handler."""
+        with patch(
+            "tools.dev_tools.make_ha_request", side_effect=ConnectionError("HA unreachable")
+        ):
+            register_dev_tools(mock_mcp, ha_url, ha_token, config_path)
+            data = json.loads(
+                mock_mcp._tools["get_template_performance"]("{{ bad }}", iterations=2)
+            )
+        assert data["success"] is False
+        assert "HA unreachable" in data["error"]
+
 
 class TestValidation:
     """Tests for validation tools."""
@@ -1378,6 +1392,27 @@ class TestCompareTemplates:
         assert data["match"] is False
         assert data["macro_cache_stale"] is True
         assert "stale" in (data["warning"] or "").lower()
+
+    def test_compare_templates_both_fail(self, mock_mcp, ha_url, ha_token, config_path):
+        """Both templates return errors -> 'Both templates failed to render.' warning."""
+        with patch("tools.dev_tools.make_ha_request") as mock_req:
+            mock_req.side_effect = [
+                {"success": False, "error": "Error A"},
+                {"success": False, "error": "Error B"},
+            ]
+            register_dev_tools(mock_mcp, ha_url, ha_token, config_path)
+            data = json.loads(
+                mock_mcp._tools["compare_templates"](
+                    template_a="{{ bad }}",
+                    template_b="{{ also bad }}",
+                )
+            )
+        assert data["success"] is True
+        assert data["match"] is False
+        assert "Error:" in data["result_a"]
+        assert "Error:" in data["result_b"]
+        assert data["warning"] == "Both templates failed to render."
+        assert data["macro_cache_stale"] is False
 
     def test_compare_templates_exception_handler(self, mock_mcp, ha_url, ha_token, config_path):
         register_dev_tools(mock_mcp, ha_url, ha_token, config_path)

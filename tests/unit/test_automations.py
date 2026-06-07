@@ -1950,3 +1950,371 @@ class TestDiagnoseAutomationFragileDelay:
         assert fragile_issues[0]["severity"] == "error"
         assert "fragile" in fragile_issues[0]["message"].lower()
         assert "delay" in fragile_issues[0]["message"].lower()
+
+
+class TestUsageStatsFullDetailHistoryException:
+    def test_get_automation_usage_stats_full_detail_history_error(
+        self, mock_mcp, config_path, ha_url, ha_token
+    ):
+        """History processing exception triggers graceful fallback to empty lists."""
+        automation_state = {
+            "entity_id": "automation.123",
+            "state": "on",
+            "attributes": {
+                "last_triggered": "2025-01-01T12:00:00+00:00",
+                "friendly_name": "Test Automation One",
+            },
+        }
+        history_series = [
+            [
+                {
+                    "entity_id": "automation.123",
+                    "state": "off",
+                    "last_changed": "2025-01-01T10:00:00+00:00",
+                },
+                {
+                    "entity_id": "automation.123",
+                    "state": "on",
+                    "last_changed": "2025-01-01T11:00:00+00:00",
+                },
+                {
+                    "entity_id": "automation.123",
+                    "state": "off",
+                    "last_changed": "2025-01-01T12:00:00+00:00",
+                },
+            ]
+        ]
+        logbook_entries = [
+            {
+                "when": "2025-01-01T11:00:00.000000+00:00",
+                "name": "Test Automation One",
+                "message": "triggered by state",
+                "entity_id": "automation.123",
+                "context_id": "ctx_001",
+                "domain": "automation",
+            },
+        ]
+
+        raised_once = {"logbook": False}
+
+        def make_ha_request_side_effect(
+            ha_url_, ha_token_, endpoint, method="GET", data=None, **kwargs
+        ):
+            if endpoint == "/api/states":
+                return {"success": True, "data": [automation_state]}
+            if endpoint.startswith("/api/states/automation."):
+                return {"success": True, "data": automation_state}
+            if endpoint.startswith("/api/history/period/") and "automation.123" in endpoint:
+                return {"success": True, "data": history_series}
+            if endpoint.startswith("/api/logbook/"):
+                raised_once["logbook"] = True
+                return {"success": True, "data": logbook_entries}
+            if endpoint.startswith("/api/history/period/") and (
+                "light.room" in endpoint or "binary_sensor.door" in endpoint
+            ):
+                raise RuntimeError("history API connection reset")
+            return {"success": False, "error": "Unexpected endpoint"}
+
+        with patch("tools.automations.make_ha_request", side_effect=make_ha_request_side_effect):
+            register_automation_tools(mock_mcp, config_path, ha_url, ha_token)
+            tool = mock_mcp._tools["get_automation_usage_stats"]
+            result = tool("Test Automation One", hours_back=24, detail_level="full")
+            data = json.loads(result)
+
+        assert data["success"] is True
+        assert raised_once["logbook"] is True
+        assert data["state_changes"] == []
+        assert data["context_chain"] == []
+
+
+class TestUsageStatsFullDetailAll:
+    def test_get_automation_usage_stats_full_detail_logbook_empty(
+        self, mock_mcp, config_path, ha_url, ha_token
+    ):
+        """Logbook returns empty list, recent_activity is empty without error."""
+        automation_state = {
+            "entity_id": "automation.123",
+            "state": "on",
+            "attributes": {
+                "last_triggered": "2025-01-01T12:00:00+00:00",
+                "friendly_name": "Test Automation One",
+            },
+        }
+        history_series: list = []
+
+        def make_ha_request_side_effect(
+            ha_url_, ha_token_, endpoint, method="GET", data=None, **kwargs
+        ):
+            if endpoint == "/api/states":
+                return {"success": True, "data": [automation_state]}
+            if endpoint.startswith("/api/states/automation."):
+                return {"success": True, "data": automation_state}
+            if endpoint.startswith("/api/history/period/"):
+                return {"success": True, "data": history_series}
+            if endpoint.startswith("/api/logbook/"):
+                return {"success": True, "data": []}
+            return {"success": False, "error": "Unexpected endpoint"}
+
+        with patch("tools.automations.make_ha_request", side_effect=make_ha_request_side_effect):
+            register_automation_tools(mock_mcp, config_path, ha_url, ha_token)
+            tool = mock_mcp._tools["get_automation_usage_stats"]
+            result = tool("Test Automation One", hours_back=24, detail_level="full")
+            data = json.loads(result)
+
+        assert data["success"] is True
+        assert data["recent_activity"] == []
+        assert data["state_changes"] == []
+        assert data["context_chain"] == []
+
+    def test_get_automation_usage_stats_full_detail_logbook_error(
+        self, mock_mcp, config_path, ha_url, ha_token
+    ):
+        """Logbook API returns error, recent_activity and context_chain fall back to empty."""
+        automation_state = {
+            "entity_id": "automation.123",
+            "state": "on",
+            "attributes": {
+                "last_triggered": "2025-01-01T12:00:00+00:00",
+                "friendly_name": "Test Automation One",
+            },
+        }
+        history_series: list = []
+
+        def make_ha_request_side_effect(
+            ha_url_, ha_token_, endpoint, method="GET", data=None, **kwargs
+        ):
+            if endpoint == "/api/states":
+                return {"success": True, "data": [automation_state]}
+            if endpoint.startswith("/api/states/automation."):
+                return {"success": True, "data": automation_state}
+            if endpoint.startswith("/api/history/period/"):
+                return {"success": True, "data": history_series}
+            if endpoint.startswith("/api/logbook/"):
+                return {"success": False, "error": "logbook offline"}
+            return {"success": False, "error": "Unexpected endpoint"}
+
+        with patch("tools.automations.make_ha_request", side_effect=make_ha_request_side_effect):
+            register_automation_tools(mock_mcp, config_path, ha_url, ha_token)
+            tool = mock_mcp._tools["get_automation_usage_stats"]
+            result = tool("Test Automation One", hours_back=24, detail_level="full")
+            data = json.loads(result)
+
+        assert data["success"] is True
+        assert data["recent_activity"] == []
+        assert data["context_chain"] == []
+
+    def test_get_automation_usage_stats_detail_level_invalid(
+        self, mock_mcp, config_path, ha_url, ha_token
+    ):
+        """Invalid detail_level value returns validation error."""
+        register_automation_tools(mock_mcp, config_path, ha_url, ha_token)
+        tool = mock_mcp._tools["get_automation_usage_stats"]
+        result = tool("Test Automation One", hours_back=24, detail_level="minimal")
+        data = json.loads(result)
+
+        assert data["success"] is False
+        assert "detail_level" in data.get("error", "").lower()
+        assert "minimal" in data.get("error", "")
+
+
+class TestSearchAutomationsNoRegistry:
+    def test_search_automations_include_entity_id_no_registry(self, mock_mcp, config_path):
+        """Entity registry file missing, entity_id is null for each result."""
+        register_automation_tools(mock_mcp, config_path)
+        tool = mock_mcp._tools["search_automations"]
+        data = json.loads(tool(search_term="Test", include_entity_id=True))
+
+        assert data["success"] is True
+        assert data["matched_count"] == 1
+        assert data["results"][0]["entity_id"] is None
+        assert data["results"][0]["alias"] == "Test Automation One"
+
+
+class TestGetAutomationEntityIdEdgeCase:
+    @pytest.mark.asyncio
+    async def test_get_automation_entity_id_empty_string(self, mock_mcp, config_path):
+        """Empty string identifier returns validation error with clear message."""
+        with patch("tools.automations.load_registry", return_value={"data": {"entities": []}}):
+            register_automation_tools(mock_mcp, config_path)
+            tool = mock_mcp._tools["get_automation_entity_id"]
+            data = json.loads(await tool(""))
+
+        assert data["success"] is False
+        assert "non-empty" in data.get("error", "").lower()
+
+
+CHOOSE_BRANCHES_YAML = """
+- id: "cb001"
+  alias: "Choose Branch Automation"
+  description: "Automation using choose action with multiple branches"
+  mode: "single"
+  trigger:
+    - platform: state
+      entity_id: "binary_sensor.motion"
+      to: "on"
+  condition: []
+  action:
+    - choose:
+        - conditions:
+            - condition: state
+              entity_id: "light.living_room"
+              state: "on"
+          sequence:
+            - service: "light.turn_off"
+              target:
+                entity_id: "light.living_room"
+            - delay: 5
+        - conditions:
+            - condition: state
+              entity_id: "light.living_room"
+              state: "off"
+          sequence:
+            - service: "light.turn_on"
+              target:
+                entity_id: "light.living_room"
+            - delay: 5
+      default:
+        - service: "notify.mobile"
+          data:
+            message: "Choose branch defaulted"
+"""
+
+
+EMPTY_TRIGGERS_YAML = """
+- id: "et001"
+  alias: "Empty Triggers Automation"
+  description: "Automation with no triggers"
+  mode: "single"
+  trigger: []
+  condition: []
+  action:
+    - service: "light.turn_on"
+      target:
+        entity_id: "light.room"
+"""
+
+
+class TestChooseBranchesAndEdgeCases:
+    """Tests covering choose branches, empty triggers, and action edge cases."""
+
+    @pytest.fixture(autouse=True)
+    def setup(self, mock_mcp, config_path, ha_url, ha_token):
+        self.mock_mcp = mock_mcp
+        self.config_path = config_path
+        self.ha_url = ha_url
+        self.ha_token = ha_token
+
+    def test_automation_with_choose_branches(self):
+        """Diagnose automation with choose action and multiple branches."""
+        path = os.path.join(self.config_path, "automations.yaml")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(CHOOSE_BRANCHES_YAML)
+
+        sample_states = [
+            {
+                "entity_id": "binary_sensor.motion",
+                "state": "off",
+                "attributes": {},
+            },
+            {
+                "entity_id": "light.living_room",
+                "state": "on",
+                "attributes": {"friendly_name": "Living Room"},
+            },
+        ]
+
+        def make_ha_side_effect(ha_url_, ha_token_, endpoint, method="GET", data=None, **kwargs):
+            if endpoint == "/api/states":
+                return {"success": True, "data": sample_states}
+            if endpoint == "/api/template":
+                return {"success": True, "data": "OK"}
+            return {"success": False, "error": "Unexpected endpoint"}
+
+        with patch("tools.automations.make_ha_request", side_effect=make_ha_side_effect):
+            register_automation_tools(self.mock_mcp, self.config_path, self.ha_url, self.ha_token)
+            tool = self.mock_mcp._tools["diagnose_automation"]
+            data = json.loads(tool("Choose Branch Automation", detail_level="full"))
+
+        assert data["success"] is True
+        actions = data["action_analysis"]
+        choose_actions = [a for a in actions if a["type"] == "choose"]
+        assert len(choose_actions) == 1
+        assert "config" in choose_actions[0]
+        assert "choose" in choose_actions[0]["config"]
+
+    def test_automation_with_empty_triggers(self):
+        """Automation with empty trigger list still works correctly."""
+        path = os.path.join(self.config_path, "automations.yaml")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(EMPTY_TRIGGERS_YAML)
+
+        sample_states = [
+            {
+                "entity_id": "light.room",
+                "state": "on",
+                "attributes": {"friendly_name": "Room Light"},
+            },
+        ]
+
+        def make_ha_side_effect(ha_url_, ha_token_, endpoint, method="GET", data=None, **kwargs):
+            if endpoint == "/api/states":
+                return {"success": True, "data": sample_states}
+            if endpoint == "/api/template":
+                return {"success": True, "data": "OK"}
+            return {"success": False, "error": "Unexpected endpoint"}
+
+        with patch("tools.automations.make_ha_request", side_effect=make_ha_side_effect):
+            register_automation_tools(self.mock_mcp, self.config_path, self.ha_url, self.ha_token)
+            tool = self.mock_mcp._tools["diagnose_automation"]
+            data = json.loads(tool("Empty Triggers Automation", detail_level="full"))
+
+        assert data["success"] is True
+        assert data["statistics"]["total_triggers"] == 0
+        assert len(data["trigger_analysis"]) == 0
+        actions = data["action_analysis"]
+        assert len(actions) == 1
+        assert actions[0]["type"] == "service_call"
+
+    def test_search_automations_deep_inside_choose(self):
+        """Deep search finds terms within choose branches."""
+        path = os.path.join(self.config_path, "automations.yaml")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(CHOOSE_BRANCHES_YAML)
+
+        register_automation_tools(self.mock_mcp, self.config_path)
+        tool = self.mock_mcp._tools["search_automations"]
+        data = json.loads(tool(search_term="notify.mobile", deep=True))
+
+        assert data["success"] is True
+        assert data["matched_count"] == 1
+        assert data["results"][0]["alias"] == "Choose Branch Automation"
+        assert "match_paths" in data["results"][0]
+
+    def test_search_automations_shallow_miss_choose(self):
+        """Shallow search misses terms only in choose branches."""
+        path = os.path.join(self.config_path, "automations.yaml")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(CHOOSE_BRANCHES_YAML)
+
+        register_automation_tools(self.mock_mcp, self.config_path)
+        tool = self.mock_mcp._tools["search_automations"]
+        data = json.loads(tool(search_term="notify.mobile", deep=False))
+
+        assert data["success"] is True
+        assert data["matched_count"] == 0
+
+    def test_automation_dependencies_choose_branches(self):
+        """Dependencies are extracted from choose branches recursively."""
+        path = os.path.join(self.config_path, "automations.yaml")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(CHOOSE_BRANCHES_YAML)
+
+        register_automation_tools(self.mock_mcp, self.config_path)
+        tool = self.mock_mcp._tools["get_automation_dependencies"]
+        data = json.loads(tool("Choose Branch Automation"))
+
+        assert data["success"] is True
+        deps = data["dependencies"]
+        entities = deps["entities"]
+        assert "light.living_room" in entities
+        assert "binary_sensor.motion" in entities

@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "active_work_id": "pre-commit-hook-835df6ef",
+  "active_work_id": "codecov-coverage-fix-13d6e8df",
   "works": {
     "mcp-standard-v2-compliance-18dd5833": {
       "work_id": "mcp-standard-v2-compliance-18dd5833",
@@ -38,9 +38,9 @@
       "work_id": "pre-commit-hook-835df6ef",
       "active_plan": "/home/pablo/ha-mcp-readonly/.omo/plans/pre-commit-hook.md",
       "plan_name": "pre-commit-hook",
-      "status": "active",
+      "status": "completed",
       "started_at": "2026-06-07T11:47:34.690Z",
-      "updated_at": "2026-06-07T11:48:01.328Z",
+      "updated_at": "2026-06-07T12:43:35.416Z",
       "session_ids": [
         "opencode:ses_1619fc89dffe3hKKyOL4vDO1T6",
         "opencode:ses_15e16c888ffedp1udUqovyU5fE",
@@ -52,24 +52,50 @@
         "opencode:ses_15e16b6a7ffe3IWP7FSV4BFldS": "appended"
       },
       "agent": "atlas",
+      "task_sessions": {},
+      "ended_at": "2026-06-07T12:43:35.416Z",
+      "elapsed_ms": 3360726
+    },
+    "codecov-coverage-fix-13d6e8df": {
+      "work_id": "codecov-coverage-fix-13d6e8df",
+      "active_plan": "/home/pablo/ha-mcp-readonly/.omo/plans/codecov-coverage-fix.md",
+      "plan_name": "codecov-coverage-fix",
+      "status": "active",
+      "started_at": "2026-06-07T13:41:53.378Z",
+      "updated_at": "2026-06-07T13:42:39.930Z",
+      "session_ids": [
+        "opencode:ses_1619fc89dffe3hKKyOL4vDO1T6",
+        "opencode:ses_15dade3dcffesZUgUA7FJp2jGm",
+        "opencode:ses_15dadd639ffeLLyy1FOmMEoiG1",
+        "opencode:ses_15dadc971ffes1b36tgWsfMgeS"
+      ],
+      "session_origins": {
+        "opencode:ses_1619fc89dffe3hKKyOL4vDO1T6": "direct",
+        "opencode:ses_15dade3dcffesZUgUA7FJp2jGm": "appended",
+        "opencode:ses_15dadd639ffeLLyy1FOmMEoiG1": "appended",
+        "opencode:ses_15dadc971ffes1b36tgWsfMgeS": "appended"
+      },
+      "agent": "atlas",
       "task_sessions": {}
     }
   },
-  "active_plan": "/home/pablo/ha-mcp-readonly/.omo/plans/pre-commit-hook.md",
-  "started_at": "2026-06-07T11:47:34.690Z",
+  "active_plan": "/home/pablo/ha-mcp-readonly/.omo/plans/codecov-coverage-fix.md",
+  "started_at": "2026-06-07T13:41:53.378Z",
   "status": "active",
-  "updated_at": "2026-06-07T11:48:01.328Z",
+  "updated_at": "2026-06-07T13:42:39.930Z",
   "session_ids": [
     "opencode:ses_1619fc89dffe3hKKyOL4vDO1T6",
-    "opencode:ses_15e16c888ffedp1udUqovyU5fE",
-    "opencode:ses_15e16b6a7ffe3IWP7FSV4BFldS"
+    "opencode:ses_15dade3dcffesZUgUA7FJp2jGm",
+    "opencode:ses_15dadd639ffeLLyy1FOmMEoiG1",
+    "opencode:ses_15dadc971ffes1b36tgWsfMgeS"
   ],
   "session_origins": {
     "opencode:ses_1619fc89dffe3hKKyOL4vDO1T6": "direct",
-    "opencode:ses_15e16c888ffedp1udUqovyU5fE": "appended",
-    "opencode:ses_15e16b6a7ffe3IWP7FSV4BFldS": "appended"
+    "opencode:ses_15dade3dcffesZUgUA7FJp2jGm": "appended",
+    "opencode:ses_15dadd639ffeLLyy1FOmMEoiG1": "appended",
+    "opencode:ses_15dadc971ffes1b36tgWsfMgeS": "appended"
   },
-  "plan_name": "pre-commit-hook",
+  "plan_name": "codecov-coverage-fix",
   "task_sessions": {},
   "agent": "atlas"
 }

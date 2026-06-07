@@ -133,7 +133,7 @@ pre-commit install
 
 ## Verification
 
-- [ ] `pre-commit run --all-files` passes
-- [ ] All 8 hooks succeed
-- [ ] Same checks as CI `.github/workflows/ci.yml` lint + test jobs
-- [ ] `pre-commit install` creates `.git/hooks/pre-commit`
+- [x] `pre-commit run --all-files` passes
+- [x] All 8 hooks succeed
+- [x] Same checks as CI `.github/workflows/ci.yml` lint + test jobs
+- [x] `pre-commit install` creates `.git/hooks/pre-commit`

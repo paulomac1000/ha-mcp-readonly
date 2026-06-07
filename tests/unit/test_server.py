@@ -81,6 +81,19 @@ class TestListToolsEndpoint:
         total_in_categories = sum(len(v) for v in data["categories"].values())
         assert data["total"] == total_in_categories
 
+    def test_list_tools_detail_full(self, client):
+        """GET /api/tools?detail=full returns tools list with parameters (backward compat)."""
+        response = client.get("/api/tools?detail=full")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        assert "tools" in data
+        assert isinstance(data["tools"], list)
+        assert len(data["tools"]) > 0
+        for tool in data["tools"]:
+            assert "name" in tool
+            assert "description" in tool
+
 
 class TestCallToolEndpoint:
     """Tests for POST /api/tools/{tool_name}."""
@@ -149,6 +162,19 @@ class TestCallToolEndpoint:
         assert response.status_code == 400
         data = response.json()
         assert data["success"] is False
+
+
+class TestToolSchemaEndpoint:
+    """Tests for GET /api/tools/{tool_name}/schema."""
+
+    def test_get_tool_schema_nonexistent_tool(self, client):
+        """GET /api/tools/{name}/schema for nonexistent tool returns 404."""
+        response = client.get("/api/tools/nonexistent_tool_xyz/schema")
+        assert response.status_code == 404
+        data = response.json()
+        assert data["success"] is False
+        assert "not found" in data["error"].lower()
+        assert "available_tools" in data
 
 
 class TestContextEndpoints:
@@ -398,6 +424,13 @@ class TestToolCount:
         health_data = client.get("/api/health").json()
         tools_data = client.get("/api/tools").json()
         assert health_data["tool_count"] == tools_data["tool_count"]
+
+    def test_health_endpoint_tool_count_format(self, client):
+        """Verify tool_count is int (not str or float)."""
+        response = client.get("/api/health")
+        data = response.json()
+        assert isinstance(data["tool_count"], int)
+        assert data["tool_count"] > 0
 
     def test_list_tools_total_matches_items(self, client):
         tools_data = client.get("/api/tools").json()
