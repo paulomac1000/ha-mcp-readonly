@@ -51,8 +51,8 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install --upgrade pip
-          pip install pyyaml
+          pip install --break-system-packages --upgrade pip
+          pip install --break-system-packages pyyaml
 
       - name: Get changed markdown files
         id: changed-files

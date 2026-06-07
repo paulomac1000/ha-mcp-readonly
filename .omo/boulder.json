@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "active_work_id": "precommit-gap-analysis-17bbf280",
+  "active_work_id": "skills-audit-v2-1-0-15a83f1f",
   "works": {
     "mcp-standard-v2-compliance-18dd5833": {
       "work_id": "mcp-standard-v2-compliance-18dd5833",
@@ -84,7 +84,7 @@
       "work_id": "precommit-gap-analysis-17bbf280",
       "active_plan": "/home/pablo/ha-mcp-readonly/.omo/plans/precommit-gap-analysis.md",
       "plan_name": "precommit-gap-analysis",
-      "status": "active",
+      "status": "completed",
       "started_at": "2026-06-07T16:45:47.020Z",
       "updated_at": "2026-06-07T16:45:47.020Z",
       "session_ids": [
@@ -95,19 +95,39 @@
       },
       "agent": "atlas",
       "task_sessions": {}
+    },
+    "skills-audit-v2-1-0-15a83f1f": {
+      "work_id": "skills-audit-v2-1-0-15a83f1f",
+      "active_plan": "/home/pablo/ha-mcp-readonly/.omo/plans/skills-audit-v2-1-0.md",
+      "plan_name": "skills-audit-v2-1-0",
+      "status": "active",
+      "started_at": "2026-06-07T18:31:18.171Z",
+      "updated_at": "2026-06-07T18:31:43.806Z",
+      "session_ids": [
+        "opencode:ses_1619fc89dffe3hKKyOL4vDO1T6",
+        "opencode:ses_15ca51e5affe62kk9t6owTn3wb"
+      ],
+      "session_origins": {
+        "opencode:ses_1619fc89dffe3hKKyOL4vDO1T6": "direct",
+        "opencode:ses_15ca51e5affe62kk9t6owTn3wb": "appended"
+      },
+      "agent": "atlas",
+      "task_sessions": {}
     }
   },
-  "active_plan": "/home/pablo/ha-mcp-readonly/.omo/plans/precommit-gap-analysis.md",
-  "started_at": "2026-06-07T16:45:47.020Z",
+  "active_plan": "/home/pablo/ha-mcp-readonly/.omo/plans/skills-audit-v2-1-0.md",
+  "started_at": "2026-06-07T18:31:18.171Z",
   "status": "active",
-  "updated_at": "2026-06-07T16:45:47.020Z",
+  "updated_at": "2026-06-07T18:31:43.806Z",
   "session_ids": [
-    "opencode:ses_1619fc89dffe3hKKyOL4vDO1T6"
+    "opencode:ses_1619fc89dffe3hKKyOL4vDO1T6",
+    "opencode:ses_15ca51e5affe62kk9t6owTn3wb"
   ],
   "session_origins": {
-    "opencode:ses_1619fc89dffe3hKKyOL4vDO1T6": "direct"
+    "opencode:ses_1619fc89dffe3hKKyOL4vDO1T6": "direct",
+    "opencode:ses_15ca51e5affe62kk9t6owTn3wb": "appended"
   },
-  "plan_name": "precommit-gap-analysis",
+  "plan_name": "skills-audit-v2-1-0",
   "task_sessions": {},
   "agent": "atlas"
 }

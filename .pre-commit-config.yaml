@@ -11,10 +11,12 @@ repos:
     hooks:
       - id: trailing-whitespace
         fail_fast: false
+        exclude: ^\.omo/
       - id: check-yaml
         fail_fast: false
       - id: end-of-file-fixer
         fail_fast: false
+        exclude: ^\.omo/|\.json$
 
   # ── Local: formatting, linting, types, security, tests ──
   # Order: lint → format → types → security → version → semgrep → docs → tests
