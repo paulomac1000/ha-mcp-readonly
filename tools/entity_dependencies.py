@@ -122,8 +122,7 @@ def _find_entity_lines_in_file(file_path: str, entity_id: str) -> list[dict]:  #
             start = max(0, i - 2)
             end = min(len(lines), i + 1)
             context_lines = [
-                {"line_num": j + 1, "content": lines[j].rstrip("\n")}
-                for j in range(start, end)
+                {"line_num": j + 1, "content": lines[j].rstrip("\n")} for j in range(start, end)
             ]
             results.append({"line": i, "context": context_lines})
 

@@ -77,7 +77,9 @@ def _do_get_entity_state_history_summary(
             (same effect as detail_level="summary"). Default False.
     """
     if detail_level not in ("summary", "full"):
-        return _error_response(f"Invalid detail_level '{detail_level}'. Must be 'summary' or 'full'.")
+        return _error_response(
+            f"Invalid detail_level '{detail_level}'. Must be 'summary' or 'full'."
+        )
 
     hours_back = min(max(int(hours_back), 1), MAX_HISTORY_HOURS)
 

@@ -225,7 +225,6 @@ class TestSearchAutomations:
         data = json.loads(tool(uses_blueprint=False))
         assert data["matched_count"] == 2
 
-
     def test_backward_compat_no_entity_id(self, mock_mcp, config_path):
         """include_entity_id=False (default) produces same output as before."""
         register_automation_tools(mock_mcp, config_path)
@@ -1660,9 +1659,7 @@ class TestExceptionHandler:
         assert data["success"] is False
         assert "listing failed" in data.get("error", "")
 
-    def test_exception_in_usage_stats_returns_error(
-        self, mock_mcp, config_path, ha_url, ha_token
-    ):
+    def test_exception_in_usage_stats_returns_error(self, mock_mcp, config_path, ha_url, ha_token):
         """When _do_get_automation_usage_stats raises, wrapper returns error."""
         register_automation_tools(mock_mcp, config_path, ha_url, ha_token)
 

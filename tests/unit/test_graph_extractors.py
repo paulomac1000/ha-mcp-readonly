@@ -96,9 +96,7 @@ class TestExtractEntitiesFromTemplate:
 
     def test_extract_from_area_entities(self):
         """Extract from area_entities() calls with entity IDs."""
-        result = extract_entities_from_template(
-            "{{ area_entities('sensor.living_temp') }}"
-        )
+        result = extract_entities_from_template("{{ area_entities('sensor.living_temp') }}")
         ids = [eid for eid, _ in result]
         assert "sensor.living_temp" in ids
 
@@ -222,14 +220,21 @@ class TestExtractTriggerInfo:
 
     def test_template_trigger(self):
         """Extract entity from template value_template."""
-        triggers = [{"platform": "template", "value_template": "{{ states('sensor.temp') | float > 20 }}"}
+        triggers = [
+            {"platform": "template", "value_template": "{{ states('sensor.temp') | float > 20 }}"}
         ]
         result = extract_trigger_info(triggers)
         assert ("sensor.temp", "template") in result
 
     def test_event_trigger(self):
         """Extract from event trigger with event_data."""
-        triggers = [{"platform": "event", "event_type": "my_event", "event_data": {"entity_id": "light.kitchen"}}]
+        triggers = [
+            {
+                "platform": "event",
+                "event_type": "my_event",
+                "event_data": {"entity_id": "light.kitchen"},
+            }
+        ]
         result = extract_trigger_info(triggers)
         assert ("light.kitchen", "event") in result
 

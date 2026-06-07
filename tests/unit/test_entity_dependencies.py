@@ -596,7 +596,10 @@ class TestEntityExists:
             with patch("tools.entity_dependencies.load_yaml_file", return_value=[]):
                 with patch("os.path.exists", return_value=False):
                     register_entity_dependency_tools(
-                        self.mock_mcp, self.config_path, None, None  # type: ignore[arg-type]
+                        self.mock_mcp,
+                        self.config_path,
+                        None,
+                        None,  # type: ignore[arg-type]
                     )
                     result = await self.mock_mcp._tools["get_entity_dependencies"](
                         "sensor.test_sensor"

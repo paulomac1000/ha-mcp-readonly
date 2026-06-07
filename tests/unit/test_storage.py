@@ -1347,9 +1347,7 @@ class TestGetEntityDetailsBatch:
                 "data": {"state": "20", "attributes": {}},
             }
             register_storage_tools(mock_mcp, config_path, "http://ha", "token")
-            data = json.loads(
-                await mock_mcp._tools["get_entity_details"]("sensor.temp,light.room")
-            )
+            data = json.loads(await mock_mcp._tools["get_entity_details"]("sensor.temp,light.room"))
         assert data["success"] is True
         assert "results" in data
         assert "sensor.temp" in data["results"]
@@ -1409,14 +1407,15 @@ class TestGetEntityDetailsBatch:
 
 
 class TestGetEntityDetailsCompact:
-
     @pytest.mark.asyncio
     async def test_compact_mode_single(self, mock_mcp, config_path, mock_registry_data):
         with (
             patch("tools.storage.load_registry") as mock_load,
             patch("tools.storage.make_ha_request") as mock_req,
         ):
-            mock_load.side_effect = lambda name, path, use_cache=True: mock_registry_data.get(name, {})
+            mock_load.side_effect = lambda name, path, use_cache=True: mock_registry_data.get(
+                name, {}
+            )
             mock_req.return_value = {
                 "success": True,
                 "data": {"state": "20", "attributes": {}},
@@ -1442,7 +1441,9 @@ class TestGetEntityDetailsCompact:
             patch("tools.storage.load_registry") as mock_load,
             patch("tools.storage.make_ha_request") as mock_req,
         ):
-            mock_load.side_effect = lambda name, path, use_cache=True: mock_registry_data.get(name, {})
+            mock_load.side_effect = lambda name, path, use_cache=True: mock_registry_data.get(
+                name, {}
+            )
             mock_req.return_value = {
                 "success": True,
                 "data": {"state": "20", "attributes": {}},
@@ -1487,7 +1488,9 @@ class TestGetEntityDetailsCompact:
             patch("tools.storage.load_registry") as mock_load,
             patch("tools.storage.make_ha_request") as mock_req,
         ):
-            mock_load.side_effect = lambda name, path, use_cache=True: registry_data_minimal.get(name, {})
+            mock_load.side_effect = lambda name, path, use_cache=True: registry_data_minimal.get(
+                name, {}
+            )
             mock_req.return_value = {
                 "success": True,
                 "data": {"state": "unknown", "attributes": {}},
@@ -1507,15 +1510,15 @@ class TestGetEntityDetailsCompact:
             patch("tools.storage.load_registry") as mock_load,
             patch("tools.storage.make_ha_request") as mock_req,
         ):
-            mock_load.side_effect = lambda name, path, use_cache=True: mock_registry_data.get(name, {})
+            mock_load.side_effect = lambda name, path, use_cache=True: mock_registry_data.get(
+                name, {}
+            )
             mock_req.return_value = {
                 "success": True,
                 "data": {"state": "20", "attributes": {}},
             }
             register_storage_tools(mock_mcp, config_path, "http://ha", "token")
-            data = json.loads(
-                await mock_mcp._tools["get_entity_details"]("sensor.temp")
-            )
+            data = json.loads(await mock_mcp._tools["get_entity_details"]("sensor.temp"))
         assert data["success"] is True
         assert data["entity_id"] == "sensor.temp"
         assert "entity_info" in data

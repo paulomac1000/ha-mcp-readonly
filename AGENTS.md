@@ -231,3 +231,56 @@ The context generator produces a comprehensive Markdown snapshot of the HA insta
 9. **Smoke test response format check:** `tests/smoke/test_response_format.py` iterates all tools and verifies `success` field. New tools with required parameters must be added to `_REQUIRES_PARAMS` set or the test will fail.
 
 10. **Integration conftest:** New tool modules must be registered in `tests/integration/conftest.py` (import + `register_*_tools()` call) or integration tests won't find them.
+
+---
+
+## Pre-commit Hook (MANDATORY)
+
+This project uses `pre-commit` to run the same checks as CI before every commit:
+
+```bash
+# One-time setup
+pip install pre-commit semgrep
+pre-commit install
+
+# Run before every commit
+pre-commit run --all-files
+```
+
+### What the hook checks (in order)
+
+| # | Check | Command | What it catches |
+|---|-------|---------|-----------------|
+| 1 | Ruff lint | `ruff check .` | Lint violations (E, F, I, W) |
+| 2 | Ruff format | `ruff format --check .` | Formatting issues |
+| 3 | mypy strict | `mypy tools/ --strict` | Type errors |
+| 4 | Bandit | `bandit -r tools/ -ll` | Security issues |
+| 5 | Version sync | `version.py` vs `pyproject.toml` | Version drift |
+| 6 | CAFDS docs | `curl` validator from GitHub | Documentation quality |
+| 7 | Semgrep | `semgrep p/auto+p/secrets+p/owasp-top-ten` | Security patterns |
+| 8 | Unit tests | `pytest tests/unit/ -q` | Test failures |
+
+### Agent Workflow
+
+1. **Before committing**: Run `pre-commit run --all-files`
+2. If ANY check fails: fix the issue immediately, do NOT skip
+3. Re-run `pre-commit run --all-files` until all pass
+4. Only then stage and commit
+
+If you cannot install `pre-commit` (e.g., restricted environment), at minimum run the same commands manually in the order shown above. These checks are NOT optional — CI runs the same checks and will reject a commit that bypasses the hook.
+
+### Error Handling: Fix, Don't Bypass
+
+When a pre-commit hook or CI check fails:
+
+- **NEVER** add `--ignore` flags to pytest to skip failing test files
+- **NEVER** add `grep -v` or `|| true` to suppress error output
+- **NEVER** skip hooks by commenting them out or removing them from the config
+
+**ALWAYS** fix the underlying issue:
+- Syntax errors → fix the code (e.g., old-style `except X, Y:` → `except (X, Y):` for Python 3.13+)
+- Missing imports → install the correct package version
+- Failing tests → fix the test or the code it tests
+- Slow tests → profile and optimize, don't skip
+
+The pre-commit hook is the gatekeeper. If it passes locally, CI passes remotely. Bypassing it guarantees CI rejection.

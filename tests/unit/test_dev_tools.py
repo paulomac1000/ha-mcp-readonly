@@ -1281,6 +1281,7 @@ class TestEvalTemplatesBatch:
             assert data["success"] is False
             assert "batch failed" in data["error"]
 
+
 class TestCompareTemplates:
     """Tests for compare_templates tool."""
 

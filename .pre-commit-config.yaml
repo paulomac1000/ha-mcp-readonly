@@ -1,0 +1,66 @@
+repos:
+  - repo: local
+    hooks:
+      - id: ruff-check
+        name: Ruff check
+        entry: ruff check .
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]
+
+      - id: ruff-format
+        name: Ruff format check
+        entry: ruff format --check .
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]
+
+      - id: mypy
+        name: mypy strict
+        entry: mypy tools/ --strict
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]
+
+      - id: bandit
+        name: Bandit security scan
+        entry: bandit -r tools/ -ll
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]
+
+      - id: version-check
+        name: Version consistency
+        entry: bash -c 'V1=$(grep __version__ version.py | sed "s/.*\"\(.*\)\"/\1/"); V2=$(grep -m1 "^version = " pyproject.toml | sed "s/.*\"\(.*\)\"/\1/"); [ "$V1" = "$V2" ] || { echo "version.py=$V1 != pyproject.toml=$V2"; exit 1; }'
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]
+
+      - id: cafds-docs
+        name: CAFDS documentation validation
+        entry: bash -c 'if [ -f afds_config.yaml ] && command -v curl >/dev/null 2>&1; then curl -sS https://raw.githubusercontent.com/paulomac1000/ai-skills/main/skills/afds-doc-writer/docs_validate.py | python3 - --config afds_config.yaml --baseline .afds-baseline.json docs/ ./README.md ./CHANGELOG.md ./AGENTS.md ./CONTRIBUTING.md ./SECURITY.md 2>&1 | grep -v "No YAML frontmatter\|omo/plans" || true; else echo "CAFDS validation skipped"; fi'
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]
+
+      - id: semgrep
+        name: Semgrep security scan
+        entry: bash -c 'if command -v semgrep >/dev/null 2>&1; then semgrep --config=p/auto --config=p/secrets --config=p/owasp-top-ten --error --quiet . || exit 1; else echo "Semgrep not installed  skipping"; fi'
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]
+
+      - id: unit-tests
+        name: Unit tests
+        entry: bash -c 'python3 -m pytest tests/unit/ --ignore=tests/unit/test_server.py -q --tb=short || exit 1'
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]

@@ -1,20 +1,44 @@
 """HA Semantic Graph data models."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
 NodeType = Literal[
-    "entity", "automation", "script", "scene", "dashboard",
-    "device", "area", "integration", "service", "file",
-    "template", "blueprint", "helper", "unknown",
+    "entity",
+    "automation",
+    "script",
+    "scene",
+    "dashboard",
+    "device",
+    "area",
+    "integration",
+    "service",
+    "file",
+    "template",
+    "blueprint",
+    "helper",
+    "unknown",
 ]
 
 RelationType = Literal[
-    "triggers_on", "reads", "controls", "calls_service", "calls_script",
-    "activates_scene", "displays", "belongs_to_device", "belongs_to_area",
-    "from_integration", "defined_in", "includes", "uses_blueprint",
-    "has_entity", "via_device", "unknown_reference",
+    "triggers_on",
+    "reads",
+    "controls",
+    "calls_service",
+    "calls_script",
+    "activates_scene",
+    "displays",
+    "belongs_to_device",
+    "belongs_to_area",
+    "from_integration",
+    "defined_in",
+    "includes",
+    "uses_blueprint",
+    "has_entity",
+    "via_device",
+    "unknown_reference",
 ]
 
 Confidence = Literal["exact", "inferred", "dynamic", "weak"]
@@ -34,7 +58,7 @@ class GraphNode:
 
 @dataclass(frozen=True)
 class GraphEdge:
-    source: str         # source node id
+    source: str  # source node id
     target: str | None  # target node id (None for dynamic references)
     relation: RelationType
     confidence: Confidence = "exact"

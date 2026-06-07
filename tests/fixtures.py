@@ -553,7 +553,7 @@ MOCK_LOGBOOK_ENTRIES = [
         "message": "triggered by state of binary_sensor.motion",
         "entity_id": "automation.morning_routine",
         "context_id": "ctx_001",
-        "domain": "automation"
+        "domain": "automation",
     },
     {
         "when": "2026-06-01T08:00:01.000000+00:00",
@@ -561,7 +561,7 @@ MOCK_LOGBOOK_ENTRIES = [
         "message": "changed to on",
         "entity_id": "light.living_room",
         "context_id": "ctx_001",
-        "domain": "light"
+        "domain": "light",
     },
     {
         "when": "2026-06-01T08:00:02.000000+00:00",
@@ -569,8 +569,8 @@ MOCK_LOGBOOK_ENTRIES = [
         "message": "changed to below_horizon",
         "entity_id": "sun.sun",
         "context_id": "ctx_002",
-        "domain": "sun"
-    }
+        "domain": "sun",
+    },
 ]
 
 # Mock automation alias to entity_id mappings

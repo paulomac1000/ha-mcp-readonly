@@ -169,9 +169,7 @@ class TestGetEntityStateHistorySummary:
         with patch("tools.history.make_ha_request") as mock_request:
             mock_request.return_value = {"success": True, "data": [[]]}
             register_history_tools(self.mock_mcp, self.ha_url, self.ha_token)
-            await self.mock_mcp._tools["get_entity_state_history_summary"](
-                "switch.test", 24
-            )
+            await self.mock_mcp._tools["get_entity_state_history_summary"]("switch.test", 24)
 
         called_url = mock_request.call_args[0][2]
         assert "minimal_response=false" in called_url
@@ -219,9 +217,7 @@ class TestGetEntityStateHistorySummary:
         with patch("tools.history.make_ha_request") as mock_request:
             mock_request.return_value = {"success": True, "data": [[]]}
             register_history_tools(self.mock_mcp, self.ha_url, self.ha_token)
-            await self.mock_mcp._tools["get_entity_state_history_summary"](
-                "switch.test", 24
-            )
+            await self.mock_mcp._tools["get_entity_state_history_summary"]("switch.test", 24)
 
         called_url = mock_request.call_args[0][2]
         assert "minimal_response=false" in called_url

@@ -118,11 +118,13 @@ def _do_get_integration_entities(
         entries = _get_entries_by_domain(get_registry_config_entries(config_path), domain)
         options_list = []
         for entry in entries:
-            options_list.append({
-                "entry_id": entry.get("entry_id"),
-                "title": entry.get("title"),
-                "options": entry.get("options", {}),
-            })
+            options_list.append(
+                {
+                    "entry_id": entry.get("entry_id"),
+                    "title": entry.get("title"),
+                    "options": entry.get("options", {}),
+                }
+            )
         result["config_entries_options"] = options_list
 
     return result

@@ -106,9 +106,7 @@ DYNAMIC_TEMPLATE_PATTERN = re.compile(
 
 # Expand() call detection — captures the group/entity argument even
 # when used with Jinja concatenation.
-EXPAND_PATTERN = re.compile(
-    r"expand\s*\(\s*['\"]([a-zA-Z_]+\.[a-zA-Z0-9_]+)['\"]"
-)
+EXPAND_PATTERN = re.compile(r"expand\s*\(\s*['\"]([a-zA-Z_]+\.[a-zA-Z0-9_]+)['\"]")
 
 
 # =========================================================================
@@ -249,15 +247,11 @@ def extract_entities_from_data(
                     found.add(entity_id)
 
             # Recurse into nested structures
-            found.update(
-                extract_entities_from_data(value, extract_from_templates)
-            )
+            found.update(extract_entities_from_data(value, extract_from_templates))
 
     elif isinstance(data, list):
         for item in data:
-            found.update(
-                extract_entities_from_data(item, extract_from_templates)
-            )
+            found.update(extract_entities_from_data(item, extract_from_templates))
 
     elif isinstance(data, str):
         # Scan plain strings for entity IDs
@@ -313,18 +307,14 @@ def extract_trigger_info(triggers: list[dict[str, Any]]) -> list[tuple[str, Any]
         if platform == "template":
             value_template = trigger.get("value_template", "")
             if value_template:
-                for entity_id, _confidence in extract_entities_from_template(
-                    value_template
-                ):
+                for entity_id, _confidence in extract_entities_from_template(value_template):
                     results.append((entity_id, platform))
 
         # numeric_state triggers: also check value_template
         if platform == "numeric_state":
             value_template = trigger.get("value_template", "")
             if value_template:
-                for entity_id, _confidence in extract_entities_from_template(
-                    value_template
-                ):
+                for entity_id, _confidence in extract_entities_from_template(value_template):
                     results.append((entity_id, platform))
 
         # event triggers: extract from event_data
@@ -387,11 +377,7 @@ def extract_services(actions: list[dict[str, Any]]) -> set[str]:
                 if isinstance(branch, dict):
                     _walk(branch.get("sequence", []))
             for default_item in item.get("default", []):
-                _walk(
-                    [default_item]
-                    if isinstance(default_item, dict)
-                    else default_item
-                )
+                _walk([default_item] if isinstance(default_item, dict) else default_item)
             # parallel and repeat branches
             _walk(item.get("parallel", []))
             repeat_seq = item.get("repeat", {})
@@ -459,11 +445,7 @@ def extract_controlled_entities(actions: list[dict[str, Any]]) -> set[str]:
                 if isinstance(branch, dict):
                     _walk(branch.get("sequence", []))
             for default_item in item.get("default", []):
-                _walk(
-                    [default_item]
-                    if isinstance(default_item, dict)
-                    else default_item
-                )
+                _walk([default_item] if isinstance(default_item, dict) else default_item)
             _walk(item.get("parallel", []))
             repeat_seq = item.get("repeat", {})
             if isinstance(repeat_seq, dict):

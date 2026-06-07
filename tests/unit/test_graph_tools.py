@@ -46,6 +46,7 @@ def ha_token():
 @pytest.fixture
 def mock_mcp():
     """Mock MCP server instance matching project patterns."""
+
     class MockMCP:
         def __init__(self):
             self._tools = {}
@@ -54,6 +55,7 @@ def mock_mcp():
             def decorator(func):
                 self._tools[func.__name__] = func
                 return func
+
             return decorator
 
     return MockMCP()
@@ -66,8 +68,12 @@ def sample_graph_index():
     g.add_node(GraphNode(id="entity:sensor.temp", type="entity", name="Temperature Sensor"))
     g.add_node(GraphNode(id="entity:light.hallway", type="entity", name="Hallway Light"))
     g.add_node(GraphNode(id="automation:auto_001", type="automation", name="Motion Light"))
-    g.add_edge(GraphEdge(source="automation:auto_001", target="entity:sensor.temp", relation="triggers_on"))
-    g.add_edge(GraphEdge(source="automation:auto_001", target="entity:light.hallway", relation="controls"))
+    g.add_edge(
+        GraphEdge(source="automation:auto_001", target="entity:sensor.temp", relation="triggers_on")
+    )
+    g.add_edge(
+        GraphEdge(source="automation:auto_001", target="entity:light.hallway", relation="controls")
+    )
     return g
 
 
@@ -79,6 +85,7 @@ def _call_async(tool_fn, *args, **kwargs):
 # ============================================================================
 # graph_build_index
 # ============================================================================
+
 
 class TestGraphBuildIndex:
     """Test the graph_build_index tool."""
@@ -129,10 +136,13 @@ class TestGraphBuildIndex:
 # graph_find_references
 # ============================================================================
 
+
 class TestGraphFindReferences:
     """Test the graph_find_references tool."""
 
-    def test_find_references_success(self, mock_mcp, config_path, ha_url, ha_token, sample_graph_index):
+    def test_find_references_success(
+        self, mock_mcp, config_path, ha_url, ha_token, sample_graph_index
+    ):
         """graph_find_references returns incoming references for an entity."""
         from tools.graph_tools import register_graph_tools
 
@@ -140,10 +150,12 @@ class TestGraphFindReferences:
 
         with patch("tools.graph_tools.get_graph_index", mock_get):
             register_graph_tools(mock_mcp, config_path, ha_url, ha_token)
-            result = json.loads(_call_async(
-                mock_mcp._tools["graph_find_references"],
-                entity_id="sensor.temp",
-            ))
+            result = json.loads(
+                _call_async(
+                    mock_mcp._tools["graph_find_references"],
+                    entity_id="sensor.temp",
+                )
+            )
 
         assert result["success"] is True
         assert result["entity_id"] == "sensor.temp"
@@ -157,10 +169,12 @@ class TestGraphFindReferences:
 
         with patch("tools.graph_tools.get_graph_index", mock_get):
             register_graph_tools(mock_mcp, config_path, ha_url, ha_token)
-            result = json.loads(_call_async(
-                mock_mcp._tools["graph_find_references"],
-                entity_id="sensor.temp",
-            ))
+            result = json.loads(
+                _call_async(
+                    mock_mcp._tools["graph_find_references"],
+                    entity_id="sensor.temp",
+                )
+            )
 
         assert result["success"] is False
         assert "query error" in result["error"]
@@ -170,10 +184,13 @@ class TestGraphFindReferences:
 # graph_entity_impact
 # ============================================================================
 
+
 class TestGraphEntityImpact:
     """Test the graph_entity_impact tool."""
 
-    def test_entity_impact_success(self, mock_mcp, config_path, ha_url, ha_token, sample_graph_index):
+    def test_entity_impact_success(
+        self, mock_mcp, config_path, ha_url, ha_token, sample_graph_index
+    ):
         """graph_entity_impact returns impact analysis with risk level."""
         from tools.graph_tools import register_graph_tools
 
@@ -181,10 +198,12 @@ class TestGraphEntityImpact:
 
         with patch("tools.graph_tools.get_graph_index", mock_get):
             register_graph_tools(mock_mcp, config_path, ha_url, ha_token)
-            result = json.loads(_call_async(
-                mock_mcp._tools["graph_entity_impact"],
-                entity_id="sensor.temp",
-            ))
+            result = json.loads(
+                _call_async(
+                    mock_mcp._tools["graph_entity_impact"],
+                    entity_id="sensor.temp",
+                )
+            )
 
         assert result["success"] is True
         assert "risk" in result
@@ -198,10 +217,12 @@ class TestGraphEntityImpact:
 
         with patch("tools.graph_tools.get_graph_index", mock_get):
             register_graph_tools(mock_mcp, config_path, ha_url, ha_token)
-            result = json.loads(_call_async(
-                mock_mcp._tools["graph_entity_impact"],
-                entity_id="sensor.temp",
-            ))
+            result = json.loads(
+                _call_async(
+                    mock_mcp._tools["graph_entity_impact"],
+                    entity_id="sensor.temp",
+                )
+            )
 
         assert result["success"] is False
         assert "impact error" in result["error"]
@@ -211,10 +232,13 @@ class TestGraphEntityImpact:
 # graph_get_neighbors
 # ============================================================================
 
+
 class TestGraphGetNeighbors:
     """Test the graph_get_neighbors tool."""
 
-    def test_get_neighbors_success(self, mock_mcp, config_path, ha_url, ha_token, sample_graph_index):
+    def test_get_neighbors_success(
+        self, mock_mcp, config_path, ha_url, ha_token, sample_graph_index
+    ):
         """graph_get_neighbors returns subgraph nodes and edges."""
         from tools.graph_tools import register_graph_tools
 
@@ -222,18 +246,22 @@ class TestGraphGetNeighbors:
 
         with patch("tools.graph_tools.get_graph_index", mock_get):
             register_graph_tools(mock_mcp, config_path, ha_url, ha_token)
-            result = json.loads(_call_async(
-                mock_mcp._tools["graph_get_neighbors"],
-                node_id="entity:sensor.temp",
-                depth=1,
-                direction="both",
-            ))
+            result = json.loads(
+                _call_async(
+                    mock_mcp._tools["graph_get_neighbors"],
+                    node_id="entity:sensor.temp",
+                    depth=1,
+                    direction="both",
+                )
+            )
 
         assert result["success"] is True
         assert result.get("found") is True
         assert len(result.get("nodes", [])) >= 1
 
-    def test_get_neighbors_invalid_direction(self, mock_mcp, config_path, ha_url, ha_token, sample_graph_index):
+    def test_get_neighbors_invalid_direction(
+        self, mock_mcp, config_path, ha_url, ha_token, sample_graph_index
+    ):
         """Invalid direction returns error."""
         from tools.graph_tools import register_graph_tools
 
@@ -241,11 +269,13 @@ class TestGraphGetNeighbors:
 
         with patch("tools.graph_tools.get_graph_index", mock_get):
             register_graph_tools(mock_mcp, config_path, ha_url, ha_token)
-            result = json.loads(_call_async(
-                mock_mcp._tools["graph_get_neighbors"],
-                node_id="entity:sensor.temp",
-                direction="sideways",
-            ))
+            result = json.loads(
+                _call_async(
+                    mock_mcp._tools["graph_get_neighbors"],
+                    node_id="entity:sensor.temp",
+                    direction="sideways",
+                )
+            )
 
         assert result["success"] is False
         assert "direction" in result["error"]
@@ -258,10 +288,12 @@ class TestGraphGetNeighbors:
 
         with patch("tools.graph_tools.get_graph_index", mock_get):
             register_graph_tools(mock_mcp, config_path, ha_url, ha_token)
-            result = json.loads(_call_async(
-                mock_mcp._tools["graph_get_neighbors"],
-                node_id="entity:sensor.temp",
-            ))
+            result = json.loads(
+                _call_async(
+                    mock_mcp._tools["graph_get_neighbors"],
+                    node_id="entity:sensor.temp",
+                )
+            )
 
         assert result["success"] is False
         assert "neighbor error" in result["error"]
@@ -271,10 +303,13 @@ class TestGraphGetNeighbors:
 # graph_detect_ghost_references
 # ============================================================================
 
+
 class TestGraphDetectGhostReferences:
     """Test the graph_detect_ghost_references tool."""
 
-    def test_detect_ghosts_success(self, mock_mcp, config_path, ha_url, ha_token, sample_graph_index):
+    def test_detect_ghosts_success(
+        self, mock_mcp, config_path, ha_url, ha_token, sample_graph_index
+    ):
         """graph_detect_ghost_references returns ghost entity list."""
         from tools.graph_tools import register_graph_tools
 
@@ -306,10 +341,13 @@ class TestGraphDetectGhostReferences:
 # graph_detect_orphans
 # ============================================================================
 
+
 class TestGraphDetectOrphans:
     """Test the graph_detect_orphans tool."""
 
-    def test_detect_orphans_success(self, mock_mcp, config_path, ha_url, ha_token, sample_graph_index):
+    def test_detect_orphans_success(
+        self, mock_mcp, config_path, ha_url, ha_token, sample_graph_index
+    ):
         """graph_detect_orphans returns orphan entity list."""
         from tools.graph_tools import register_graph_tools
 
@@ -323,7 +361,9 @@ class TestGraphDetectOrphans:
         assert "total_orphans" in result
         assert "orphan_entities" in result
 
-    def test_detect_orphans_with_domains(self, mock_mcp, config_path, ha_url, ha_token, sample_graph_index):
+    def test_detect_orphans_with_domains(
+        self, mock_mcp, config_path, ha_url, ha_token, sample_graph_index
+    ):
         """graph_detect_orphans with ignorable_domains parses comma-separated string."""
         from tools.graph_tools import register_graph_tools
 
@@ -331,10 +371,12 @@ class TestGraphDetectOrphans:
 
         with patch("tools.graph_tools.get_graph_index", mock_get):
             register_graph_tools(mock_mcp, config_path, ha_url, ha_token)
-            result = json.loads(_call_async(
-                mock_mcp._tools["graph_detect_orphans"],
-                ignorable_domains="sun,update",
-            ))
+            result = json.loads(
+                _call_async(
+                    mock_mcp._tools["graph_detect_orphans"],
+                    ignorable_domains="sun,update",
+                )
+            )
 
         assert result["success"] is True
 
@@ -356,10 +398,13 @@ class TestGraphDetectOrphans:
 # graph_export_mermaid
 # ============================================================================
 
+
 class TestGraphExportMermaid:
     """Test the graph_export_mermaid tool."""
 
-    def test_export_mermaid_success(self, mock_mcp, config_path, ha_url, ha_token, sample_graph_index):
+    def test_export_mermaid_success(
+        self, mock_mcp, config_path, ha_url, ha_token, sample_graph_index
+    ):
         """graph_export_mermaid returns Mermaid diagram for a subgraph."""
         from tools.graph_tools import register_graph_tools
 
@@ -367,17 +412,21 @@ class TestGraphExportMermaid:
 
         with patch("tools.graph_tools.get_graph_index", mock_get):
             register_graph_tools(mock_mcp, config_path, ha_url, ha_token)
-            result = json.loads(_call_async(
-                mock_mcp._tools["graph_export_mermaid"],
-                node_id="entity:sensor.temp",
-                depth=1,
-            ))
+            result = json.loads(
+                _call_async(
+                    mock_mcp._tools["graph_export_mermaid"],
+                    node_id="entity:sensor.temp",
+                    depth=1,
+                )
+            )
 
         assert result["success"] is True
         assert "mermaid" in result
         assert "graph TD" in result["mermaid"]
 
-    def test_export_mermaid_node_not_found(self, mock_mcp, config_path, ha_url, ha_token, sample_graph_index):
+    def test_export_mermaid_node_not_found(
+        self, mock_mcp, config_path, ha_url, ha_token, sample_graph_index
+    ):
         """Export with nonexistent node returns Mermaid error note (still success=True)."""
         from tools.graph_tools import register_graph_tools
 
@@ -385,10 +434,12 @@ class TestGraphExportMermaid:
 
         with patch("tools.graph_tools.get_graph_index", mock_get):
             register_graph_tools(mock_mcp, config_path, ha_url, ha_token)
-            result = json.loads(_call_async(
-                mock_mcp._tools["graph_export_mermaid"],
-                node_id="entity:nonexistent",
-            ))
+            result = json.loads(
+                _call_async(
+                    mock_mcp._tools["graph_export_mermaid"],
+                    node_id="entity:nonexistent",
+                )
+            )
 
         # export_mermaid returns "Node not found" as a valid Mermaid string, not an error
         assert result["success"] is True
@@ -402,10 +453,12 @@ class TestGraphExportMermaid:
 
         with patch("tools.graph_tools.get_graph_index", mock_get):
             register_graph_tools(mock_mcp, config_path, ha_url, ha_token)
-            result = json.loads(_call_async(
-                mock_mcp._tools["graph_export_mermaid"],
-                node_id="entity:test",
-            ))
+            result = json.loads(
+                _call_async(
+                    mock_mcp._tools["graph_export_mermaid"],
+                    node_id="entity:test",
+                )
+            )
 
         assert result["success"] is False
         assert "export failed" in result["error"]

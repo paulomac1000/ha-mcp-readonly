@@ -1,4 +1,5 @@
 """HA Semantic Graph — async-safe TTL cache."""
+
 import asyncio
 import time
 

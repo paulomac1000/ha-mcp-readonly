@@ -40,12 +40,14 @@ def register_graph_tools(
         """
         try:
             index = await get_graph_index(config_path, ha_url, ha_token, force=force)
-            return _success_response({
-                "nodes_count": len(index.nodes),
-                "edges_count": len(index.edges),
-                "built_at": index.built_at,
-                "stats": index.stats,
-            })
+            return _success_response(
+                {
+                    "nodes_count": len(index.nodes),
+                    "edges_count": len(index.edges),
+                    "built_at": index.built_at,
+                    "stats": index.stats,
+                }
+            )
         except Exception as e:
             return _error_response(str(e))
 
@@ -62,11 +64,13 @@ def register_graph_tools(
         try:
             index = await get_graph_index(config_path, ha_url, ha_token)
             refs = find_entity_references(index, entity_id)
-            return _success_response({
-                "entity_id": entity_id,
-                "total_references": len(refs),
-                "references": refs,
-            })
+            return _success_response(
+                {
+                    "entity_id": entity_id,
+                    "total_references": len(refs),
+                    "references": refs,
+                }
+            )
         except Exception as e:
             return _error_response(str(e))
 
@@ -88,9 +92,7 @@ def register_graph_tools(
             return _error_response(str(e))
 
     @mcp.tool()
-    async def graph_get_neighbors(
-        node_id: str, depth: int = 1, direction: str = "both"
-    ) -> str:
+    async def graph_get_neighbors(node_id: str, depth: int = 1, direction: str = "both") -> str:
         """[READ] Get the subgraph around a specific node in the HA semantic graph.
 
         Args:
@@ -104,9 +106,7 @@ def register_graph_tools(
         try:
             depth = min(max(depth, 1), 5)
             if direction not in ("incoming", "outgoing", "both"):
-                return _error_response(
-                    "direction must be 'incoming', 'outgoing', or 'both'"
-                )
+                return _error_response("direction must be 'incoming', 'outgoing', or 'both'")
             index = await get_graph_index(config_path, ha_url, ha_token)
             result = get_neighbors(index, node_id, depth=depth, direction=direction)
             return _success_response(result)
@@ -123,10 +123,12 @@ def register_graph_tools(
         try:
             index = await get_graph_index(config_path, ha_url, ha_token)
             ghosts = detect_ghost_references(index)
-            return _success_response({
-                "total_ghosts": len(ghosts),
-                "ghost_entities": ghosts,
-            })
+            return _success_response(
+                {
+                    "total_ghosts": len(ghosts),
+                    "ghost_entities": ghosts,
+                }
+            )
         except Exception as e:
             return _error_response(str(e))
 
@@ -143,15 +145,15 @@ def register_graph_tools(
         try:
             domains: set[str] | None = None
             if ignorable_domains:
-                domains = {
-                    d.strip() for d in ignorable_domains.split(",") if d.strip()
-                }
+                domains = {d.strip() for d in ignorable_domains.split(",") if d.strip()}
             index = await get_graph_index(config_path, ha_url, ha_token)
             orphans = detect_orphans(index, ignorable_domains=domains)
-            return _success_response({
-                "total_orphans": len(orphans),
-                "orphan_entities": orphans,
-            })
+            return _success_response(
+                {
+                    "total_orphans": len(orphans),
+                    "orphan_entities": orphans,
+                }
+            )
         except Exception as e:
             return _error_response(str(e))
 

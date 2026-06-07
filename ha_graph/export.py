@@ -1,4 +1,5 @@
 """HA Semantic Graph — Mermaid export."""
+
 from collections import deque
 
 from ha_graph.models import GraphIndex
@@ -36,7 +37,7 @@ def export_mermaid(index: GraphIndex, node_id: str | None = None, depth: int = 2
         if node and node.name:
             # Escape quotes for Mermaid
             label = node.name.replace('"', "'")
-            return f'{nid.split(":")[0]}: {label}'
+            return f"{nid.split(':')[0]}: {label}"
         return nid
 
     while queue and node_counter < MAX_NODES:
@@ -62,7 +63,7 @@ def export_mermaid(index: GraphIndex, node_id: str | None = None, depth: int = 2
                     label = _get_label(edge.target)
                     edge_lines.append(f'  {node_map[edge.target]}["{label}"]')
                 edge_lines.append(
-                    f'  {node_map[current_id]} -->|{edge.relation}| {node_map[edge.target]}'
+                    f"  {node_map[current_id]} -->|{edge.relation}| {node_map[edge.target]}"
                 )
 
     lines = ["graph TD"] + edge_lines

@@ -578,9 +578,7 @@ def register_device_tools(mcp, config_path: str, ha_url: str, ha_token: str) -> 
     """Register device management tools."""
 
     @mcp.tool()
-    async def get_device_details(
-        device_id: str, include_entities: bool = True
-    ) -> str:
+    async def get_device_details(device_id: str, include_entities: bool = True) -> str:
         """[READ] Fetches device details with full context.
 
         ~90% token savings vs get_device_registry() + filtering.
@@ -603,7 +601,9 @@ def register_device_tools(mcp, config_path: str, ha_url: str, ha_token: str) -> 
             - entities_summary: {total, available, unavailable, disabled}
         """
         try:
-            return _do_get_device_details(device_id, config_path, ha_url, ha_token, include_entities)
+            return _do_get_device_details(
+                device_id, config_path, ha_url, ha_token, include_entities
+            )
         except Exception as e:
             return _error_response(str(e))
 

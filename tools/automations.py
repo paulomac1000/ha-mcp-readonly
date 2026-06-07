@@ -277,12 +277,13 @@ def _do_search_automations(
     }
 
 
-def _do_list_automations(
-    config_path: str, detail_level: str = "full"
-) -> dict[str, Any]:
+def _do_list_automations(config_path: str, detail_level: str = "full") -> dict[str, Any]:
     data = _load_automations(config_path)
     if detail_level not in ("summary", "full"):
-        return {"success": False, "error": f"Invalid detail_level '{detail_level}'. Must be 'summary' or 'full'."}
+        return {
+            "success": False,
+            "error": f"Invalid detail_level '{detail_level}'. Must be 'summary' or 'full'.",
+        }
     summary = [
         {
             "id": item.get("id"),
@@ -1197,7 +1198,10 @@ def _do_get_automation_usage_stats(
         return {"success": False, "error": "HA API not configured (ha_url/ha_token missing)"}
 
     if detail_level not in ("summary", "full"):
-        return {"success": False, "error": f"Invalid detail_level '{detail_level}'. Must be 'summary' or 'full'."}
+        return {
+            "success": False,
+            "error": f"Invalid detail_level '{detail_level}'. Must be 'summary' or 'full'.",
+        }
 
     data = _load_automations(config_path)  # type: ignore[arg-type]
     automation = _get_automation_by_id_or_alias(data, automation_id)
@@ -1348,12 +1352,14 @@ def _do_get_automation_usage_stats(
             recent_activity: list[dict[str, Any]] = []
             if logbook_result.get("success") and isinstance(logbook_result.get("data"), list):
                 for entry in logbook_result["data"][-10:]:
-                    recent_activity.append({
-                        "when": entry.get("when"),
-                        "message": entry.get("message"),
-                        "context_id": entry.get("context_id"),
-                        "domain": entry.get("domain"),
-                    })
+                    recent_activity.append(
+                        {
+                            "when": entry.get("when"),
+                            "message": entry.get("message"),
+                            "context_id": entry.get("context_id"),
+                            "domain": entry.get("domain"),
+                        }
+                    )
             response["recent_activity"] = recent_activity
 
             state_changes: list[dict[str, Any]] = []
@@ -1369,10 +1375,13 @@ def _do_get_automation_usage_stats(
             if sample_entities:
                 history_filter = ",".join(sample_entities)
                 entity_hist_result = make_ha_request(
-                    ha_url, ha_token,
+                    ha_url,
+                    ha_token,
                     f"/api/history/period/{start_time}?filter_entity_id={history_filter}",
                 )
-                if entity_hist_result.get("success") and isinstance(entity_hist_result.get("data"), list):
+                if entity_hist_result.get("success") and isinstance(
+                    entity_hist_result.get("data"), list
+                ):
                     for series in entity_hist_result["data"]:
                         if not isinstance(series, list) or len(series) < 2:
                             continue
@@ -1380,12 +1389,14 @@ def _do_get_automation_usage_stats(
                         for point in series[-5:]:
                             idx = series.index(point)
                             prev_point = series[idx - 1] if idx > 0 else None
-                            state_changes.append({
-                                "entity_id": eid,
-                                "from": prev_point.get("state") if prev_point else None,
-                                "to": point.get("state"),
-                                "when": point.get("last_changed") or point.get("last_updated"),
-                            })
+                            state_changes.append(
+                                {
+                                    "entity_id": eid,
+                                    "from": prev_point.get("state") if prev_point else None,
+                                    "to": point.get("state"),
+                                    "when": point.get("last_changed") or point.get("last_updated"),
+                                }
+                            )
             response["state_changes"] = state_changes
 
             context_chain: list[dict[str, Any]] = []
@@ -2732,14 +2743,8 @@ def register_automation_tools(mcp, config_path, ha_url=None, ha_token=None) -> N
             JSON with alias, entity_id, unique_id, and optionally matches_count for partial matches.
         """
         try:
-            result = _do_get_automation_entity_id(
-                identifier, config_path, ha_url, ha_token
-            )
-            return (
-                _success_response(result)
-                if result.get("entity_id")
-                else json.dumps(result)
-            )
+            result = _do_get_automation_entity_id(identifier, config_path, ha_url, ha_token)
+            return _success_response(result) if result.get("entity_id") else json.dumps(result)
         except Exception as exc:
             _logger.exception("get_automation_entity_id failed")
             return _error_response(str(exc))

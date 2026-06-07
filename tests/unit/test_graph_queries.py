@@ -30,8 +30,22 @@ def graph():
     g.add_node(GraphNode(id="entity:sun.sun", type="entity", name="Sun"))
 
     # Automation nodes
-    g.add_node(GraphNode(id="automation:motion_light", type="automation", name="Motion Light", metadata={"mode": "restart"}))
-    g.add_node(GraphNode(id="automation:temp_alert", type="automation", name="Temperature Alert", metadata={"mode": "single"}))
+    g.add_node(
+        GraphNode(
+            id="automation:motion_light",
+            type="automation",
+            name="Motion Light",
+            metadata={"mode": "restart"},
+        )
+    )
+    g.add_node(
+        GraphNode(
+            id="automation:temp_alert",
+            type="automation",
+            name="Temperature Alert",
+            metadata={"mode": "single"},
+        )
+    )
 
     # Script nodes
     g.add_node(GraphNode(id="script:party_mode", type="script", name="Party Mode"))
@@ -45,37 +59,98 @@ def graph():
     g.add_node(GraphNode(id="service:switch.turn_on", type="service", name="switch.turn_on"))
 
     # Edges: automation → trigger → entity
-    g.add_edge(GraphEdge(source="automation:motion_light", target="entity:binary_sensor.motion", relation="triggers_on", file_path="automations.yaml"))
-    g.add_edge(GraphEdge(source="automation:temp_alert", target="entity:sensor.temp", relation="triggers_on", file_path="automations.yaml"))
+    g.add_edge(
+        GraphEdge(
+            source="automation:motion_light",
+            target="entity:binary_sensor.motion",
+            relation="triggers_on",
+            file_path="automations.yaml",
+        )
+    )
+    g.add_edge(
+        GraphEdge(
+            source="automation:temp_alert",
+            target="entity:sensor.temp",
+            relation="triggers_on",
+            file_path="automations.yaml",
+        )
+    )
 
     # Edges: automation → controls → entity
-    g.add_edge(GraphEdge(source="automation:motion_light", target="entity:light.hallway", relation="controls", file_path="automations.yaml"))
+    g.add_edge(
+        GraphEdge(
+            source="automation:motion_light",
+            target="entity:light.hallway",
+            relation="controls",
+            file_path="automations.yaml",
+        )
+    )
 
     # Edges: automation → reads → entity (conditions)
-    g.add_edge(GraphEdge(source="automation:motion_light", target="entity:light.hallway", relation="reads", file_path="automations.yaml"))
-    g.add_edge(GraphEdge(source="automation:temp_alert", target="entity:sensor.temp", relation="reads", file_path="automations.yaml"))
+    g.add_edge(
+        GraphEdge(
+            source="automation:motion_light",
+            target="entity:light.hallway",
+            relation="reads",
+            file_path="automations.yaml",
+        )
+    )
+    g.add_edge(
+        GraphEdge(
+            source="automation:temp_alert",
+            target="entity:sensor.temp",
+            relation="reads",
+            file_path="automations.yaml",
+        )
+    )
 
     # Edges: automation → calls_service
-    g.add_edge(GraphEdge(source="automation:motion_light", target="service:light.turn_on", relation="calls_service"))
-    g.add_edge(GraphEdge(source="automation:temp_alert", target="service:notify.mobile", relation="calls_service"))
+    g.add_edge(
+        GraphEdge(
+            source="automation:motion_light",
+            target="service:light.turn_on",
+            relation="calls_service",
+        )
+    )
+    g.add_edge(
+        GraphEdge(
+            source="automation:temp_alert", target="service:notify.mobile", relation="calls_service"
+        )
+    )
 
     # Edges: script → controls → entity
-    g.add_edge(GraphEdge(source="script:party_mode", target="entity:light.living_room", relation="controls"))
+    g.add_edge(
+        GraphEdge(
+            source="script:party_mode", target="entity:light.living_room", relation="controls"
+        )
+    )
 
     # Edges: script → calls_service
-    g.add_edge(GraphEdge(source="script:party_mode", target="service:switch.turn_on", relation="calls_service"))
+    g.add_edge(
+        GraphEdge(
+            source="script:party_mode", target="service:switch.turn_on", relation="calls_service"
+        )
+    )
 
     # Edges: dashboard → displays → entity
     g.add_edge(GraphEdge(source="dashboard:main", target="entity:sensor.temp", relation="displays"))
-    g.add_edge(GraphEdge(source="dashboard:main", target="entity:light.living_room", relation="displays"))
+    g.add_edge(
+        GraphEdge(source="dashboard:main", target="entity:light.living_room", relation="displays")
+    )
 
     # Ghost reference: an edge pointing to an entity that does NOT exist as a node.
     # This simulates a typo or removed entity still referenced in config.
-    g.add_edge(GraphEdge(source="automation:motion_light", target="entity:sensor.nonexistent", relation="reads"))
+    g.add_edge(
+        GraphEdge(
+            source="automation:motion_light", target="entity:sensor.nonexistent", relation="reads"
+        )
+    )
 
     # Script → script call
     g.add_node(GraphNode(id="script:other", type="script", name="Other Script"))
-    g.add_edge(GraphEdge(source="script:party_mode", target="script:other", relation="calls_script"))
+    g.add_edge(
+        GraphEdge(source="script:party_mode", target="script:other", relation="calls_script")
+    )
 
     return g
 
@@ -132,10 +207,15 @@ class TestEntityImpact:
         """Entity only on dashboards (no automation trigger/control) gets medium risk."""
         # Create a minimal graph where the entity is solely on a dashboard.
         from ha_graph.models import GraphEdge, GraphIndex, GraphNode
+
         g = GraphIndex()
         g.add_node(GraphNode(id="entity:sensor.display_only", type="entity", name="Display Only"))
         g.add_node(GraphNode(id="dashboard:main", type="dashboard", name="Main"))
-        g.add_edge(GraphEdge(source="dashboard:main", target="entity:sensor.display_only", relation="displays"))
+        g.add_edge(
+            GraphEdge(
+                source="dashboard:main", target="entity:sensor.display_only", relation="displays"
+            )
+        )
         impact = entity_impact(g, "sensor.display_only")
         assert impact["exists"] is True
         assert impact["risk"] == "medium"

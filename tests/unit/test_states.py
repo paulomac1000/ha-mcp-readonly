@@ -309,7 +309,9 @@ class TestGetEntityState:
         # Non-domain attrs stripped
         assert "min_temp" not in entity["attributes"]
 
-    def test_compact_sensor_keeps_unit_of_measurement(self, mock_mcp, config_path, ha_url, ha_token):
+    def test_compact_sensor_keeps_unit_of_measurement(
+        self, mock_mcp, config_path, ha_url, ha_token
+    ):
         """Compact on sensor retains unit_of_measurement and device_class."""
         sensor_state = {
             "entity_id": "sensor.temperature",
@@ -362,7 +364,9 @@ class TestGetEntityState:
         # No domain-specific attrs for switch -> no attributes key
         assert "attributes" not in entity
 
-    def test_compact_climate_missing_hvac_action_does_not_crash(self, mock_mcp, config_path, ha_url, ha_token):
+    def test_compact_climate_missing_hvac_action_does_not_crash(
+        self, mock_mcp, config_path, ha_url, ha_token
+    ):
         """Climate entity without hvac_action should not crash."""
         climate_state = {
             "entity_id": "climate.bedroom",
@@ -390,7 +394,9 @@ class TestGetEntityState:
         assert "hvac_action" not in entity["attributes"]
         assert "temperature" not in entity["attributes"]
 
-    def test_get_entity_state_compact_false_returns_all_attributes(self, mock_mcp, config_path, ha_url, ha_token):
+    def test_get_entity_state_compact_false_returns_all_attributes(
+        self, mock_mcp, config_path, ha_url, ha_token
+    ):
         """Backward compat: compact=False returns ALL attributes unchanged."""
         light_state = {
             "entity_id": "light.living_room",
@@ -557,8 +563,9 @@ class TestSearchEntities:
         for entity in data["results"]:
             assert entity["entity_id"].startswith("sensor.")
 
-
-    def test_search_with_include_state(self, mock_mcp, config_path, ha_url, ha_token, sample_states):
+    def test_search_with_include_state(
+        self, mock_mcp, config_path, ha_url, ha_token, sample_states
+    ):
         with patch("tools.states.make_ha_request") as mock_req:
 
             def mock_request_side_effect(url, token, endpoint, **kwargs):
@@ -591,7 +598,9 @@ class TestSearchEntities:
             assert "state_data" in entity
             assert entity["state_data"]["entity_id"] == entity["entity_id"]
 
-    def test_search_compact_returns_minimal(self, mock_mcp, config_path, ha_url, ha_token, sample_states):
+    def test_search_compact_returns_minimal(
+        self, mock_mcp, config_path, ha_url, ha_token, sample_states
+    ):
         with patch("tools.states.make_ha_request") as mock_req:
             mock_req.return_value = {"success": True, "data": sample_states}
             register_state_tools(mock_mcp, ha_url, ha_token, config_path)
@@ -607,7 +616,9 @@ class TestSearchEntities:
             assert "last_changed" not in entity
             assert "attributes" not in entity
 
-    def test_search_compact_false_backward_compat(self, mock_mcp, config_path, ha_url, ha_token, sample_states):
+    def test_search_compact_false_backward_compat(
+        self, mock_mcp, config_path, ha_url, ha_token, sample_states
+    ):
         with patch("tools.states.make_ha_request") as mock_req:
             mock_req.return_value = {"success": True, "data": sample_states}
             register_state_tools(mock_mcp, ha_url, ha_token, config_path)

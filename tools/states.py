@@ -468,9 +468,7 @@ def _do_search_entities(
             else:
                 entry = _minify_state(s)
             if include_state:
-                state_result = make_ha_request(
-                    ha_url, ha_token, f"/api/states/{entity_id}"
-                )
+                state_result = make_ha_request(ha_url, ha_token, f"/api/states/{entity_id}")
                 if state_result.get("success") and state_result.get("data"):
                     entry["state_data"] = state_result["data"]
             results.append(entry)

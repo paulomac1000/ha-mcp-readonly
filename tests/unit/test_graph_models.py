@@ -41,9 +41,22 @@ class TestGraphNode:
 
     def test_node_types_are_valid_literals(self):
         """NodeType accepts all expected literal values."""
-        for nt in ("entity", "automation", "script", "scene", "dashboard",
-                   "device", "area", "integration", "service", "file",
-                   "template", "blueprint", "helper", "unknown"):
+        for nt in (
+            "entity",
+            "automation",
+            "script",
+            "scene",
+            "dashboard",
+            "device",
+            "area",
+            "integration",
+            "service",
+            "file",
+            "template",
+            "blueprint",
+            "helper",
+            "unknown",
+        ):
             node = GraphNode(id=f"{nt}:test", type=nt)  # type: ignore[arg-type]
             assert node.type == nt
 

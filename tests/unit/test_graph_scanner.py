@@ -19,12 +19,8 @@ AUTOMATIONS_YAML = [
         "id": "auto_001",
         "alias": "Motion Light Hallway",
         "mode": "restart",
-        "trigger": [
-            {"platform": "state", "entity_id": "binary_sensor.hallway_motion", "to": "on"}
-        ],
-        "condition": [
-            {"condition": "state", "entity_id": "light.hallway", "state": "off"}
-        ],
+        "trigger": [{"platform": "state", "entity_id": "binary_sensor.hallway_motion", "to": "on"}],
+        "condition": [{"condition": "state", "entity_id": "light.hallway", "state": "off"}],
         "action": [
             {"service": "light.turn_on", "target": {"entity_id": "light.hallway"}},
             {"delay": {"seconds": 120}},
@@ -49,7 +45,11 @@ SCRIPTS_YAML = {
     "script_001": {
         "alias": "Party Mode",
         "sequence": [
-            {"service": "light.turn_on", "target": {"entity_id": "light.living_room"}, "data": {"brightness": 255}},
+            {
+                "service": "light.turn_on",
+                "target": {"entity_id": "light.living_room"},
+                "data": {"brightness": 255},
+            },
             {"service": "switch.turn_on", "target": {"entity_id": "switch.party_lights"}},
         ],
     }
@@ -190,8 +190,12 @@ def config_dir(tmp_path):
     storage = cfg / ".storage"
     storage.mkdir(parents=True, exist_ok=True)
 
-    (storage / "core.entity_registry").write_text(json.dumps(ENTITY_REGISTRY_DATA), encoding="utf-8")
-    (storage / "core.device_registry").write_text(json.dumps(DEVICE_REGISTRY_DATA), encoding="utf-8")
+    (storage / "core.entity_registry").write_text(
+        json.dumps(ENTITY_REGISTRY_DATA), encoding="utf-8"
+    )
+    (storage / "core.device_registry").write_text(
+        json.dumps(DEVICE_REGISTRY_DATA), encoding="utf-8"
+    )
     (storage / "core.area_registry").write_text(json.dumps(AREA_REGISTRY_DATA), encoding="utf-8")
     (storage / "core.config_entries").write_text(json.dumps(CONFIG_ENTRIES_DATA), encoding="utf-8")
     (storage / "lovelace").write_text(json.dumps(LOVELACE_DATA), encoding="utf-8")

@@ -117,14 +117,10 @@ class HomeAssistantGraphScanner:
     def _add_file_node(self, index: GraphIndex, file_path: str) -> str:
         """Ensure a ``file:`` node exists and return its id."""
         file_id = f"file:{file_path}"
-        index.add_node(
-            GraphNode(id=file_id, type="file", name=file_path)
-        )
+        index.add_node(GraphNode(id=file_id, type="file", name=file_path))
         return file_id
 
-    def _add_entity_node(
-        self, index: GraphIndex, entity_id: str, **extra: Any
-    ) -> str:
+    def _add_entity_node(self, index: GraphIndex, entity_id: str, **extra: Any) -> str:
         """Ensure an ``entity:`` node exists, merging *extra* metadata.
 
         Since :class:`GraphNode` is frozen, existing nodes are replaced
@@ -187,9 +183,7 @@ class HomeAssistantGraphScanner:
                 if isinstance(value, str) and value.startswith("!include"):
                     target = value.replace("!include ", "")
                     target_id = f"file:{target}"
-                    index.add_node(
-                        GraphNode(id=target_id, type="file", name=target)
-                    )
+                    index.add_node(GraphNode(id=target_id, type="file", name=target))
                     index.add_edge(
                         GraphEdge(
                             source=file_id,
@@ -207,11 +201,7 @@ class HomeAssistantGraphScanner:
         """Load entity, device, area, and config-entry registries."""
         # -- entity registry --------------------------------------------------
         entity_reg = self._load_storage("core.entity_registry")
-        entities = (
-            entity_reg.get("data", {}).get("entities", [])
-            if entity_reg
-            else []
-        )
+        entities = entity_reg.get("data", {}).get("entities", []) if entity_reg else []
         for ent in entities:
             eid = ent.get("entity_id", "")
             if not eid:
@@ -228,11 +218,7 @@ class HomeAssistantGraphScanner:
 
         # -- device registry --------------------------------------------------
         device_reg = self._load_storage("core.device_registry")
-        devices = (
-            device_reg.get("data", {}).get("devices", [])
-            if device_reg
-            else []
-        )
+        devices = device_reg.get("data", {}).get("devices", []) if device_reg else []
         for dev in devices:
             did = dev.get("id", "")
             if not did:
@@ -253,9 +239,7 @@ class HomeAssistantGraphScanner:
             area_id = dev.get("area_id")
             if area_id:
                 area_node_id = f"area:{area_id}"
-                index.add_node(
-                    GraphNode(id=area_node_id, type="area", name=area_id)
-                )
+                index.add_node(GraphNode(id=area_node_id, type="area", name=area_id))
                 index.add_edge(
                     GraphEdge(
                         source=device_id,
@@ -266,9 +250,7 @@ class HomeAssistantGraphScanner:
 
         # -- area registry ----------------------------------------------------
         area_reg = self._load_storage("core.area_registry")
-        areas = (
-            area_reg.get("data", {}).get("areas", []) if area_reg else []
-        )
+        areas = area_reg.get("data", {}).get("areas", []) if area_reg else []
         for area in areas:
             aid = area.get("area_id", "")
             if aid:
@@ -282,11 +264,7 @@ class HomeAssistantGraphScanner:
 
         # -- config entries ---------------------------------------------------
         cfg_entries = self._load_storage("core.config_entries")
-        entries = (
-            cfg_entries.get("data", {}).get("entries", [])
-            if cfg_entries
-            else []
-        )
+        entries = cfg_entries.get("data", {}).get("entries", []) if cfg_entries else []
         for entry in entries:
             domain = entry.get("domain", "")
             if domain:
@@ -381,9 +359,7 @@ class HomeAssistantGraphScanner:
 
             # -- conditions → reads ---------------------------------------
             conditions = auto.get("condition", [])
-            conditions = (
-                conditions if isinstance(conditions, list) else [conditions]
-            )
+            conditions = conditions if isinstance(conditions, list) else [conditions]
             cond_entities = extract_entities_from_data(conditions)
             for eid in cond_entities:
                 target_id = self._add_entity_node(index, eid)
@@ -421,9 +397,7 @@ class HomeAssistantGraphScanner:
             services = extract_services(actions)
             for svc in services:
                 svc_id = f"service:{svc}"
-                index.add_node(
-                    GraphNode(id=svc_id, type="service", name=svc)
-                )
+                index.add_node(GraphNode(id=svc_id, type="service", name=svc))
                 index.add_edge(
                     GraphEdge(
                         source=node_id,
@@ -486,9 +460,7 @@ class HomeAssistantGraphScanner:
                     continue
                 node_id = f"script:{script_id}"
                 alias = script_data.get("alias", script_id)
-                index.add_node(
-                    GraphNode(id=node_id, type="script", name=alias)
-                )
+                index.add_node(GraphNode(id=node_id, type="script", name=alias))
                 index.add_edge(
                     GraphEdge(
                         source=node_id,
@@ -514,9 +486,7 @@ class HomeAssistantGraphScanner:
                 # Services
                 for svc in extract_services(seq):
                     svc_id = f"service:{svc}"
-                    index.add_node(
-                        GraphNode(id=svc_id, type="service", name=svc)
-                    )
+                    index.add_node(GraphNode(id=svc_id, type="service", name=svc))
                     index.add_edge(
                         GraphEdge(
                             source=node_id,
@@ -605,18 +575,12 @@ class HomeAssistantGraphScanner:
             try:
                 data = json.loads(dash_file.read_text(encoding="utf-8"))
             except Exception as e:
-                self.warnings.append(
-                    f"Failed to read dashboard {dash_file}: {e}"
-                )
+                self.warnings.append(f"Failed to read dashboard {dash_file}: {e}")
                 continue
 
-            dash_name = (
-                dash_file.stem.replace("lovelace", "").lstrip("._") or "main"
-            )
+            dash_name = dash_file.stem.replace("lovelace", "").lstrip("._") or "main"
             node_id = f"dashboard:{dash_name}"
-            index.add_node(
-                GraphNode(id=node_id, type="dashboard", name=dash_name)
-            )
+            index.add_node(GraphNode(id=node_id, type="dashboard", name=dash_name))
             index.add_edge(
                 GraphEdge(
                     source=node_id,

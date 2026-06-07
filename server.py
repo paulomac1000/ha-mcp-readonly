@@ -93,8 +93,12 @@ HEALTH_STATE = {"status": "starting", "last_heartbeat": time.time()}
 class HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == "/health":
-            payload = {**HEALTH_STATE, "invocations": get_invocation_counts(),
-                        "tool_count": get_tool_count(), "tools_version": __version__}
+            payload = {
+                **HEALTH_STATE,
+                "invocations": get_invocation_counts(),
+                "tool_count": get_tool_count(),
+                "tools_version": __version__,
+            }
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
@@ -369,8 +373,12 @@ def create_rest_app():
         required: list[str] = []
 
         _JSON_TYPE = {
-            str: "string", int: "integer", float: "number",
-            bool: "boolean", dict: "object", list: "array",
+            str: "string",
+            int: "integer",
+            float: "number",
+            bool: "boolean",
+            dict: "object",
+            list: "array",
             type(None): "null",
         }
 
@@ -386,7 +394,8 @@ def create_rest_app():
             origin = getattr(ann, "__origin__", None)
             args = getattr(ann, "__args__", ())
             if origin is not None and str(origin) in (
-                "typing.Union", "typing.Optional",
+                "typing.Union",
+                "typing.Optional",
             ):
                 non_none = [a for a in args if a is not type(None)]
                 ann = non_none[0] if len(non_none) == 1 else ann
@@ -465,12 +474,14 @@ def create_rest_app():
                     entry["parameters"] = _signature_to_json_schema(fn)
                 tool_list.append(entry)
             tool_list.sort(key=lambda x: x["name"])
-            return JSONResponse({
-                "success": True,
-                "total": len(tool_list),
-                "tool_count": len(tool_list),
-                "tools": tool_list,
-            })
+            return JSONResponse(
+                {
+                    "success": True,
+                    "total": len(tool_list),
+                    "tool_count": len(tool_list),
+                    "tools": tool_list,
+                }
+            )
 
         # detail == "minimal" (default)
         categories: dict[str, list[dict[str, str]]] = {}
@@ -492,12 +503,14 @@ def create_rest_app():
             categories["Other"] = uncategorized
 
         total = sum(len(v) for v in categories.values())
-        return JSONResponse({
-            "success": True,
-            "total": total,
-            "tool_count": total,
-            "categories": categories,
-        })
+        return JSONResponse(
+            {
+                "success": True,
+                "total": total,
+                "tool_count": total,
+                "categories": categories,
+            }
+        )
 
     async def call_tool_endpoint(request):
         tool_name = request.path_params.get("tool_name", "")
@@ -815,21 +828,29 @@ def create_rest_app():
         if tool is None:
             all_names = sorted(get_all_tools().keys())
             return JSONResponse(
-                {"success": False, "error": f"Tool '{tool_name}' not found",
-                 "available_tools": all_names[:30], "total_tools": len(all_names)},
+                {
+                    "success": False,
+                    "error": f"Tool '{tool_name}' not found",
+                    "available_tools": all_names[:30],
+                    "total_tools": len(all_names),
+                },
                 status_code=404,
             )
 
         fn = _extract_fn(tool)
         from tools.manifests import get_manifest as _get_manifest
 
-        return JSONResponse({
-            "success": True,
-            "name": tool_name,
-            "description": _extract_desc(tool),
-            "parameters": _signature_to_json_schema(fn) if fn else {"type": "object", "properties": {}},
-            "manifest": _get_manifest(tool_name),
-        })
+        return JSONResponse(
+            {
+                "success": True,
+                "name": tool_name,
+                "description": _extract_desc(tool),
+                "parameters": _signature_to_json_schema(fn)
+                if fn
+                else {"type": "object", "properties": {}},
+                "manifest": _get_manifest(tool_name),
+            }
+        )
 
     routes = [
         Route("/health", endpoint=health, methods=["GET"]),

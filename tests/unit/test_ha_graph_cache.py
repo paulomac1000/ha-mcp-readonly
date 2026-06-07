@@ -123,9 +123,7 @@ class TestGetGraphIndex:
         with patch("ha_graph.cache._build_graph_index") as mock_scanner:
             mock_scanner.return_value = GraphIndex()
             await get_graph_index(TEST_CONFIG_PATH, TEST_HA_URL, TEST_HA_TOKEN)
-            mock_scanner.assert_called_once_with(
-                TEST_CONFIG_PATH, TEST_HA_URL, TEST_HA_TOKEN
-            )
+            mock_scanner.assert_called_once_with(TEST_CONFIG_PATH, TEST_HA_URL, TEST_HA_TOKEN)
 
     def test_graph_cache_ttl_constant(self):
         """GRAPH_CACHE_TTL is 300 seconds."""

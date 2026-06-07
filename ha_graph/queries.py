@@ -47,14 +47,16 @@ def find_entity_references(index: GraphIndex, entity_id: str) -> list[dict[str, 
     results: list[dict[str, Any]] = []
     for edge in incoming:
         source_node = index.nodes.get(edge.source)
-        results.append({
-            "source": edge.source,
-            "source_name": source_node.name if source_node else edge.source,
-            "relation": edge.relation,
-            "confidence": edge.confidence,
-            "file_path": edge.file_path,
-            "object_path": edge.object_path,
-        })
+        results.append(
+            {
+                "source": edge.source,
+                "source_name": source_node.name if source_node else edge.source,
+                "relation": edge.relation,
+                "confidence": edge.confidence,
+                "file_path": edge.file_path,
+                "object_path": edge.object_path,
+            }
+        )
     return results
 
 
@@ -186,11 +188,13 @@ def get_neighbors(
             if neighbor_id and neighbor_id not in visited:
                 visited.add(neighbor_id)
                 queue.append((neighbor_id, current_depth + 1))
-            subgraph_edges.append({
-                "source": edge.source,
-                "target": edge.target,
-                "relation": edge.relation,
-            })
+            subgraph_edges.append(
+                {
+                    "source": edge.source,
+                    "target": edge.target,
+                    "relation": edge.relation,
+                }
+            )
 
     return {
         "node_id": node_id,
