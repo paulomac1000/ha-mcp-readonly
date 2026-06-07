@@ -59,7 +59,7 @@ repos:
 
       - id: unit-tests
         name: Unit tests
-        entry: bash -c 'python3 -m pytest tests/unit/ --ignore=tests/unit/test_server.py -q --tb=short || exit 1'
+        entry: bash -c 'python3 -m pytest tests/unit/ -q --tb=short || exit 1'
         language: system
         pass_filenames: false
         always_run: true
