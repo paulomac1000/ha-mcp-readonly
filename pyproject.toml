@@ -97,7 +97,16 @@ disable_error_code = [
 ]
 
 [[tool.mypy.overrides]]
-module = ["yaml.*"]
+module = [
+    "fastmcp.*", "fastmcp",
+    "requests.*", "requests",
+    "pyyaml.*", "pyyaml",
+    "starlette.*", "starlette",
+    "uvicorn.*", "uvicorn",
+    "dateutil.*", "python_dateutil",
+    "pydantic.*", "pydantic",
+    "yaml.*", "yaml",
+]
 ignore_missing_imports = true
 
 [tool.bandit]
