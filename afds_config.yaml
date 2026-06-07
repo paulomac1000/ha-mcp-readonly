@@ -83,6 +83,7 @@ excluded_dirs:
   - __pycache__
   - .pytest_cache
   - .opencode
+  - .omo
 
 exempt_files:
   - README.md
