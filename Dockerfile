@@ -25,6 +25,7 @@ COPY server.py .
 COPY version.py .
 COPY context_generator/ ./context_generator/
 COPY tools/ ./tools/
+COPY ha_graph/ ./ha_graph/
 COPY start.sh .
 RUN chmod +x start.sh
 
