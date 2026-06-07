@@ -75,9 +75,11 @@ class TestListToolsEndpoint:
         assert response.status_code == 200
         data = response.json()
         assert data["success"] is True
-        assert "tools" in data
-        assert isinstance(data["tools"], list)
-        assert data["total"] == len(data["tools"])
+        assert "categories" in data
+        assert isinstance(data["categories"], dict)
+        # Count tools across all categories
+        total_in_categories = sum(len(v) for v in data["categories"].values())
+        assert data["total"] == total_in_categories
 
 
 class TestCallToolEndpoint:
@@ -399,7 +401,8 @@ class TestToolCount:
 
     def test_list_tools_total_matches_items(self, client):
         tools_data = client.get("/api/tools").json()
-        assert tools_data["total"] == len(tools_data["tools"])
+        total_in_categories = sum(len(v) for v in tools_data["categories"].values())
+        assert tools_data["total"] == total_in_categories
 
 
 class TestRunContextGeneration:
