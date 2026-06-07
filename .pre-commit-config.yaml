@@ -1,38 +1,72 @@
+# pre-commit-config.yaml — HA-MCP-Readonly
+# Standard: pre-commit-architect v1.0.0
+# Compliance: PRECOMMIT-01 through PRECOMMIT-13
+
+fail_fast: false
+
 repos:
+  # ── Remote: generic file hygiene (PRECOMMIT-02: first in chain) ──
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: cef0300fd0fc4d2a87a85fa2093c6b283ea36f4b  # v5.0.0
+    hooks:
+      - id: trailing-whitespace
+        fail_fast: false
+      - id: check-yaml
+        fail_fast: false
+      - id: end-of-file-fixer
+        fail_fast: false
+
+  # ── Local: formatting, linting, types, security, tests ──
+  # Order: lint → format → types → security → version → semgrep → docs → tests
+  # (PRECOMMIT-02 canonical chain, + version-check before docs)
+
   - repo: local
     hooks:
+      # ── Lint ──
       - id: ruff-check
         name: Ruff check
         entry: ruff check .
         language: system
+        types: [python]
         pass_filenames: false
         always_run: true
         stages: [pre-commit]
+        fail_fast: false
 
+      # ── Format ──
       - id: ruff-format
         name: Ruff format check
         entry: ruff format --check .
         language: system
+        types: [python]
         pass_filenames: false
         always_run: true
         stages: [pre-commit]
+        fail_fast: false
 
+      # ── Types ──
       - id: mypy
         name: mypy strict
         entry: mypy tools/ --strict
         language: system
+        types: [python]
         pass_filenames: false
         always_run: true
         stages: [pre-commit]
+        fail_fast: false
 
+      # ── Security ──
       - id: bandit
         name: Bandit security scan
         entry: bandit -r tools/ -ll
         language: system
+        types: [python]
         pass_filenames: false
         always_run: true
         stages: [pre-commit]
+        fail_fast: false
 
+      # ── Version consistency ──
       - id: version-check
         name: Version consistency
         entry: bash -c 'V1=$(grep __version__ version.py | sed "s/.*\"\(.*\)\"/\1/"); V2=$(grep -m1 "^version = " pyproject.toml | sed "s/.*\"\(.*\)\"/\1/"); [ "$V1" = "$V2" ] || { echo "version.py=$V1 != pyproject.toml=$V2"; exit 1; }'
@@ -40,27 +74,34 @@ repos:
         pass_filenames: false
         always_run: true
         stages: [pre-commit]
+        fail_fast: false
 
-      - id: cafds-docs
-        name: CAFDS documentation validation
-        entry: bash -c 'if [ -f afds_config.yaml ] && command -v curl >/dev/null 2>&1; then curl -sS https://raw.githubusercontent.com/paulomac1000/ai-skills/main/skills/afds-doc-writer/docs_validate.py | python3 - --config afds_config.yaml --baseline .afds-baseline.json docs/ ./README.md ./CHANGELOG.md ./AGENTS.md ./CONTRIBUTING.md ./SECURITY.md 2>&1 | grep -v "No YAML frontmatter\|omo/plans" || true; else echo "CAFDS validation skipped"; fi'
-        language: system
-        pass_filenames: false
-        always_run: true
-        stages: [pre-commit]
-
+      # ── Semgrep (security, runs before docs) ──
       - id: semgrep
         name: Semgrep security scan
-        entry: bash -c 'if command -v semgrep >/dev/null 2>&1; then semgrep --config=p/auto --config=p/secrets --config=p/owasp-top-ten --error --quiet . || exit 1; else echo "Semgrep not installed  skipping"; fi'
+        entry: bash -c 'if command -v semgrep >/dev/null 2>&1; then semgrep --config=p/auto --config=p/secrets --config=p/owasp-top-ten --error --quiet . || exit 1; fi'
         language: system
         pass_filenames: false
         always_run: true
         stages: [pre-commit]
+        fail_fast: false
 
+      # ── Docs ──
+      - id: cafds-docs
+        name: CAFDS documentation validation
+        entry: bash -c 'if [ -f afds_config.yaml ] && command -v curl >/dev/null 2>&1; then curl -sS https://raw.githubusercontent.com/paulomac1000/ai-skills/main/skills/afds-doc-writer/docs_validate.py | python3 - --config afds_config.yaml --baseline .afds-baseline.json docs/ ./README.md ./CHANGELOG.md ./AGENTS.md ./CONTRIBUTING.md ./SECURITY.md; fi'
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]
+        fail_fast: false
+
+      # ── Tests ──
       - id: unit-tests
         name: Unit tests
-        entry: bash -c 'python3 -m pytest tests/unit/ -q --tb=short || exit 1'
+        entry: bash -c 'python3 -m pytest tests/unit/ -q --tb=short 2>&1 | tee /tmp/pytest-out.txt; ec=${PIPESTATUS[0]}; grep -q "ERROR" /tmp/pytest-out.txt && echo "Collection error detected" && exit 1; exit $ec'
         language: system
         pass_filenames: false
         always_run: true
         stages: [pre-commit]
+        fail_fast: false

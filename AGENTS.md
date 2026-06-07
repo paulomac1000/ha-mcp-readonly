@@ -249,16 +249,19 @@ pre-commit run --all-files
 
 ### What the hook checks (in order)
 
-| # | Check | Command | What it catches |
-|---|-------|---------|-----------------|
-| 1 | Ruff lint | `ruff check .` | Lint violations (E, F, I, W) |
-| 2 | Ruff format | `ruff format --check .` | Formatting issues |
-| 3 | mypy strict | `mypy tools/ --strict` | Type errors |
-| 4 | Bandit | `bandit -r tools/ -ll` | Security issues |
-| 5 | Version sync | `version.py` vs `pyproject.toml` | Version drift |
-| 6 | CAFDS docs | `curl` validator from GitHub | Documentation quality |
-| 7 | Semgrep | `semgrep p/auto+p/secrets+p/owasp-top-ten` | Security patterns |
-| 8 | Unit tests | `pytest tests/unit/ -q` | Test failures |
+| Hook | Stage | Purpose |
+|------|-------|---------|
+| trailing-whitespace | pre-commit | Remove trailing whitespace |
+| check-yaml | pre-commit | Validate YAML syntax |
+| end-of-file-fixer | pre-commit | Ensure files end with newline |
+| Ruff check | pre-commit | Lint Python code (E, F, I, W) |
+| Ruff format | pre-commit | Format Python code |
+| mypy strict | pre-commit | Static type checking |
+| Bandit | pre-commit | Security scanning |
+| Version sync | pre-commit | Detect version.py vs pyproject.toml drift |
+| Semgrep | pre-commit | Security patterns (p/auto+p/secrets+p/owasp-top-ten) |
+| CAFDS docs | pre-commit | Documentation quality (AFDS validation) |
+| Unit tests | pre-commit | Test failures (`pytest tests/unit/ -q`)
 
 ### Agent Workflow
 

@@ -107,7 +107,7 @@ Achieve L3+ MCP Server Architect compliance by implementing progressive tool dis
   **What to do**: Add a query parameter `detail` to the existing `list_tools_endpoint` in `server.py`:
   - `detail=minimal` (default): returns names + one-liner descriptions, grouped by category, aiming for < 2000 tokens
   - `detail=full`: returns full tool schemas with all parameters (current behavior)
-  
+
   Implementation:
   ```python
   async def list_tools_endpoint(request):

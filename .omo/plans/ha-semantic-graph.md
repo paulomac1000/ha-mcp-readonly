@@ -682,4 +682,3 @@ Max Concurrent: 4 (Wave 2), 3 (Wave 1)
   **Parallelization**: Wave 4 (with T14, T15)
   **Commit**: YES (Wave 4) — `test: add graph tools, integration, server registration`
   - Pre-commit: `pytest tests/unit/ -q && ruff check .`
-
