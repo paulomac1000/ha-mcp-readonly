@@ -2440,10 +2440,14 @@ def _do_resolve_blueprint_automation(
 
     blueprint_file = _os.path.join(config_path, "blueprints", blueprint_path)
     if not _os.path.isfile(blueprint_file):
-        return {
-            "success": False,
-            "error": f"Blueprint file not found: {blueprint_path}",
-        }
+        # Fallback: some blueprint references omit the "automation/" domain prefix.
+        # Try again with it prepended (HA resolves blueprints under <domain>/<path>).
+        blueprint_file = _os.path.join(config_path, "blueprints", "automation", blueprint_path)
+        if not _os.path.isfile(blueprint_file):
+            return {
+                "success": False,
+                "error": f"Blueprint file not found: {blueprint_path}",
+            }
 
     try:
         with open(blueprint_file, encoding="utf-8") as f:

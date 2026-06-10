@@ -130,8 +130,8 @@ class TestEntityGetContextTree:
                 else {"success": True, "data": {"automations": []}}
             ),
         ):
-                result = await tools["entity_get_context_tree"]("light.test")
-                data = json.loads(result)
+            result = await tools["entity_get_context_tree"]("light.test")
+            data = json.loads(result)
 
         assert data["success"] is True
         assert data["context_tree"]["entity_id"] == "light.test"
@@ -243,8 +243,8 @@ class TestEntityContextWithAutomations:
             return {"success": True, "data": []}
 
         with patch("tools.entity_context.make_ha_request", side_effect=mock_request):
-                result = await tools["entity_get_context_tree"]("light.kitchen")
-                data = json.loads(result)
+            result = await tools["entity_get_context_tree"]("light.kitchen")
+            data = json.loads(result)
 
         assert data["success"] is True
         assert data["context_tree"]["entity_id"] == "light.kitchen"
@@ -320,8 +320,8 @@ class TestEntityContextSourceBreakdown:
             return {"success": True, "data": []}
 
         with patch("tools.entity_context.make_ha_request", side_effect=mock_request):
-                result = await tools["entity_get_context_tree"]("light.test_entity")
-                data = json.loads(result)
+            result = await tools["entity_get_context_tree"]("light.test_entity")
+            data = json.loads(result)
 
         assert data["success"] is True
         changes = data["context_tree"]["recent_changes"]
@@ -399,8 +399,8 @@ class TestEntityContextSourceBreakdown:
             return {"success": True, "data": []}
 
         with patch("tools.entity_context.make_ha_request", side_effect=mock_request):
-                result = await tools["entity_get_context_tree"]("light.test_entity")
-                data = json.loads(result)
+            result = await tools["entity_get_context_tree"]("light.test_entity")
+            data = json.loads(result)
 
         assert data["success"] is True
         sources = data["context_tree"]["sources_breakdown"]
@@ -497,8 +497,8 @@ class TestEntityContextSourceBreakdown:
             return {"success": True, "data": []}
 
         with patch("tools.entity_context.make_ha_request", side_effect=mock_request):
-                result = await tools["entity_get_context_tree"]("light.test_entity")
-                data = json.loads(result)
+            result = await tools["entity_get_context_tree"]("light.test_entity")
+            data = json.loads(result)
 
         assert data["success"] is True
         sources = data["context_tree"]["sources_breakdown"]

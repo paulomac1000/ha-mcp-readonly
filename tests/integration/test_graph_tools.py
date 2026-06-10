@@ -20,9 +20,7 @@ try:
 except ImportError:
     ha_configured = False
 
-pytestmark = pytest.mark.skipif(
-    not ha_configured, reason="HA_URL and HA_TOKEN must be set"
-)
+pytestmark = pytest.mark.skipif(not ha_configured, reason="HA_URL and HA_TOKEN must be set")
 
 
 class TestGraphTools:
@@ -139,9 +137,7 @@ class TestGraphTools:
 
     def test_graph_detect_orphans(self, real_mcp):
         """Detect orphan entities and verify orphan_entities list."""
-        result = real_mcp.call_tool(
-            "graph_detect_orphans", ignorable_domains="update,button"
-        )
+        result = real_mcp.call_tool("graph_detect_orphans", ignorable_domains="update,button")
         data = json.loads(result)
 
         assert data["success"] is True

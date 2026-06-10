@@ -48,9 +48,7 @@ class TestScriptsScenes:
         if not TestScriptsScenes.sample_script_id:
             pytest.skip("No script from test_list_scripts")
 
-        result = real_mcp.call_tool(
-            "get_script_code", script_id=TestScriptsScenes.sample_script_id
-        )
+        result = real_mcp.call_tool("get_script_code", script_id=TestScriptsScenes.sample_script_id)
 
         # get_script_code returns raw YAML string on success,
         # or JSON {"success": false, ...} on failure
@@ -85,9 +83,7 @@ class TestScriptsScenes:
         if not TestScriptsScenes.sample_scene_id:
             pytest.skip("No scene from test_list_scenes")
 
-        result = real_mcp.call_tool(
-            "get_scene_code", scene_id=TestScriptsScenes.sample_scene_id
-        )
+        result = real_mcp.call_tool("get_scene_code", scene_id=TestScriptsScenes.sample_scene_id)
 
         # get_scene_code returns raw YAML string on success,
         # or JSON {"success": false, ...} on failure

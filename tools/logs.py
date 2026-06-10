@@ -90,7 +90,7 @@ def _parse_log_line(line: str) -> dict[str, Any]:
         result["message"] = line.strip()
 
     if "timestamp" not in result and "level" not in result:
-        result["unparsed"] = True
+        result["unparsed"] = True  # type: ignore[assignment]
 
     return result
 
@@ -214,7 +214,7 @@ def _do_get_log_insights(
         else:
             lb_result = make_ha_request(ha_url, ha_token, "/api/logbook")
             if lb_result.get("success") and isinstance(lb_result.get("data"), list):
-                entries = lb_result["data"]  # type: ignore[assignment]
+                entries = lb_result["data"]
                 log_lines = [f"{e.get('when', '')} {e.get('message', '')}\n" for e in entries]
                 api_fallback_used = True
 

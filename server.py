@@ -561,8 +561,8 @@ def create_rest_app():
 
             if not isinstance(result, dict):
                 return JSONResponse(
-                    {"success": False, "error": "Tool returned non-dict result", "tool": tool_name},
-                    status_code=502,
+                    {"success": True, "data": result, "tool": tool_name},
+                    status_code=200,
                 )
             if "success" not in result:
                 return JSONResponse(

@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "active_work_id": "integration-e2e-test-gap-d1ea8b4e",
+  "active_work_id": "post-test-fixes-67a1d77e",
   "works": {
     "mcp-standard-v2-compliance-18dd5833": {
       "work_id": "mcp-standard-v2-compliance-18dd5833",
@@ -118,9 +118,9 @@
       "work_id": "integration-e2e-test-gap-d1ea8b4e",
       "active_plan": "/home/pablo/ha-mcp-readonly/.omo/plans/integration-e2e-test-gap.md",
       "plan_name": "integration-e2e-test-gap",
-      "status": "active",
+      "status": "completed",
       "started_at": "2026-06-10T20:44:22.037Z",
-      "updated_at": "2026-06-10T21:50:39.911Z",
+      "updated_at": "2026-06-10T21:51:37.339Z",
       "session_ids": [
         "opencode:ses_14dddabfeffeZRi6nUpzoxgmqs",
         "opencode:ses_14caa4783ffejMLIAzCmFwXX2f",
@@ -163,60 +163,82 @@
           "agent": "Sisyphus-Junior",
           "category": "deep",
           "started_at": "2026-06-10T21:41:30.304Z",
-          "status": "running",
-          "updated_at": "2026-06-10T21:50:39.912Z"
+          "status": "completed",
+          "updated_at": "2026-06-10T21:51:14.405Z",
+          "ended_at": "2026-06-10T21:51:14.405Z",
+          "elapsed_ms": 584101
+        }
+      },
+      "ended_at": "2026-06-10T21:51:37.339Z",
+      "elapsed_ms": 4035302
+    },
+    "post-test-fixes-67a1d77e": {
+      "work_id": "post-test-fixes-67a1d77e",
+      "active_plan": "/home/pablo/ha-mcp-readonly/.omo/plans/post-test-fixes.md",
+      "plan_name": "post-test-fixes",
+      "status": "active",
+      "started_at": "2026-06-10T22:28:30.350Z",
+      "updated_at": "2026-06-10T22:29:08.879Z",
+      "session_ids": [
+        "opencode:ses_14dddabfeffeZRi6nUpzoxgmqs",
+        "opencode:ses_14c58d747ffeB6F54q0Xg2rex6",
+        "opencode:ses_14c58cb6fffedgslyUnWS2gH4w",
+        "opencode:ses_14c58c059ffeIsdVnz3BSRqER3",
+        "opencode:ses_14c58b48affe7wZwWQoSj35w26",
+        "opencode:ses_14c58aaeeffe27drrLD7CIDcXL"
+      ],
+      "session_origins": {
+        "opencode:ses_14dddabfeffeZRi6nUpzoxgmqs": "direct",
+        "opencode:ses_14c58d747ffeB6F54q0Xg2rex6": "appended",
+        "opencode:ses_14c58cb6fffedgslyUnWS2gH4w": "appended",
+        "opencode:ses_14c58c059ffeIsdVnz3BSRqER3": "appended",
+        "opencode:ses_14c58b48affe7wZwWQoSj35w26": "appended",
+        "opencode:ses_14c58aaeeffe27drrLD7CIDcXL": "appended"
+      },
+      "agent": "atlas",
+      "task_sessions": {
+        "todo:1": {
+          "task_key": "todo:1",
+          "task_label": "1",
+          "task_title": "Fix `resolve_blueprint_automation` — add domain prefix fallback",
+          "session_id": "opencode:ses_14c58aaeeffe27drrLD7CIDcXL",
+          "agent": "Sisyphus-Junior",
+          "category": "quick",
+          "updated_at": "2026-06-10T22:29:08.879Z"
         }
       }
     }
   },
-  "active_plan": "/home/pablo/ha-mcp-readonly/.omo/plans/integration-e2e-test-gap.md",
-  "started_at": "2026-06-10T20:44:22.037Z",
+  "active_plan": "/home/pablo/ha-mcp-readonly/.omo/plans/post-test-fixes.md",
+  "started_at": "2026-06-10T22:28:30.350Z",
   "status": "active",
-  "updated_at": "2026-06-10T21:50:39.911Z",
+  "updated_at": "2026-06-10T22:29:08.879Z",
   "session_ids": [
     "opencode:ses_14dddabfeffeZRi6nUpzoxgmqs",
-    "opencode:ses_14caa4783ffejMLIAzCmFwXX2f",
-    "opencode:ses_14caa3a5cffeqxjqZMepJPkDz6",
-    "opencode:ses_14caa2dbfffevUxS1gcdNXS7Ux"
+    "opencode:ses_14c58d747ffeB6F54q0Xg2rex6",
+    "opencode:ses_14c58cb6fffedgslyUnWS2gH4w",
+    "opencode:ses_14c58c059ffeIsdVnz3BSRqER3",
+    "opencode:ses_14c58b48affe7wZwWQoSj35w26",
+    "opencode:ses_14c58aaeeffe27drrLD7CIDcXL"
   ],
   "session_origins": {
     "opencode:ses_14dddabfeffeZRi6nUpzoxgmqs": "direct",
-    "opencode:ses_14caa4783ffejMLIAzCmFwXX2f": "appended",
-    "opencode:ses_14caa3a5cffeqxjqZMepJPkDz6": "appended",
-    "opencode:ses_14caa2dbfffevUxS1gcdNXS7Ux": "appended"
+    "opencode:ses_14c58d747ffeB6F54q0Xg2rex6": "appended",
+    "opencode:ses_14c58cb6fffedgslyUnWS2gH4w": "appended",
+    "opencode:ses_14c58c059ffeIsdVnz3BSRqER3": "appended",
+    "opencode:ses_14c58b48affe7wZwWQoSj35w26": "appended",
+    "opencode:ses_14c58aaeeffe27drrLD7CIDcXL": "appended"
   },
-  "plan_name": "integration-e2e-test-gap",
+  "plan_name": "post-test-fixes",
   "task_sessions": {
     "todo:1": {
       "task_key": "todo:1",
       "task_label": "1",
-      "task_title": "Graph Tools integration tests (7 tools)",
-      "session_id": "opencode:ses_14cb82e6fffe8t0fVAewtphguN",
+      "task_title": "Fix `resolve_blueprint_automation` — add domain prefix fallback",
+      "session_id": "opencode:ses_14c58aaeeffe27drrLD7CIDcXL",
       "agent": "Sisyphus-Junior",
-      "category": "deep",
-      "updated_at": "2026-06-10T20:47:51.346Z",
-      "started_at": "2026-06-10T20:47:51.346Z",
-      "status": "running"
-    },
-    "todo:4": {
-      "task_key": "todo:4",
-      "task_label": "4",
-      "task_title": "Diagnostics integration tests — batch 1 (6 tools)",
-      "session_id": "opencode:ses_14caa2dbfffevUxS1gcdNXS7Ux",
-      "agent": "Sisyphus-Junior",
-      "category": "deep",
-      "updated_at": "2026-06-10T21:00:06.900Z"
-    },
-    "todo:7": {
-      "task_key": "todo:7",
-      "task_label": "7",
-      "task_title": "Storage tools — batch 1 (new tools) (6 tools)",
-      "session_id": "opencode:ses_14c83bc97ffeb4uvRjiqNXMZlc",
-      "agent": "Sisyphus-Junior",
-      "category": "deep",
-      "started_at": "2026-06-10T21:41:30.304Z",
-      "status": "running",
-      "updated_at": "2026-06-10T21:50:39.912Z"
+      "category": "quick",
+      "updated_at": "2026-06-10T22:29:08.879Z"
     }
   },
   "agent": "atlas"

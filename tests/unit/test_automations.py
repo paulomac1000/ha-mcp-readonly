@@ -2640,6 +2640,51 @@ class TestResolveBlueprintAutomation:
         assert data["success"] is False
         assert "not found" in data["error"].lower()
 
+    def test_resolve_blueprint_fallback_automation_prefix(self, mock_mcp, tmp_path):
+        """Blueprint file found via automation/ prefix fallback when direct path fails."""
+        auto_yaml = """
+- id: "fb_bp"
+  alias: "Fallback BP"
+  use_blueprint:
+    path: "test/fallback_bp.yaml"
+    input:
+      brightness: 128
+"""
+        bp_yaml = """
+blueprint:
+  name: Fallback Test
+  domain: automation
+  input:
+    brightness:
+      name: Brightness
+      selector:
+        number:
+          min: 0
+          max: 255
+trigger:
+  - platform: state
+    entity_id: !input brightness
+action:
+  - service: light.turn_on
+    target:
+      entity_id: light.fallback
+"""
+        (tmp_path / "automations.yaml").write_text(auto_yaml, encoding="utf-8")
+        bp_dir = tmp_path / "blueprints" / "automation" / "test"
+        bp_dir.mkdir(parents=True, exist_ok=True)
+        (bp_dir / "fallback_bp.yaml").write_text(bp_yaml, encoding="utf-8")
+
+        register_automation_tools(mock_mcp, str(tmp_path))
+        tool = mock_mcp._tools["resolve_blueprint_automation"]
+        data = json.loads(tool("Fallback BP"))
+
+        assert data["success"] is True
+        assert data["is_blueprint"] is True
+        assert data["alias"] == "Fallback BP"
+        resolved = data["resolved_yaml"]
+        assert "trigger" in resolved
+        assert "action" in resolved
+
     def test_resolve_blueprint_no_path(self, mock_mcp, tmp_path):
         """Blueprint automation without a path returns error."""
         auto_yaml = """

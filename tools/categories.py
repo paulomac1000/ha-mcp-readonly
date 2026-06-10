@@ -66,8 +66,9 @@ def _do_list_automation_categories(
                         scope_map[cat_id].append(scope)
         for cat in categories:
             cid = cat["category_id"]
-            cat["entity_count"] = scope_counts.get(cid, 0)
-            if cat["entity_count"] == 0:
+            assert isinstance(cid, str)
+            cat["entity_count"] = scope_counts.get(cid, 0)  # type: ignore[assignment]
+            if cat["entity_count"] == 0:  # type: ignore[comparison-overlap]
                 empty_categories.append(cid)
 
     categories.sort(key=lambda x: (x.get("scope", ""), x.get("name", "")))

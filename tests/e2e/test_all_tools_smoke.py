@@ -20,9 +20,7 @@ import requests
 from .conftest import HA_TOKEN, REST_API_URL, _server_running
 
 pytestmark = pytest.mark.skipif(
-    not _server_running()
-    or not HA_TOKEN
-    or HA_TOKEN in ("", "your_long_lived_access_token_here"),
+    not _server_running() or not HA_TOKEN or HA_TOKEN in ("", "your_long_lived_access_token_here"),
     reason="MCP server not running or HA_TOKEN not configured",
 )
 
@@ -39,11 +37,7 @@ def _list_tools():
 # Tools whose REST API wrapper returns non-dict content -> always 502.
 # The tool implementations are correct; the REST layer cannot wrap them.
 # ---------------------------------------------------------------------------
-_TOOLS_NON_DICT_RESPONSE = {
-    "get_scene_code",
-    "get_script_code",
-    "read_config_file",
-}
+_TOOLS_NON_DICT_RESPONSE: set = {}
 
 # ---------------------------------------------------------------------------
 # Tools that always return success=False in this test environment.
@@ -209,9 +203,7 @@ def test_tool_smoke(tool_name, params):
         json=body,
         timeout=120,
     )
-    assert resp.status_code == 200, (
-        f"{tool_name}: HTTP {resp.status_code} {resp.text[:200]}"
-    )
+    assert resp.status_code == 200, f"{tool_name}: HTTP {resp.status_code} {resp.text[:200]}"
 
     data = resp.json()
     assert data.get("success") is True, (

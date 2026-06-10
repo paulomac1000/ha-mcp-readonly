@@ -37,7 +37,11 @@ class TestRESTAPI:
         data = resp.json()
         assert data["success"] is True
         assert data["total"] > 100
-        tool_names = [t["name"] for t in data["tools"]]
+        tools_raw = data.get("categories", data.get("tools"))
+        if isinstance(tools_raw, dict):
+            tool_names = [t["name"] for entries in tools_raw.values() for t in entries]
+        else:
+            tool_names = [t["name"] for t in tools_raw]
         assert "get_entity_state" in tool_names
         assert "list_automations" in tool_names
         assert "diagnose_system_health" in tool_names
@@ -106,7 +110,11 @@ class TestRESTAPI:
         """Every tool should have a path in OpenAPI schema."""
         tools_resp = requests.get(f"{REST_API_URL}/api/tools", timeout=10)
         tools_data = tools_resp.json()
-        tool_names = [t["name"] for t in tools_data["tools"]]
+        tools_raw = tools_data.get("categories", tools_data.get("tools"))
+        if isinstance(tools_raw, dict):
+            tool_names = [t["name"] for entries in tools_raw.values() for t in entries]
+        else:
+            tool_names = [t["name"] for t in tools_raw]
 
         schema_resp = requests.get(f"{REST_API_URL}/api/openapi.json", timeout=10)
         schema_data = schema_resp.json()

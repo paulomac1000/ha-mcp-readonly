@@ -1098,9 +1098,16 @@ def _do_diagnose_person_tracking(
             zone_reg = load_registry("zone", config_path)
             for z in zone_reg.get("data", {}).get("items", []):
                 if isinstance(z, str):
-                    zones_list.append({"entity_id": f"zone.{z}", "name": z,
-                                      "latitude": None, "longitude": None,
-                                      "radius": None, "passive": False})
+                    zones_list.append(
+                        {
+                            "entity_id": f"zone.{z}",
+                            "name": z,
+                            "latitude": None,
+                            "longitude": None,
+                            "radius": None,
+                            "passive": False,
+                        }
+                    )
                 else:
                     zones_list.append(
                         {
