@@ -855,7 +855,7 @@ def _do_get_notification_history(
 
     recent_notifications = []
     try:
-        end_time = datetime.now()
+        end_time = datetime.now(UTC)
         start_time = end_time - timedelta(hours=24)
 
         logbook_res = make_ha_request(
@@ -916,7 +916,7 @@ def _do_get_energy_dashboard_data(
             except ValueError:
                 pass
 
-    now = datetime.now()
+    now = datetime.now(UTC)
     hour = now.hour
 
     workday_sensor = next(
@@ -1097,16 +1097,21 @@ def _do_diagnose_person_tracking(
         if not zones_list:
             zone_reg = load_registry("zone", config_path)
             for z in zone_reg.get("data", {}).get("items", []):
-                zones_list.append(
-                    {
-                        "entity_id": f"zone.{z.get('id', '')}",
-                        "name": z.get("name", z.get("id", "")),
-                        "latitude": z.get("latitude"),
-                        "longitude": z.get("longitude"),
-                        "radius": z.get("radius"),
-                        "passive": z.get("passive", False),
-                    }
-                )
+                if isinstance(z, str):
+                    zones_list.append({"entity_id": f"zone.{z}", "name": z,
+                                      "latitude": None, "longitude": None,
+                                      "radius": None, "passive": False})
+                else:
+                    zones_list.append(
+                        {
+                            "entity_id": f"zone.{z.get('id', '')}",
+                            "name": z.get("name", z.get("id", "")),
+                            "latitude": z.get("latitude"),
+                            "longitude": z.get("longitude"),
+                            "radius": z.get("radius"),
+                            "passive": z.get("passive", False),
+                        }
+                    )
     except Exception:
         pass
 

@@ -1194,13 +1194,16 @@ def _do_get_nfc_tags(config_path: str, ha_url: str | None, ha_token: str | None)
     tag_registry = load_registry("core.tag", config_path)
     if tag_registry.get("data", {}).get("tags"):
         for t in tag_registry["data"]["tags"]:
-            tags.append(
-                {
-                    "tag_id": t.get("id"),
-                    "name": t.get("name"),
-                    "last_scanned": t.get("last_scanned"),
-                }
-            )
+            if isinstance(t, str):
+                tags.append({"tag_id": t, "name": t, "last_scanned": None})
+            else:
+                tags.append(
+                    {
+                        "tag_id": t.get("id"),
+                        "name": t.get("name"),
+                        "last_scanned": t.get("last_scanned"),
+                    }
+                )
 
     if not tags and ha_url and ha_token:
         states_data = make_ha_request(ha_url, ha_token, "/api/states")
