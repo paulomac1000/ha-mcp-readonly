@@ -290,6 +290,7 @@ def real_mcp():
         from tools.entity_context import register_entity_context_tools
         from tools.entity_dependencies import register_entity_dependency_tools
         from tools.filesystem_explorer import register_filesystem_tools
+        from tools.graph_tools import register_graph_tools
         from tools.health_reporter import register_health_reporter_tools
         from tools.helpers_health import register_helpers_health_tools
         from tools.history import register_history_tools
@@ -323,6 +324,7 @@ def real_mcp():
         register_categories_tools(mcp, HA_CONFIG_PATH)
         register_helpers_health_tools(mcp, HA_URL, HA_TOKEN)
         register_filesystem_tools(mcp)
+        register_graph_tools(mcp, HA_CONFIG_PATH, HA_URL, HA_TOKEN)
         register_capability_tools(mcp)
 
         print(f"[OK] Registered Home Assistant tools (url: {HA_URL})", file=sys.stderr)

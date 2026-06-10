@@ -1128,3 +1128,44 @@ class TestPaginatedRegistries:
         if page1_ids and page2_ids:
             overlap = page1_ids & page2_ids
             assert len(overlap) == 0, f"Entry pages overlap: {overlap}"
+
+
+# ============================================================
+# NEW TOOLS (v1.6+) — diagnose_stuck_helpers, list_automation_categories, describe_ha_capabilities
+# ============================================================
+
+
+class TestNewToolsV11:
+    """Integration tests for tools added in v1.6+."""
+
+    def test_diagnose_stuck_helpers(self, real_mcp):
+        """diagnose_stuck_helpers should return stuck_count >= 0."""
+        result = real_mcp.call_tool("diagnose_stuck_helpers", stale_hours=48)
+        data = json.loads(result)
+        assert data["success"] is True
+        assert data["stuck_count"] >= 0
+        assert "stuck_helpers" in data
+        assert "total_helpers_scanned" in data
+        print(
+            f"\n[OK] diagnose_stuck_helpers: {data['stuck_count']} stuck out of {data['total_helpers_scanned']} scanned"
+        )
+
+    def test_list_automation_categories(self, real_mcp):
+        """list_automation_categories should return categories list."""
+        result = real_mcp.call_tool("list_automation_categories", include_entity_count=True)
+        data = json.loads(result)
+        assert data["success"] is True
+        assert isinstance(data["categories"], list)
+        assert data["total"] >= 0
+        assert "empty_categories" in data
+        print(f"\n[OK] list_automation_categories: {data['total']} categories, {len(data['empty_categories'])} empty")
+
+    def test_describe_ha_capabilities(self, real_mcp):
+        """describe_ha_capabilities should return tool catalog."""
+        result = real_mcp.call_tool("describe_ha_capabilities")
+        data = json.loads(result)
+        assert data["success"] is True
+        assert "tool_count" in data
+        assert "tools" in data
+        assert data["tool_count"] > 0
+        print(f"\n[OK] describe_ha_capabilities: {data['tool_count']} tools, schema v{data.get('schema_version', '?')}")
