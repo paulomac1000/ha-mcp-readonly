@@ -124,25 +124,25 @@ curl -X POST http://localhost:9093/api/context/generate \
   -d '{"mode": "hybrid"}'
 ```
 
-## Available Tools (136 with dev tools, 124 without)
+## Available Tools (139 with dev tools, 127 without)
 
-Tools are organized by category (53 shown in table below). All are **read-only** — no state changes, no service calls, no modifications.
+Tools are organized by category (56 shown in table below). All are **read-only** — no state changes, no service calls, no modifications.
 
 | Category | Key tools |
 |----------|-----------|
 | **States** | `get_entity_state`, `get_states_grouped`, `search_entities`, `get_domains_summary`, `get_system_overview` |
 | **Automations** | `list_automations`, `get_automation_code`, `get_automation_file_location`, `diagnose_automation`, `search_automations_by_entity`, `get_automation_conflicts`, `get_automation_entity_id` |
 | **Scripts & Scenes** | `list_scripts`, `get_script_code`, `list_scenes`, `get_scene_code` |
-| **Blueprints** | `list_blueprints`, `get_blueprint_code`, `get_blueprint_instances`, `get_blueprint_usage_summary` |
+| **Blueprints** | `list_blueprints`, `get_blueprint_code`, `get_blueprint_instances`, `get_blueprint_usage_summary`, `resolve_blueprint_automation` |
 | **Devices & Areas** | `get_device_details`, `search_devices`, `get_devices_by_area`, `get_area_devices_summary` |
 | **Config entries** | `get_config_entry_details`, `search_config_entries`, `diagnose_config_entry`, `list_config_entry_domains` |
 | **Integrations** | `get_integration_entities`, `get_integration_summary` |
 | **Diagnostics** | `diagnose_system_health`, `get_unavailable_entities_grouped`, `get_integration_health` |
 | **Logs** | `get_log_insights`, `analyze_log_errors`, `get_startup_errors`, `get_log_timeline`, `search_logs` |
 | **History** | `get_entity_state_history_summary`, `get_recent_state_changes` |
-| **Context** | `entity_get_context_tree`, `get_entity_dependencies`, `get_entity_consumers` |
+| **Context** | `entity_get_context_tree`, `get_entity_dependencies`, `get_entity_consumers`, `get_context_chain` |
 | **Config** | `get_main_configuration`, `search_in_config`, `validate_yaml_syntax`, `read_config_file` |
-| **Storage** | `search_registries_batch`, `get_entity_registry`, `get_device_registry`, `get_area_registry`, `get_template_entity_code` |
+| **Storage** | `search_registries_batch`, `get_entity_registry`, `get_device_registry`, `get_area_registry`, `get_template_entity_code`, `get_cache_stats` |
 | **Lovelace** | `get_lovelace_dashboards`, `get_lovelace_config`, `get_lovelace_resources`, `search_lovelace_config`, `get_lovelace_config_summary`, `diagnose_lovelace_setup` |
 | **Batch** | `bulk_search_entities`, `compare_entities_state`, `validate_yaml_batch`, `get_automation_codes_batch` |
 | **Composite** | `investigate_entity`, `get_area_diagnostic`, `get_entity_with_automations`, `diagnose_person_tracking` |
@@ -150,21 +150,12 @@ Tools are organized by category (53 shown in table below). All are **read-only**
 
 ## What's New in v1.6.0
 
-- **2 new tools**: `get_automation_entity_id` (Automations) and `compare_templates` (Dev tools)
-- **Parameter patterns**: `compact`, `include_state`, `include_entities`, `include_options`, and `detail_level` added across tools for flexible response control
-- **Batch improvements**: `get_entity_details` supports multiple entity IDs; compact mode for states
-- **Enhanced automation traces**: logbook context and `include_entity_id` in search
-
-### Parameter Patterns
-
-Several tools now support these cross-cutting parameter patterns for fine-grained response control:
-
-| Pattern | Description | Example tools |
-|---------|-------------|---------------|
-| `compact` | Strips attributes, context, and last_reported; keeps state, timestamps, and friendly_name | `get_entity_state`, `get_states_filtered`, `get_all_states` |
-| `detail_level` | Controls response detail: `summary`, `standard`, or `full` | `get_device_details`, `get_system_overview`, `get_overview` |
-| `include_*` | Selective inclusion of optional data fields | `include_state`, `include_entities`, `include_options` on various tools |
-| `include_entity_id` | When false, omits entity_id from responses for token-efficient summaries | `search_automations` |
+- **5 new tools**: `get_context_chain` (Context), `resolve_blueprint_automation` (Blueprints), `get_cache_stats` (Storage), `compare_templates` (Dev tools), `get_automation_entity_id` (Automations)
+- **`choose_analysis` in `diagnose_automation`**: When `detail_level="full"`, returns conditional branch analysis for automations using `choose` actions
+- **Registry pagination**: `limit` and `offset` parameters added to `get_entity_registry`, `get_device_registry`, `get_area_registry`, and `search_registries_batch` for efficient scanning of large registries
+- **`data_quality` field**: Composite diagnostic tools (`investigate_entity`, `get_area_diagnostic`, `get_entity_with_automations`) now include a `data_quality` assessment flagging stale sensors, missing entities, and unavailable devices
+- **New pre-commit hooks**: `mypy strict`, `Bandit`, `Semgrep`, and AFDS documentation validation added to the pre-commit pipeline
+- **Test infrastructure**: 67 integration tests and 158 E2E tests for expanded real-HA and end-to-end coverage
 
 ## Claude Desktop Configuration
 
@@ -184,7 +175,7 @@ Add the following to your Claude Desktop config:
 }
 ```
 
-After restarting Claude Desktop, the 136 Home Assistant tools will be available (124 without dev tools enabled).
+After restarting Claude Desktop, the 139 Home Assistant tools will be available (127 without dev tools enabled).
 
 ### LibreChat
 
@@ -256,25 +247,25 @@ pip install -r requirements.txt
 ### Run tests
 
 ```bash
-# Unit tests (no credentials needed, 884 tests, <20s)
+# Unit tests (no credentials needed, 1142 tests, <20s)
 pytest tests/unit/ -q
 
 # Smoke tests (requires local MCP server, 84 tests, <5s)
 pytest tests/smoke/ -q
 
-# Integration tests (requires real HA, 98 tests, ~2min)
+# Integration tests (requires real HA, 278 tests, ~2min)
 export HA_URL=http://your-ha:8123
 export HA_TOKEN=your_token
 pytest tests/integration/ -q
 
-# E2E tests (requires real HA + local MCP server, 24 tests, ~30s)
+# E2E tests (requires real HA + local MCP server, 182 tests, ~30s)
 pytest tests/e2e/ -q
 
 # All tests
 pytest tests/unit/ tests/smoke/ tests/e2e/ tests/integration/ -q
 ```
 
-All unit tests use mocked dependencies — no real Home Assistant instance required. 1090 total tests across 4 suites.
+All unit tests use mocked dependencies — no real Home Assistant instance required. 1602 total tests across 4 suites.
 
 ### Lint & format
 
@@ -324,7 +315,7 @@ tools/
 └── yaml_utils.py          # HomeAssistantLoader for HA-specific YAML tags
 
 tests/
-├── unit/                  # 26 test files, 884 tests, fully mocked
+├── unit/                  # 26 test files, 1142 tests, fully mocked
 └── integration/           # Real HA tests (requires HA_URL + HA_TOKEN)
 ```
 
