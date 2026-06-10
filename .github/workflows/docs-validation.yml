@@ -66,22 +66,15 @@ jobs:
             **/archive/**
             README.md
 
-      - name: Validate documentation (changed files only)
+      - name: Validate documentation
         id: validate
-        if: steps.changed-files.outputs.any_changed == 'true'
-        env:
-          CHANGED_FILES: ${{ steps.changed-files.outputs.all_changed_files }}
         run: |
-          echo "Changed files: $CHANGED_FILES"
-          echo ""
-          # Validation script (validate_docs.py) is not available in this repo.
-          # Validation is disabled until the script is restored.
-          echo "Documentation validation skipped (script not available)"
-
-      - name: Validate documentation (all files, no changes detected)
-        if: steps.changed-files.outputs.any_changed != 'true'
-        run: |
-          echo "No markdown files changed — documentation validation skipped (script not available)"
+          echo "Validating documentation via AFDS validator..."
+          VALIDATOR_URL="https://raw.githubusercontent.com/paulomac1000/ai-skills/main/skills/afds-doc-writer/docs_validate.py"
+          curl -sS "$VALIDATOR_URL" | python3 - --config afds_config.yaml --baseline .afds-baseline.json docs/ ./README.md ./CHANGELOG.md ./AGENTS.md ./CONTRIBUTING.md ./SECURITY.md 2>&1 | tee /tmp/docs-validation-output.txt
+          EXIT_CODE=${PIPESTATUS[0]}
+          echo "exit_code=${EXIT_CODE}" >> "$GITHUB_OUTPUT"
+          exit ${EXIT_CODE}
 
       - name: Post or update PR comment
         if: github.event_name == 'pull_request'
@@ -122,7 +115,7 @@ jobs:
                 '',
                 '**How to fix locally:**',
                 '```bash',
-                'python scripts/validate_docs.py docs/',
+                'curl -sS https://raw.githubusercontent.com/paulomac1000/ai-skills/main/skills/afds-doc-writer/docs_validate.py | python3 - --config afds_config.yaml docs/',
                 '```',
               ].join('\n');
             }
