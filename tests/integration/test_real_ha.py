@@ -1131,6 +1131,108 @@ class TestPaginatedRegistries:
 
 
 # ============================================================
+# 🩺 NEW DIAGNOSTICS TOOLS (v1.7+) — installation type, post-update, health snapshots, threshold proximity, notifications
+# ============================================================
+
+
+class TestNewDiagnosticsTools:
+    """Integration tests for diagnostics tools added in v1.7+."""
+
+    def test_diagnose_installation_type(self, real_mcp):
+        """diagnose_installation_type should detect HA installation type."""
+        result = real_mcp.call_tool("diagnose_installation_type")
+        data = json.loads(result)
+        assert data["success"] is True
+        assert "type" in data or "installation_type" in data or "ha_type" in data
+        print(f"\n[OK] diagnose_installation_type: type={data.get('type', 'unknown')}")
+
+    def test_diagnose_post_update_integrations(self, real_mcp):
+        """diagnose_post_update_integrations should report custom integration status."""
+        result = real_mcp.call_tool("diagnose_post_update_integrations")
+        data = json.loads(result)
+        assert data["success"] is True
+        has_fragile = "fragile" in data or "fragile_highlighted" in data
+        has_custom = "custom_integrations" in data or "custom_components_total" in data
+        assert has_fragile or has_custom, f"Expected integration keys not found: {list(data.keys())}"
+        total = data.get("custom_components_total", data.get("custom_integrations_total", 0))
+        print(f"\n[OK] diagnose_post_update_integrations: {total} custom components")
+
+    def test_take_entity_health_snapshot(self, real_mcp):
+        """take_entity_health_snapshot should return a snapshot_id."""
+        result = real_mcp.call_tool("take_entity_health_snapshot")
+        data = json.loads(result)
+        assert data["success"] is True
+        assert "snapshot_id" in data, f"No snapshot_id in response: {list(data.keys())}"
+        assert data["snapshot_id"].startswith("snap_")
+        TestNewDiagnosticsTools._snapshot_id = data["snapshot_id"]
+        print(
+            f"\n[OK] take_entity_health_snapshot: {data['snapshot_id']} "
+            f"({data.get('unavailable_count', 0)} unavailable)"
+        )
+
+    def test_compare_entity_health_snapshot(self, real_mcp):
+        """compare_entity_health_snapshot: take snapshot → compare with same → new_issues >= 0."""
+        if not hasattr(TestNewDiagnosticsTools, "_snapshot_id"):
+            # Take a fresh snapshot if previous test didn't run
+            snap_result = real_mcp.call_tool("take_entity_health_snapshot")
+            snap_data = json.loads(snap_result)
+            assert snap_data["success"] is True
+            TestNewDiagnosticsTools._snapshot_id = snap_data["snapshot_id"]
+
+        snapshot_id = TestNewDiagnosticsTools._snapshot_id
+        result = real_mcp.call_tool("compare_entity_health_snapshot", snapshot_id=snapshot_id)
+        data = json.loads(result)
+        assert data["success"] is True
+
+        # Check for new issues count (field may be named differently)
+        new_count = data.get("new_unavailable_count", data.get("new_issues", -1))
+        if new_count == -1:
+            # Accept any count-like field
+            for key in ("new_unavailable", "new_issues", "resolved"):
+                if key in data and isinstance(data[key], list):
+                    new_count = len(data[key])
+                    break
+        assert new_count >= 0, f"Expected non-negative new issues: {data}"
+        print(
+            f"\n[OK] compare_entity_health_snapshot: new={data.get('new_unavailable_count', 0)}, "
+            f"resolved={data.get('resolved_count', 0)}"
+        )
+
+    def test_diagnose_entity_threshold_proximity(self, real_mcp):
+        """diagnose_entity_threshold_proximity should return threshold_alerts list."""
+        result = real_mcp.call_tool(
+            "diagnose_entity_threshold_proximity",
+            proximity_percent=25,
+        )
+        data = json.loads(result)
+        assert data["success"] is True
+        alerts = data.get("threshold_alerts", data.get("alerts", []))
+        assert isinstance(alerts, list)
+        print(
+            f"\n[OK] diagnose_entity_threshold_proximity: {len(alerts)} alerts at 25% proximity"
+        )
+
+    def test_get_notification_history(self, real_mcp):
+        """get_notification_history should return active and recent notifications."""
+        result = real_mcp.call_tool("get_notification_history")
+        data = json.loads(result)
+        assert data["success"] is True
+
+        # Check for notification lists under various possible field names
+        active = data.get(
+            "active_persistent_notifications",
+            data.get("notifications", data.get("active_notifications", [])),
+        )
+        assert isinstance(active, list), (
+            f"Expected notifications to be a list, got {type(active).__name__}"
+        )
+        print(
+            f"\n[OK] get_notification_history: {data.get('active_count', len(active))} active, "
+            f"{data.get('recent_count', 0)} recent in 24h"
+        )
+
+
+# ============================================================
 # NEW TOOLS (v1.6+) — diagnose_stuck_helpers, list_automation_categories, describe_ha_capabilities
 # ============================================================
 
@@ -1169,3 +1271,184 @@ class TestNewToolsV11:
         assert "tools" in data
         assert data["tool_count"] > 0
         print(f"\n[OK] describe_ha_capabilities: {data['tool_count']} tools, schema v{data.get('schema_version', '?')}")
+
+
+class TestNewToolsV12:
+    """Integration tests for diagnostic tools added in v1.7+."""
+
+    def test_diagnose_connectivity(self, real_mcp):
+        """diagnose_connectivity should return overall_status."""
+        result = real_mcp.call_tool("diagnose_connectivity")
+        data = json.loads(result)
+        assert data["success"] is True
+        assert "overall_status" in data
+        assert isinstance(data["connectivity_issues"], list)
+        assert isinstance(data["recommendations"], list)
+        print(f"\n[OK] diagnose_connectivity: status={data['overall_status']}, issues={len(data['connectivity_issues'])}")
+
+    def test_diagnose_performance(self, real_mcp):
+        """diagnose_performance should return slowest_automations or largest_entities list."""
+        result = real_mcp.call_tool("diagnose_performance")
+        data = json.loads(result)
+        assert data["success"] is True
+        assert "slowest_automations" in data or "largest_entities" in data
+        assert isinstance(data.get("slowest_automations", []), list)
+        assert isinstance(data.get("largest_entities", []), list)
+        print(f"\n[OK] diagnose_performance: summary={data.get('summary', 'N/A')}")
+
+    def test_diagnose_stale_entities(self, real_mcp):
+        """diagnose_stale_entities should return total_stale >= 0."""
+        result = real_mcp.call_tool("diagnose_stale_entities", stale_minutes=30, domain_filter="sensor")
+        data = json.loads(result)
+        assert data["success"] is True
+        assert data["total_stale"] >= 0
+        assert data["total_scanned"] >= 0
+        assert "stale_entities" in data
+        assert "by_severity" in data
+        print(
+            f"\n[OK] diagnose_stale_entities: {data['total_stale']} stale out of {data['total_scanned']} scanned"
+        )
+
+    def test_diagnose_orphan_references(self, real_mcp):
+        """diagnose_orphan_references should return orphan_count >= 0."""
+        result = real_mcp.call_tool("diagnose_orphan_references", scope="automations")
+        data = json.loads(result)
+        assert data["success"] is True
+        assert data["orphan_count"] >= 0
+        assert data["scope"] == "automations"
+        assert "orphan_references" in data
+        assert "total_references_checked" in data
+        print(
+            f"\n[OK] diagnose_orphan_references: {data['orphan_count']} orphans out of {data['total_references_checked']} checked"
+        )
+
+    def test_diagnose_startup_progress(self, real_mcp):
+        """diagnose_startup_progress should return progress metrics."""
+        result = real_mcp.call_tool("diagnose_startup_progress")
+        data = json.loads(result)
+        assert data["success"] is True
+        assert "progress_pct" in data
+        assert data["progress_pct"] >= 0.0
+        assert "status" in data
+        assert data["status"] in ("starting", "loading", "ready", "unknown")
+        assert "entity_count" in data
+        assert data["entity_count"] >= 0
+        print(
+            f"\n[OK] diagnose_startup_progress: {data['progress_pct']}%, status={data['status']}"
+        )
+
+    def test_diagnose_voice(self, real_mcp):
+        """diagnose_voice should return assistants_available or pipelines."""
+        result = real_mcp.call_tool("diagnose_voice")
+        data = json.loads(result)
+        assert data["success"] is True
+        assert "assistants_available" in data or "pipelines" in data
+        assert isinstance(data.get("exposed_entities_count", 0), int)
+        assert isinstance(data.get("issues", []), list)
+        print(
+            f"\n[OK] diagnose_voice: exposed={data.get('exposed_entities_count', 0)}, "
+            f"assistants={len(data.get('assistants_available', {}))}"
+        )
+
+
+
+# ============================================================
+# ⚙️ CONFIG TOOLS (v1.6+) — get_main_configuration, list_custom_components,
+# list_themes, search_in_config_batch, search_in_config,
+# search_config_by_params, get_lovelace_entity_usage
+# ============================================================
+
+
+class TestConfigTools:
+    """Integration tests for configuration management tools."""
+
+    def test_get_main_configuration(self, real_mcp):
+        """get_main_configuration should return YAML content."""
+        result = real_mcp.call_tool("get_main_configuration")
+        data = json.loads(result)
+        assert data["success"] is True, f"get_main_configuration failed: {data.get('error')}"
+        assert "data" in data
+        print(f"\n[OK] get_main_configuration: {len(data.get('data', ''))} chars")
+
+    def test_list_custom_components(self, real_mcp):
+        """list_custom_components should return components as a list."""
+        result = real_mcp.call_tool("list_custom_components")
+        data = json.loads(result)
+        # May fail if custom_components directory doesn't exist (valid for some installs)
+        if data["success"] is False:
+            print(f"\n[WARN] list_custom_components: {data.get('error')}")
+        else:
+            assert isinstance(data["components"], list)
+            print(
+                f"\n[OK] list_custom_components: {data['total_custom_components']} components"
+            )
+
+    def test_list_themes(self, real_mcp):
+        """list_themes should return themes as a list."""
+        result = real_mcp.call_tool("list_themes")
+        data = json.loads(result)
+        if data["success"] is False:
+            print(f"\n[WARN] list_themes: {data.get('error')}")
+        else:
+            assert isinstance(data["themes"], list)
+            print(f"\n[OK] list_themes: {data['total_theme_files']} theme files")
+
+    def test_search_in_config_batch(self, real_mcp):
+        """search_in_config_batch should find files matching multiple terms."""
+        result = real_mcp.call_tool(
+            "search_in_config_batch",
+            search_terms="mqtt,automation",
+            file_types="yaml",
+        )
+        data = json.loads(result)
+        assert data["success"] is True
+        assert "results_by_term" in data
+        assert "matching_files" in data
+        print(
+            f"\n[OK] search_in_config_batch: "
+            f"{data['summary']['files_matching_criteria']} files matched"
+        )
+
+    def test_search_in_config(self, real_mcp):
+        """search_in_config should find files containing a search term."""
+        result = real_mcp.call_tool(
+            "search_in_config",
+            search_term="homeassistant",
+            file_types="yaml",
+        )
+        data = json.loads(result)
+        assert data["success"] is True
+        assert "results_by_term" in data
+        print(
+            f"\n[OK] search_in_config: "
+            f"{data['summary']['files_matching_criteria']} files matched"
+        )
+
+    def test_search_config_by_params(self, real_mcp):
+        """search_config_by_params should find config entries by service call."""
+        result = real_mcp.call_tool(
+            "search_config_by_params",
+            service="light.turn_on",
+        )
+        data = json.loads(result)
+        assert data["success"] is True
+        assert "results" in data
+        print(
+            f"\n[OK] search_config_by_params: "
+            f"{data['summary']['total_matches']} matches"
+        )
+
+    def test_get_lovelace_entity_usage(self, real_mcp):
+        """get_lovelace_entity_usage should verify lovelace_dashboards registry fix."""
+        result = real_mcp.call_tool(
+            "get_lovelace_entity_usage",
+            entity_id="sun.sun",
+        )
+        data = json.loads(result)
+        assert data["success"] is True
+        assert "usage_count" in data
+        assert data["usage_count"] >= 0
+        print(
+            f"\n[OK] get_lovelace_entity_usage: "
+            f"{data['usage_count']} usages for sun.sun"
+        )
