@@ -180,12 +180,17 @@ def _do_search_automations(
         cat_registry = load_registry("core.category_registry", config_path)
         cat_entries = cat_registry.get("data", {}).get("categories", [])
         for cat_entry in cat_entries:
-            if cat_entry.get("category_id") == category:
-                category_id = category
-                break
-            if cat_entry.get("name", "").lower() == category.lower():
-                category_id = cat_entry.get("category_id")
-                break
+            if isinstance(cat_entry, str):
+                if cat_entry == category:
+                    category_id = category
+                    break
+            else:
+                if cat_entry.get("category_id") == category:
+                    category_id = category
+                    break
+                if cat_entry.get("name", "").lower() == category.lower():
+                    category_id = cat_entry.get("category_id")
+                    break
         if (
             category_id
             and cat_entries is not None
@@ -547,7 +552,7 @@ def _do_get_automation_conflicts(entity_id: str, config_path: str) -> dict[str, 
     }
 
 
-def _analyze_choose_branches(actions: list[dict]) -> dict:
+def _analyze_choose_branches(actions: list[dict[str, Any]]) -> dict[str, Any]:
     """Analyze choose blocks in automation actions.
 
     Extracts structured metadata from each choose branch: condition types,
@@ -560,7 +565,7 @@ def _analyze_choose_branches(actions: list[dict]) -> dict:
         Dict with choose_count and branches list.
     """
     choose_count = 0
-    branches: list[dict] = []
+    branches: list[dict[str, Any]] = []
     has_default = False
 
     for action in actions:
@@ -2187,12 +2192,17 @@ def _do_validate_automation_names(
         cat_entries = cat_registry.get("data", {}).get("categories", [])
         target_category_id: str | None = None
         for cat_entry in cat_entries:
-            if cat_entry.get("category_id") == category_filter:
-                target_category_id = category_filter
-                break
-            if cat_entry.get("name", "").lower() == category_filter.lower():
-                target_category_id = cat_entry.get("category_id")
-                break
+            if isinstance(cat_entry, str):
+                if cat_entry == category_filter:
+                    target_category_id = category_filter
+                    break
+            else:
+                if cat_entry.get("category_id") == category_filter:
+                    target_category_id = category_filter
+                    break
+                if cat_entry.get("name", "").lower() == category_filter.lower():
+                    target_category_id = cat_entry.get("category_id")
+                    break
 
     for item in automations:
         alias = str(item.get("alias") or "")
@@ -2490,9 +2500,12 @@ def _do_diagnose_category_alias_mismatch(
     cat_entries = cat_registry.get("data", {}).get("categories", [])
     cat_id_to_name: dict[str, str] = {}
     for cat in cat_entries:
-        cid = cat.get("category_id", "")
-        if cid:
-            cat_id_to_name[cid] = cat.get("name", cid)
+        if isinstance(cat, str):
+            cat_id_to_name[cat] = cat
+        else:
+            cid = cat.get("category_id", "")
+            if cid:
+                cat_id_to_name[cid] = cat.get("name", cid)
 
     for item in automations:
         alias = str(item.get("alias") or "")
@@ -2650,14 +2663,14 @@ def register_automation_tools(mcp, config_path, ha_url=None, ha_token=None) -> N
 
     @mcp.tool()
     def get_automation_dependencies(automation_id: str) -> str:
-        """[READ] Analyze automation dependencies: lists used entities, scripts, services, and blueprints.
-        Lists used entities, scripts, services, and blueprints.
+        """[READ] Analyze automation dependencies: lists used entities, scripts, scenes, and blueprints.
+        Lists used entities, scripts, scenes, and blueprints.
 
         Args:
             automation_id: Automation id or alias.
 
         Returns:
-            JSON with lists: entities, scripts, services, blueprints.
+            JSON with lists: entities, scripts, and scenes.
         """
         try:
             result = _do_get_automation_dependencies(automation_id, config_path)

@@ -32,14 +32,24 @@ def _do_list_automation_categories(
 
     categories = []
     for cat in categories_raw:
-        categories.append(
-            {
-                "category_id": cat.get("category_id", ""),
-                "name": cat.get("name", ""),
-                "icon": cat.get("icon", ""),
-                "scope": cat.get("scope", ""),
-            }
-        )
+        if isinstance(cat, str):
+            categories.append(
+                {
+                    "category_id": cat,
+                    "name": cat,
+                    "icon": None,
+                    "scope": None,
+                }
+            )
+        else:
+            categories.append(
+                {
+                    "category_id": cat.get("category_id", ""),
+                    "name": cat.get("name", ""),
+                    "icon": cat.get("icon", None),
+                    "scope": cat.get("scope", None),
+                }
+            )
 
     empty_categories = []
     if include_entity_count and config_path:

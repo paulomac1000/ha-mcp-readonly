@@ -1131,13 +1131,21 @@ def _do_hacs_get_update_count(config_path: str) -> dict[str, Any]:
     if not data:
         return {"error": "HACS not installed or storage file not found"}
 
-    repos = data.get("data", {}).get("repositories", [])
+    raw_repos = data.get("data", {}).get("repositories", {})
     total_installed = 0
     updates_available = 0
     critical_updates: list[dict[str, Any]] = []
     major_version_bumps: list[dict[str, Any]] = []
 
-    for repo in repos:
+    if isinstance(raw_repos, dict):
+        repo_list = []
+        for repo_type, repos_of_type in raw_repos.items():
+            if isinstance(repos_of_type, list):
+                repo_list.extend(repos_of_type)
+    else:
+        repo_list = raw_repos if isinstance(raw_repos, list) else []
+
+    for repo in repo_list:
         installed = repo.get("installed", False)
         if not installed:
             continue
