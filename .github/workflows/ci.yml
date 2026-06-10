@@ -137,3 +137,65 @@ jobs:
           [ "$TOOLS" = "142" ] \
             || (echo "FAIL: expected 142, got $TOOLS" && exit 1)
           docker stop ha-mcp-smoke
+
+  integration-tests:
+    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    services:
+      homeassistant:
+        image: ghcr.io/home-assistant/home-assistant:stable
+        ports:
+          - 8123:8123
+    env:
+      HA_URL: http://homeassistant:8123
+      HA_TOKEN: ${{ secrets.HA_TOKEN }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Python 3.14
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade --break-system-packages pip
+          pip install --break-system-packages -r requirements.txt
+          pip install --break-system-packages -e ".[dev]"
+
+      - name: Run integration tests
+        run: pytest tests/integration/ -q
+
+  smoke-tests:
+    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    services:
+      homeassistant:
+        image: ghcr.io/home-assistant/home-assistant:stable
+        ports:
+          - 8123:8123
+    env:
+      HA_URL: http://homeassistant:8123
+      HA_TOKEN: ${{ secrets.HA_TOKEN }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Python 3.14
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade --break-system-packages pip
+          pip install --break-system-packages -r requirements.txt
+          pip install --break-system-packages -e ".[dev]"
+
+      - name: Run smoke tests
+        run: pytest tests/smoke/ -q

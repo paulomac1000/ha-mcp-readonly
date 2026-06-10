@@ -22,6 +22,33 @@ def _call_tool(tool_name, **params):
     return resp.json()
 
 
+def _call_tool_safe(tool_name, **params):
+    """Call a tool via the REST API, catching exceptions gracefully.
+
+    Returns (data, error) tuple. When the call succeeds, data is the parsed
+    JSON dict and error is None. When it fails, data is None and error is a
+    string describing what went wrong.
+    """
+    try:
+        resp = requests.post(
+            f"{REST_API_URL}/api/tools/{tool_name}",
+            json=params,
+            timeout=30,
+        )
+        resp.raise_for_status()
+        return resp.json(), None
+    except requests.ConnectionError as e:
+        return None, f"Connection error: {e}"
+    except requests.Timeout as e:
+        return None, f"Timeout after 30s: {e}"
+    except requests.HTTPError as e:
+        return None, f"HTTP {e.response.status_code}: {e}"
+    except requests.RequestException as e:
+        return None, f"Request error: {e}"
+    except ValueError as e:
+        return None, f"JSON parse error: {e}"
+
+
 class TestCriticalEntityTools:
     """Verify the 6 critical tools return success."""
 
@@ -43,6 +70,12 @@ class TestCriticalEntityTools:
         """get_entity_context should return context for an entity."""
         data = _call_tool("get_entity_context", entity_id="sun.sun")
         assert data["success"] is True
+        result = data.get("result", {})
+        assert isinstance(result, dict), "result should be a dict"
+        # Entity context includes state data, registry info, and related entities
+        assert "state" in result or "entity" in result or "entity_id" in result, (
+            "should have state/entity info"
+        )
 
     def test_search_registries_batch(self):
         """search_registries_batch should find entities by search term."""
@@ -76,16 +109,33 @@ class TestCriticalSmokeHealth:
         """System overview should return aggregate data."""
         data = _call_tool("get_system_overview")
         assert data["success"] is True
+        result = data.get("result", {})
+        assert isinstance(result, dict), "result should be a dict"
+        # System overview should have basic structure info
+        assert any(
+            key in result for key in ("summary", "domains", "entities", "overview")
+        ), "should have recognizable top-level keys"
 
     def test_list_automations(self):
         """Automation listing should return results."""
         data = _call_tool("list_automations")
         assert data["success"] is True
+        result = data.get("result", {})
+        assert isinstance(result, dict), "result should be a dict"
+        automations = result.get("automations", result.get("results", []))
+        assert isinstance(automations, list), "automations should be a list"
 
     def test_get_entity_registry(self):
         """Entity registry should be accessible."""
         data = _call_tool("get_entity_registry")
         assert data["success"] is True
+        result = data.get("result", {})
+        assert isinstance(result, dict), "result should be a dict"
+        assert "entities" in result, "should have entities key"
+        assert isinstance(result["entities"], list), "entities should be a list"
+        assert "total_entities" in result, "should have total_entities key"
+        assert isinstance(result["total_entities"], int), "total_entities should be int"
+        assert result["total_entities"] >= 0, "total_entities should be non-negative"
 
     def test_diagnose_system_health(self):
         """System health diagnostics should work."""
@@ -107,6 +157,10 @@ class TestCriticalAutomationTools:
         """Unavailable entities grouping should return."""
         data = _call_tool("get_unavailable_entities_grouped", group_by="domain")
         assert data["success"] is True
+        result = data.get("result", {})
+        assert isinstance(result, dict), "result should be a dict"
+        groups = result.get("groups", result.get("grouped", {}))
+        assert isinstance(groups, (dict, list)), "groups should be dict or list"
 
     def test_search_automations(self):
         """Search automations should find results."""
@@ -174,10 +228,18 @@ class TestScriptSceneSmoke:
     def test_list_scripts(self):
         data = _call_tool("list_scripts")
         assert data["success"] is True
+        result = data.get("result", {})
+        assert isinstance(result, dict), "result should be a dict"
+        scripts = result.get("scripts", result.get("results", []))
+        assert isinstance(scripts, (list, dict)), "scripts should be list or dict"
 
     def test_list_scenes(self):
         data = _call_tool("list_scenes")
         assert data["success"] is True
+        result = data.get("result", {})
+        assert isinstance(result, dict), "result should be a dict"
+        scenes = result.get("scenes", result.get("results", []))
+        assert isinstance(scenes, (list, dict)), "scenes should be list or dict"
 
 
 class TestBlueprintSmoke:
@@ -186,10 +248,20 @@ class TestBlueprintSmoke:
     def test_list_blueprints(self):
         data = _call_tool("list_blueprints")
         assert data["success"] is True
+        result = data.get("result", {})
+        assert isinstance(result, dict), "result should be a dict"
+        blueprints = result.get("blueprints", result.get("results", []))
+        assert isinstance(blueprints, (list, dict)), "blueprints should be list or dict"
 
     def test_get_blueprint_usage_summary(self):
         data = _call_tool("get_blueprint_usage_summary")
         assert data["success"] is True
+        result = data.get("result", {})
+        assert isinstance(result, dict), "result should be a dict"
+        assert any(
+            key in result
+            for key in ("summary", "used", "unused", "total", "usage")
+        ), "should have blueprint usage keys"
 
 
 class TestConfigSmoke:
@@ -198,14 +270,29 @@ class TestConfigSmoke:
     def test_get_main_configuration(self):
         data = _call_tool("get_main_configuration")
         assert data["success"] is True
+        result = data.get("result", {})
+        assert isinstance(result, dict), "result should be a dict"
+        assert any(
+            key in result for key in ("data", "config", "content", "configuration")
+        ), "should have config content key"
 
     def test_get_config_structure(self):
         data = _call_tool("get_config_structure")
         assert data["success"] is True
+        result = data.get("result", {})
+        assert isinstance(result, dict), "result should be a dict"
+        assert any(
+            key in result for key in ("structure", "directories", "files", "tree")
+        ), "should have structure key"
 
     def test_read_config_file(self):
         data = _call_tool("read_config_file", file_path="configuration.yaml", max_lines=10)
         assert data["success"] is True
+        result = data.get("result", {})
+        assert isinstance(result, dict), "result should be a dict"
+        assert any(
+            key in result for key in ("content", "lines", "data")
+        ), "should have content/lines key"
 
 
 class TestDeviceSmoke:
@@ -214,6 +301,10 @@ class TestDeviceSmoke:
     def test_search_devices(self):
         data = _call_tool("search_devices")
         assert data["success"] is True
+        result = data.get("result", {})
+        assert isinstance(result, dict), "result should be a dict"
+        devices = result.get("devices", result.get("results", []))
+        assert isinstance(devices, (list, dict)), "devices should be list or dict"
 
     def test_get_device_details(self):
         data = _call_tool("search_devices", search_term="sun")
@@ -232,14 +323,34 @@ class TestDiagnosticsExtraSmoke:
     def test_get_log_insights(self):
         data = _call_tool("get_log_insights", hours=1, severity="error")
         assert data["success"] is True
+        result = data.get("result", {})
+        assert isinstance(result, dict), "result should be a dict"
+        assert "summary" in result, "should have summary key"
+        assert isinstance(result["summary"], dict), "summary should be a dict"
+        assert "total_errors" in result["summary"], "summary should have total_errors"
+        assert isinstance(result["summary"]["total_errors"], int), (
+            "total_errors should be int"
+        )
+        # Should have at least one of: grouped_errors, error_categories, recommendations
+        assert any(
+            key in result
+            for key in ("grouped_errors", "error_categories", "recent_errors", "recommendations")
+        ), "should have error-analysis keys"
 
     def test_get_integration_health(self):
         data = _call_tool("get_integration_health", domain="sun")
         assert data["success"] is True
+        result = data.get("result", {})
+        assert isinstance(result, dict), "result should be a dict"
 
     def test_get_startup_errors(self):
         data = _call_tool("get_startup_errors")
         assert data["success"] is True
+        result = data.get("result", {})
+        assert isinstance(result, dict), "result should be a dict"
+        assert any(
+            key in result for key in ("startup_errors", "errors", "total_errors", "startup_warnings")
+        ), "should have startup error/warning keys"
 
 
 class TestHistorySmoke:
@@ -252,10 +363,20 @@ class TestHistorySmoke:
             hours_back=1,
         )
         assert data["success"] is True
+        result = data.get("result", {})
+        assert isinstance(result, dict), "result should be a dict"
+        assert any(
+            key in result
+            for key in ("summary", "changes", "history", "period_hours", "entity_id")
+        ), "should have history-related keys"
 
     def test_get_recent_state_changes(self):
         data = _call_tool("get_recent_state_changes", minutes=5)
         assert data["success"] is True
+        result = data.get("result", {})
+        assert isinstance(result, dict), "result should be a dict"
+        changes = result.get("changes", result.get("state_changes", []))
+        assert isinstance(changes, (list, dict)), "changes should be list or dict"
 
 
 class TestStorageHelpersSmoke:
@@ -264,22 +385,48 @@ class TestStorageHelpersSmoke:
     def test_get_input_helpers(self):
         data = _call_tool("get_input_helpers")
         assert data["success"] is True
+        result = data.get("result", {})
+        assert isinstance(result, dict), "result should be a dict"
+        helpers = result.get("input_helpers", result.get("helpers", result.get("results", [])))
+        assert isinstance(helpers, (list, dict)), "helpers should be list or dict"
 
     def test_get_timers(self):
         data = _call_tool("get_timers")
         assert data["success"] is True
+        result = data.get("result", {})
+        assert isinstance(result, dict), "result should be a dict"
+        timers = result.get("timers", result.get("results", []))
+        assert isinstance(timers, (list, dict)), "timers should be list or dict"
 
     def test_get_counters(self):
         data = _call_tool("get_counters")
         assert data["success"] is True
+        result = data.get("result", {})
+        assert isinstance(result, dict), "result should be a dict"
+        counters = result.get("counters", result.get("results", []))
+        assert isinstance(counters, (list, dict)), "counters should be list or dict"
 
     def test_get_exposed_entities(self):
         data = _call_tool("get_exposed_entities")
         assert data["success"] is True
+        result = data.get("result", {})
+        assert isinstance(result, dict), "result should be a dict"
+        exposed = result.get(
+            "exposed_entities",
+            result.get("exposed", result.get("entities", None)),
+        )
+        assert exposed is not None or "count" in result or "total" in result, (
+            "should have exposed entities data"
+        )
 
     def test_get_lovelace_entity_usage(self):
         data = _call_tool("get_lovelace_entity_usage", entity_id="sun.sun")
         assert data["success"] is True
+        result = data.get("result", {})
+        assert isinstance(result, dict), "result should be a dict"
+        assert "usage_count" in result, "should have usage_count key"
+        assert isinstance(result["usage_count"], int), "usage_count should be int"
+        assert result["usage_count"] >= 0, "usage_count should be non-negative"
 
 
 class TestScriptSceneCodeSmoke:
@@ -310,10 +457,16 @@ class TestConfigSearchSmoke:
     def test_search_in_config(self):
         data = _call_tool("search_in_config", search_term="homeassistant")
         assert data["success"] is True
+        result = data.get("result", {})
+        assert isinstance(result, dict), "result should be a dict"
+        results = result.get("results", result.get("matches", []))
+        assert isinstance(results, (list, dict)), "search results should be list or dict"
 
     def test_search_in_config_batch(self):
         data = _call_tool("search_in_config_batch", search_terms="homeassistant,automation")
         assert data["success"] is True
+        result = data.get("result", {})
+        assert isinstance(result, dict), "result should be a dict"
 
 
 class TestDiagnosticsExtraSmoke2:
@@ -322,6 +475,15 @@ class TestDiagnosticsExtraSmoke2:
     def test_get_notification_history(self):
         data = _call_tool("get_notification_history")
         assert data["success"] is True
+        result = data.get("result", {})
+        assert isinstance(result, dict), "result should be a dict"
+        notifications = result.get(
+            "notifications",
+            result.get("results", result.get("messages", [])),
+        )
+        assert isinstance(notifications, (list, dict)), (
+            "notifications should be list or dict"
+        )
 
     def test_get_area_automation_summary(self):
         registry_data = _call_tool("get_area_registry")
@@ -352,11 +514,15 @@ class TestDevToolsExtraSmoke:
     def test_test_condition(self):
         data = _call_tool("test_condition", condition_template="{{ 1 == 1 }}")
         assert data["success"] is True
+        result = data.get("result", {})
+        assert isinstance(result, dict), "result should be a dict"
 
     def test_validate_automation_trigger(self):
         trigger = '- platform: state\n  entity_id: sun.sun\n  to: "below_horizon"'
         data = _call_tool("validate_automation_trigger", trigger_config=trigger)
         assert data["success"] is True
+        result = data.get("result", {})
+        assert isinstance(result, dict), "result should be a dict"
 
 
 class TestFilesystemSmoke:
@@ -365,16 +531,27 @@ class TestFilesystemSmoke:
     def test_list_directory(self):
         data = _call_tool("list_directory", path="/config")
         assert data["success"] is True
+        result = data.get("result", {})
+        assert isinstance(result, dict), "result should be a dict"
+        entries = result.get("entries", result.get("files", result.get("items", [])))
+        assert isinstance(entries, (list, dict)), "directory entries should be list or dict"
 
     def test_read_file(self):
         data = _call_tool("read_file", file_path="/config/configuration.yaml", max_lines=5)
         assert data["success"] is True
+        result = data.get("result", {})
+        assert isinstance(result, dict), "result should be a dict"
+        assert any(
+            key in result for key in ("content", "lines", "data")
+        ), "should have file content key"
 
     def test_search_files(self):
         data = _call_tool(
             "search_files", pattern="homeassistant", search_path="/config", max_results=5
         )
         assert data["success"] is True
+        result = data.get("result", {})
+        assert isinstance(result, dict), "result should be a dict"
 
 
 class TestHealthReporterSmoke:
@@ -383,6 +560,11 @@ class TestHealthReporterSmoke:
     def test_trigger_health_report(self):
         data = _call_tool("trigger_health_report")
         assert data["success"] is True
+        result = data.get("result", {})
+        assert isinstance(result, dict), "result should be a dict"
+        assert any(
+            key in result for key in ("metrics", "health_score", "summary", "report")
+        ), "should have health report keys"
 
 
 class TestChangesAndCompareSmoke:
@@ -391,14 +573,22 @@ class TestChangesAndCompareSmoke:
     def test_get_entity_changes(self):
         data = _call_tool("get_entity_changes", hours_back=1)
         assert data["success"] is True
+        result = data.get("result", {})
+        assert isinstance(result, dict), "result should be a dict"
+        changes = result.get("changes", result.get("entities", result.get("results", [])))
+        assert isinstance(changes, (list, dict)), "changes should be list or dict"
 
     def test_verify_recent_implementation(self):
         data = _call_tool("verify_recent_implementation", hours_back=1)
         assert data["success"] is True
+        result = data.get("result", {})
+        assert isinstance(result, dict), "result should be a dict"
 
     def test_compare_entities_state(self):
         data = _call_tool("compare_entities_state", entity_ids="sun.sun")
         assert data["success"] is True
+        result = data.get("result", {})
+        assert isinstance(result, dict), "result should be a dict"
 
 
 class TestDiagnoseLovelaceSmoke:
@@ -407,6 +597,12 @@ class TestDiagnoseLovelaceSmoke:
     def test_diagnose_lovelace_setup(self):
         data = _call_tool("diagnose_lovelace_setup")
         assert data["success"] is True
+        result = data.get("result", {})
+        assert isinstance(result, dict), "result should be a dict"
+        assert any(
+            key in result
+            for key in ("dashboards", "issues", "summary", "resources", "recommendations")
+        ), "should have lovelace diagnostic keys"
 
 
 class TestZeroParamSmoke:
@@ -415,34 +611,54 @@ class TestZeroParamSmoke:
     def test_diagnose_person_tracking_default(self):
         data = _call_tool("diagnose_person_tracking")
         assert data["success"] is True
+        result = data.get("result", {})
+        assert isinstance(result, dict), "result should be a dict"
 
     def test_get_lovelace_config_default(self):
         data = _call_tool("get_lovelace_config")
         assert data["success"] is True
+        result = data.get("result", {})
+        assert isinstance(result, dict), "result should be a dict"
 
     def test_get_previous_logs(self):
         data = _call_tool("get_previous_logs", lines=10)
         assert data["success"] is True
+        result = data.get("result", {})
+        assert isinstance(result, dict), "result should be a dict"
 
     def test_get_services(self):
         data = _call_tool("get_services")
         assert data["success"] is True
+        result = data.get("result", {})
+        assert isinstance(result, dict), "result should be a dict"
+        services = result.get("services", result.get("results", {}))
+        assert isinstance(services, (list, dict)), "services should be dict or list"
 
     def test_get_template_performance(self):
         data = _call_tool("get_template_performance", template="{{ states('sun.sun') }}")
         assert data["success"] is True
+        result = data.get("result", {})
+        assert isinstance(result, dict), "result should be a dict"
 
     def test_list_config_entry_domains(self):
         data = _call_tool("list_config_entry_domains")
         assert data["success"] is True
+        result = data.get("result", {})
+        assert isinstance(result, dict), "result should be a dict"
+        domains = result.get("domains", result.get("results", {}))
+        assert isinstance(domains, (list, dict)), "domains should be dict or list"
 
     def test_list_custom_components(self):
         data = _call_tool("list_custom_components")
         assert data["success"] is True
+        result = data.get("result", {})
+        assert isinstance(result, dict), "result should be a dict"
 
     def test_list_themes(self):
         data = _call_tool("list_themes")
         assert data["success"] is True
+        result = data.get("result", {})
+        assert isinstance(result, dict), "result should be a dict"
 
     def test_search_config_by_params(self):
         import requests
@@ -456,6 +672,10 @@ class TestZeroParamSmoke:
     def test_search_entity_by_name(self):
         data = _call_tool("search_entity_by_name", search_term="sun")
         assert data["success"] is True
+        result = data.get("result", {})
+        assert isinstance(result, dict), "result should be a dict"
+        results = result.get("results", result.get("entities", []))
+        assert isinstance(results, (list, dict)), "search results should be list or dict"
 
     def test_test_service_call(self):
         data = _call_tool(
@@ -474,26 +694,46 @@ class TestZeroParamSmoke:
     def test_get_component_logs(self):
         data = _call_tool("get_component_logs", component_name="homeassistant.core")
         assert data["success"] is True
+        result = data.get("result", {})
+        assert isinstance(result, dict), "result should be a dict"
+        assert any(
+            key in result for key in ("logs", "results", "total_found", "component")
+        ), "should have log result keys"
 
     def test_get_integration_entities(self):
         data = _call_tool("get_integration_entities", domain="sun")
         assert data["success"] is True
+        result = data.get("result", {})
+        assert isinstance(result, dict), "result should be a dict"
 
     def test_get_integration_summary(self):
         data = _call_tool("get_integration_summary", domain="sun")
         assert data["success"] is True
+        result = data.get("result", {})
+        assert isinstance(result, dict), "result should be a dict"
 
     def test_get_entity_details(self):
         data = _call_tool("get_entity_details", entity_id="sun.sun")
         assert data["success"] is True
+        result = data.get("result", {})
+        assert isinstance(result, dict), "result should be a dict"
 
     def test_get_entity_state_history_summary(self):
         data = _call_tool("get_entity_state_history_summary", entity_id="sun.sun", hours_back=1)
         assert data["success"] is True
+        result = data.get("result", {})
+        assert isinstance(result, dict), "result should be a dict"
 
     def test_get_history_batch(self):
         data = _call_tool("get_history_batch", entity_ids="sun.sun", hours_back=1, limit=3)
         assert data["success"] is True
+        result = data.get("result", {})
+        assert isinstance(result, dict), "result should be a dict"
+        assert "entities_found" in result, "should have entities_found key"
+        assert isinstance(result["entities_found"], int), "entities_found should be int"
+        assert result["entities_found"] >= 0, "entities_found should be non-negative"
+        assert "period_hours" in result, "should have period_hours key"
+        assert isinstance(result["period_hours"], int), "period_hours should be int"
 
 
 class TestTemplateEntityCodeSmoke:

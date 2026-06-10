@@ -980,3 +980,151 @@ class TestTemplateEntityCode:
             data = json.loads(result)
             assert data["success"] is True
             assert "state_template" in data
+
+
+# ============================================================
+# PAGINATED REGISTRY TESTS (Wave 4)
+# ============================================================
+
+
+class TestPaginatedRegistries:
+    """Integration tests for paginated registry tools (limit/offset)."""
+
+    # --- get_entity_registry ---
+
+    def test_get_entity_registry_default(self, real_mcp):
+        """Default call without limit/offset returns entities."""
+        result = real_mcp.call_tool("get_entity_registry")
+        data = json.loads(result)
+        assert data["success"] is True
+        assert data["total_entities"] >= 0
+        assert "entities" in data
+        # Default limit is 200
+        assert data["total_entities"] <= 200
+
+    def test_get_entity_registry_paginated(self, real_mcp):
+        """Call with limit=5 returns at most 5 entities."""
+        result = real_mcp.call_tool("get_entity_registry", limit=5)
+        data = json.loads(result)
+        assert data["success"] is True
+        assert data["total_entities"] <= 5
+        assert "entities" in data
+        # If the system has more than 5 entities, _meta should be present
+        if data.get("_meta") and data["_meta"].get("truncated"):
+            assert data["_meta"]["total_count"] > 5
+            assert data["_meta"]["total_count"] > data["total_entities"]
+
+    def test_get_entity_registry_offset(self, real_mcp):
+        """Call with limit=5 and offset=5 — verify no overlap with first 5."""
+        # Get first page
+        page1 = json.loads(real_mcp.call_tool("get_entity_registry", limit=5, offset=0))
+        # Get second page
+        page2 = json.loads(real_mcp.call_tool("get_entity_registry", limit=5, offset=5))
+
+        assert page1["success"] is True
+        assert page2["success"] is True
+
+        # If both pages have entities, verify no overlap in entity_ids
+        page1_ids = {e["entity_id"] for e in page1.get("entities", [])}
+        page2_ids = {e["entity_id"] for e in page2.get("entities", [])}
+
+        if page1_ids and page2_ids:
+            overlap = page1_ids & page2_ids
+            assert len(overlap) == 0, f"Pages overlap: {overlap}"
+
+    def test_get_entity_registry_meta(self, real_mcp):
+        """Verify _meta.truncated and _meta.total_count when truncated."""
+        result = real_mcp.call_tool("get_entity_registry", limit=5)
+        data = json.loads(result)
+        assert data["success"] is True
+
+        if data.get("_meta"):
+            assert "_meta" in data
+            assert "truncated" in data["_meta"]
+            assert data["_meta"]["truncated"] is True
+            assert "total_count" in data["_meta"]
+            assert isinstance(data["_meta"]["total_count"], int)
+
+    # --- get_device_registry ---
+
+    def test_get_device_registry_default(self, real_mcp):
+        """Default call without limit/offset returns devices."""
+        result = real_mcp.call_tool("get_device_registry")
+        data = json.loads(result)
+        assert data["success"] is True
+        assert data["total_devices"] >= 0
+        assert "devices" in data
+
+    def test_get_device_registry_paginated(self, real_mcp):
+        """Call with limit=3 returns at most 3 devices."""
+        result = real_mcp.call_tool("get_device_registry", limit=3)
+        data = json.loads(result)
+        assert data["success"] is True
+        assert data["total_devices"] <= 3
+        assert "devices" in data
+
+    def test_get_device_registry_offset(self, real_mcp):
+        """Call with limit=3 and offset=3 — verify no overlap."""
+        page1 = json.loads(real_mcp.call_tool("get_device_registry", limit=3, offset=0))
+        page2 = json.loads(real_mcp.call_tool("get_device_registry", limit=3, offset=3))
+
+        assert page1["success"] is True
+        assert page2["success"] is True
+
+        page1_ids = {d["id"] for d in page1.get("devices", [])}
+        page2_ids = {d["id"] for d in page2.get("devices", [])}
+
+        if page1_ids and page2_ids:
+            overlap = page1_ids & page2_ids
+            assert len(overlap) == 0, f"Device pages overlap: {overlap}"
+
+    # --- get_area_registry ---
+
+    def test_get_area_registry_default(self, real_mcp):
+        """Default call without limit/offset returns areas."""
+        result = real_mcp.call_tool("get_area_registry")
+        data = json.loads(result)
+        assert data["success"] is True
+        assert data["total_areas"] >= 0
+        assert "areas" in data
+
+    def test_get_area_registry_paginated(self, real_mcp):
+        """Call with limit=2 returns at most 2 areas."""
+        result = real_mcp.call_tool("get_area_registry", limit=2)
+        data = json.loads(result)
+        assert data["success"] is True
+        assert data["total_areas"] <= 2
+        assert "areas" in data
+
+    # --- get_config_entries ---
+
+    def test_get_config_entries_default(self, real_mcp):
+        """Default call without limit/offset returns entries."""
+        result = real_mcp.call_tool("get_config_entries")
+        data = json.loads(result)
+        assert data["success"] is True
+        assert data["total_entries"] >= 0
+        assert "entries" in data
+
+    def test_get_config_entries_paginated(self, real_mcp):
+        """Call with limit=3 returns at most 3 entries."""
+        result = real_mcp.call_tool("get_config_entries", limit=3)
+        data = json.loads(result)
+        assert data["success"] is True
+        assert data["total_entries"] <= 3
+        assert "entries" in data
+
+    def test_get_config_entries_offset(self, real_mcp):
+        """Call with limit=3 and offset=3 — verify no overlap."""
+        page1 = json.loads(real_mcp.call_tool("get_config_entries", limit=3, offset=0))
+        page2 = json.loads(real_mcp.call_tool("get_config_entries", limit=3, offset=3))
+
+        assert page1["success"] is True
+        assert page2["success"] is True
+
+        page1_ids = {e["entry_id"] for e in page1.get("entries", [])}
+        page2_ids = {e["entry_id"] for e in page2.get("entries", [])}
+
+        if page1_ids and page2_ids:
+            overlap = page1_ids & page2_ids
+            assert len(overlap) == 0, f"Entry pages overlap: {overlap}"

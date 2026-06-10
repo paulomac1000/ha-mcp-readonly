@@ -78,11 +78,44 @@ repos:
         stages: [pre-commit]
         fail_fast: false
 
+      # ── API URL encoding detection ──
+      - id: detect-url-encoding
+        name: Detect URL encoding in API paths
+        entry: python3 scripts/detect_url_encoding.py
+        language: system
+        types: [python]
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]
+        fail_fast: false
+
       # ── Semgrep (security, runs before docs) ──
       - id: semgrep
         name: Semgrep security scan
         entry: bash -c 'if command -v semgrep >/dev/null 2>&1; then semgrep --config=p/auto --config=p/secrets --config=p/owasp-top-ten --error --quiet . || exit 1; fi'
         language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]
+        fail_fast: false
+
+      # ── Naive datetime detection (security: tz-aware timestamps) ──
+      - id: detect-naive-datetime
+        name: Detect naive datetime.now() calls
+        entry: python3 scripts/detect_naive_datetime.py
+        language: system
+        types: [python]
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]
+        fail_fast: false
+
+      # ── Registry name validation ──
+      - id: validate-registry-names
+        name: Validate registry names
+        entry: python3 scripts/validate_registry_names.py
+        language: system
+        types: [python]
         pass_filenames: false
         always_run: true
         stages: [pre-commit]
