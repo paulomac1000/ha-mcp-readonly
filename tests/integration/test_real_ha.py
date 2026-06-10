@@ -439,6 +439,79 @@ class TestStorage:
         data = json.loads(result)
         print(f"\n[OK] Template entities: {data['total_templates']}")
 
+    def test_get_timers(self, real_mcp):
+        result = real_mcp.call_tool("get_timers")
+        data = json.loads(result)
+        assert data["success"] is True
+        assert isinstance(data["timers"], list)
+        assert data["total_timers"] >= 0
+        print(f"\n[OK] get_timers: {data['total_timers']} timers")
+
+    def test_get_counters(self, real_mcp):
+        result = real_mcp.call_tool("get_counters")
+        data = json.loads(result)
+        assert data["success"] is True
+        assert isinstance(data["counters"], list)
+        assert data["total_counters"] >= 0
+        print(f"\n[OK] get_counters: {data['total_counters']} counters")
+
+    def test_get_template_entities_batch(self, real_mcp):
+        """Fetch template entities batch using discovered template entity IDs."""
+        list_result = real_mcp.call_tool("get_template_entities")
+        list_data = json.loads(list_result)
+        templates = list_data.get("templates", [])
+        if not templates:
+            pytest.skip("No template entities available")
+        entity_ids = ",".join([t["entity_id"] for t in templates[:3]])
+        result = real_mcp.call_tool("get_template_entities_batch", entity_ids=entity_ids)
+        data = json.loads(result)
+        assert data["success"] is True
+        assert "results" in data
+        assert data["total"] > 0
+        assert data["found"] > 0
+        print(f"\n[OK] get_template_entities_batch: {data['found']}/{data['total']} found")
+
+    def test_search_entity_by_name(self, real_mcp):
+        result = real_mcp.call_tool("search_entity_by_name", search_term="sun")
+        data = json.loads(result)
+        assert data["success"] is True
+        assert "matched_entities" in data or "summary" in data
+        print(f"\n[OK] search_entity_by_name: {data.get('summary', {}).get('matched_entities', 'N/A')} matched")
+
+    def test_get_entity_details(self, real_mcp):
+        registry_result = real_mcp.call_tool("get_entity_registry")
+        registry_data = json.loads(registry_result)
+        entities = registry_data.get("entities", [])
+        if not entities:
+            pytest.skip("No entities in registry")
+        entity_id = entities[0]["entity_id"]
+        result = real_mcp.call_tool("get_entity_details", entity_id=entity_id)
+        data = json.loads(result)
+        assert data["success"] is True
+        assert "entity_id" in data or "entity_info" in data
+        print(f"\n[OK] get_entity_details: entity_id={data.get('entity_id', 'N/A')}")
+
+    def test_get_entity_registry_batch(self, real_mcp):
+        registry_result = real_mcp.call_tool("get_entity_registry")
+        registry_data = json.loads(registry_result)
+        entities = registry_data.get("entities", [])
+        if not entities:
+            pytest.skip("No entities in registry")
+        entity_id = entities[0]["entity_id"]
+        result = real_mcp.call_tool(
+            "get_entity_registry_batch",
+            entity_ids=entity_id,
+            fields="entity_id,platform",
+        )
+        data = json.loads(result)
+        assert data["success"] is True
+        assert "entities" in data
+        assert data["total_entities"] > 0
+        entity = data["entities"][0]
+        assert entity["entity_id"] == entity_id
+        assert "platform" in entity
+        print(f"\n[OK] get_entity_registry_batch: {data['total_entities']} entities, fields={list(entity.keys())}")
+
 
 # ============================================================
 # DEV TOOLS
@@ -1451,4 +1524,529 @@ class TestConfigTools:
         print(
             f"\n[OK] get_lovelace_entity_usage: "
             f"{data['usage_count']} usages for sun.sun"
+        )
+
+
+# ============================================================
+# ⛳ SINGLE-TOOL GAPS WAVE — get_services, get_previous_logs,
+# list_config_entry_domains, compare_entities_state,
+# get_automation_codes_batch, audit_config_orphans,
+# entity_get_context_tree, get_recent_state_changes,
+# get_integration_entities, compare_templates,
+# eval_templates_batch, get_device_entities,
+# device_get_wifi_status, get_device_triggers
+# ============================================================
+
+
+class TestStatesGap:
+    """Integration tests for state-related tools not yet covered."""
+
+    def test_get_services(self, real_mcp):
+        """get_services should return services dict with domains."""
+        result = real_mcp.call_tool("get_services")
+        data = json.loads(result)
+        assert data["success"] is True
+        assert "services" in data
+        assert isinstance(data["services"], list)
+        assert len(data["services"]) > 0
+        assert "domain" in data["services"][0]
+        print(f"\n[OK] get_services: {len(data['services'])} services across {len(set(s['domain'] for s in data['services']))} domains")
+
+    def test_get_services_filtered(self, real_mcp):
+        """get_services with domain filter returns only that domain."""
+        result = real_mcp.call_tool("get_services", domain="light")
+        data = json.loads(result)
+        assert data["success"] is True
+        assert "services" in data
+        for s in data["services"]:
+            assert s["domain"] == "light"
+        print(f"\n[OK] get_services(light): {len(data['services'])} light services")
+
+
+class TestLogsGap:
+    """Integration tests for log tools not yet covered."""
+
+    def test_get_previous_logs(self, real_mcp):
+        """get_previous_logs should return log entries."""
+        result = real_mcp.call_tool("get_previous_logs", lines=10)
+        data = json.loads(result)
+        assert data["success"] is True
+        assert "lines_requested" in data
+        assert "lines_returned" in data
+        assert "logs" in data
+        assert data["lines_requested"] == 10
+        print(f"\n[OK] get_previous_logs: {data['lines_returned']} lines returned")
+
+
+class TestConfigEntriesGap:
+    """Integration tests for config entry tools not yet covered."""
+
+    def test_list_config_entry_domains(self, real_mcp):
+        """list_config_entry_domains should return domains list."""
+        result = real_mcp.call_tool("list_config_entry_domains")
+        data = json.loads(result)
+        assert data["success"] is True
+        assert "total_entries" in data
+        assert "total_domains" in data
+        assert "domains" in data
+        assert isinstance(data["domains"], list)
+        assert data["total_domains"] > 0
+        assert data["total_entries"] > 0
+        assert "domain" in data["domains"][0]
+        print(f"\n[OK] list_config_entry_domains: {data['total_domains']} domains, {data['total_entries']} entries")
+
+
+class TestBatchGap:
+    """Integration tests for batch operation tools not yet covered."""
+
+    def test_compare_entities_state(self, real_mcp):
+        """compare_entities_state takes snapshot (1st call returns mode='snapshot')."""
+        result = real_mcp.call_tool("compare_entities_state", entity_ids="sun.sun,sensor.date")
+        data = json.loads(result)
+        assert data["success"] is True
+        assert data["mode"] == "snapshot"
+        assert data["entities_captured"] >= 1
+        assert "snapshot" in data
+        assert "sun.sun" in data["snapshot"]
+        print(f"\n[OK] compare_entities_state: {data['entities_captured']} entities captured")
+
+    def test_get_automation_codes_batch(self, real_mcp):
+        """get_automation_codes_batch should return codes for known automations."""
+        list_data = real_mcp.call_tool("list_automations")
+        autos = json.loads(list_data).get("automations", [])
+        if len(autos) < 2:
+            pytest.skip("Need at least 2 automations for batch test")
+
+        alias1 = autos[0].get("alias")
+        alias2 = autos[1].get("alias")
+        ids = f"{alias1},{alias2}"
+        result = real_mcp.call_tool("get_automation_codes_batch", automation_ids=ids)
+        data = json.loads(result)
+        assert data["success"] is True
+        assert data["total_requested"] == 2
+        assert data["found_count"] >= 1
+        assert "results" in data
+        print(f"\n[OK] get_automation_codes_batch: {data['found_count']}/{data['total_requested']} found")
+
+
+class TestCompositeGap:
+    """Integration tests for composite tools not yet covered."""
+
+    def test_audit_config_orphans(self, real_mcp):
+        """audit_config_orphans should return data_quality field (our fix!)."""
+        result = real_mcp.call_tool("audit_config_orphans")
+        data = json.loads(result)
+        assert data["success"] is True
+        assert "orphan_entities" in data
+        assert "orphan_count" in data
+        assert "never_triggered_automations" in data
+        assert "broken_references" in data
+        assert "unused_blueprints" in data
+        assert "data_quality" in data
+        assert "summary" in data
+        assert isinstance(data["data_quality"], dict)
+        print(f"\n[OK] audit_config_orphans: {data['summary']}")
+        print(f"     data_quality: {data['data_quality']}")
+
+
+class TestEntityContextGap:
+    """Integration tests for entity context tools not yet covered."""
+
+    def test_entity_get_context_tree(self, real_mcp):
+        """entity_get_context_tree should trace sources for sun.sun."""
+        result = real_mcp.call_tool("entity_get_context_tree", entity_id="sun.sun", hours_back=1)
+        data = json.loads(result)
+        assert data["success"] is True
+        assert "current_state" in data
+        assert "sources" in data
+        assert "recent_changes" in data
+        assert data["current_state"]["entity_id"] == "sun.sun"
+        print(f"\n[OK] entity_get_context_tree: {data.get('total_history_entries', 'N/A')} history entries, "
+              f"{len(data.get('sources', {}))} sources")
+
+
+class TestHistoryGap:
+    """Integration tests for history tools not yet covered."""
+
+    def test_get_recent_state_changes(self, real_mcp):
+        """get_recent_state_changes should return recent entity changes."""
+        result = real_mcp.call_tool("get_recent_state_changes", minutes=10)
+        data = json.loads(result)
+        assert data["success"] is True
+        assert "total_changes" in data
+        assert "changes" in data
+        assert isinstance(data["changes"], list)
+        assert data["total_changes"] >= 0
+        if data["total_changes"] > 0:
+            assert "entity_id" in data["changes"][0]
+            assert "from" in data["changes"][0]
+            assert "to" in data["changes"][0]
+        print(f"\n[OK] get_recent_state_changes: {data['total_changes']} changes in 10min")
+
+    def test_get_recent_state_changes_filtered(self, real_mcp):
+        """get_recent_state_changes with domain filter."""
+        result = real_mcp.call_tool("get_recent_state_changes", minutes=10, domains="sensor")
+        data = json.loads(result)
+        assert data["success"] is True
+        assert "total_changes" in data
+        assert isinstance(data.get("changes", []), list)
+        print(f"\n[OK] get_recent_state_changes(sensor): {data['total_changes']} sensor changes")
+
+
+class TestIntegrationsGap:
+    """Integration tests for integration tools not yet covered."""
+
+    def test_get_integration_entities(self, real_mcp):
+        """get_integration_entities should return entities for sun domain."""
+        result = real_mcp.call_tool("get_integration_entities", domain="sun")
+        data = json.loads(result)
+        assert data["success"] is True
+        assert data["domain"] == "sun"
+        assert "entity_count" in data or "entities" in data or "total_entities" in data
+        assert data.get("entity_count", data.get("total_entities", 0)) >= 1
+        print(f"\n[OK] get_integration_entities(sun): {data.get('entity_count', data.get('total_entities', 0))} entities")
+
+
+class TestDevToolsGap:
+    """Integration tests for developer tools not yet covered."""
+
+    def test_compare_templates_equal(self, real_mcp):
+        """compare_templates should detect equal results."""
+        result = real_mcp.call_tool(
+            "compare_templates",
+            template_a="{{ 2 + 2 }}",
+            template_b="{{ 3 + 1 }}",
+        )
+        data = json.loads(result)
+        assert data["success"] is True
+        assert data["match"] is True
+        assert data["result_a"] == data["result_b"]
+        print(f"\n[OK] compare_templates: match={data['match']}, a='{data['result_a']}' b='{data['result_b']}'")
+
+    def test_compare_templates_different(self, real_mcp):
+        """compare_templates should detect different results."""
+        result = real_mcp.call_tool(
+            "compare_templates",
+            template_a="{{ now().hour }}",
+            template_b="{{ now().minute }}",
+        )
+        data = json.loads(result)
+        assert data["success"] is True
+        # Results may or may not match depending on the time
+        print(f"\n[OK] compare_templates(diff): match={data['match']}, warning={data.get('warning')}")
+
+    def test_eval_templates_batch(self, real_mcp):
+        """eval_templates_batch should evaluate multiple templates."""
+        templates_json = json.dumps(["{{ 2 + 2 }}", "{{ 3 + 3 }}"])
+        result = real_mcp.call_tool("eval_templates_batch", templates=templates_json)
+        data = json.loads(result)
+        assert data["success"] is True
+        assert data["total"] == 2
+        assert data["successful"] == 2
+        assert data["failed"] == 0
+        assert "results" in data
+        assert "template_0" in data["results"]
+        assert "template_1" in data["results"]
+        print(f"\n[OK] eval_templates_batch: {data['successful']}/{data['total']} successful")
+
+    def test_eval_templates_batch_named(self, real_mcp):
+        """eval_templates_batch with named templates."""
+        templates_json = json.dumps({"add": "{{ 2 + 2 }}", "now_h": "{{ now().hour }}"})
+        result = real_mcp.call_tool("eval_templates_batch", templates=templates_json)
+        data = json.loads(result)
+        assert data["success"] is True
+        assert data["total"] == 2
+        assert "add" in data["results"]
+        assert "now_h" in data["results"]
+        print(f"\n[OK] eval_templates_batch(named): {data['successful']}/{data['total']} successful")
+
+
+class TestDevicesGap:
+    """Integration tests for device tools not yet covered."""
+
+    def _find_any_device(self, real_mcp) -> str | None:
+        """Find any device from the device registry."""
+        result = real_mcp.call_tool("get_device_registry")
+        data = json.loads(result)
+        devices = data.get("devices", [])
+        if devices:
+            return devices[0].get("id")
+        return None
+
+    def test_get_device_entities(self, real_mcp):
+        """get_device_entities should return entities for a known device."""
+        device_id = self._find_any_device(real_mcp)
+        if not device_id:
+            pytest.skip("No devices found in registry")
+
+        result = real_mcp.call_tool("get_device_entities", device_id=device_id)
+        data = json.loads(result)
+        assert data["success"] is True
+        assert "entities" in data or "entity_count" in data or "total_entities" in data
+        print(f"\n[OK] get_device_entities: {len(data.get('entities', data.get('entity_list', [])))} entities for device {device_id[:12]}...")
+
+    def test_device_get_wifi_status(self, real_mcp):
+        """device_get_wifi_status may fail softly if device has no WiFi data."""
+        device_id = self._find_any_device(real_mcp)
+        if not device_id:
+            pytest.skip("No devices found in registry")
+
+        result = real_mcp.call_tool("device_get_wifi_status", device_id=device_id)
+        data = json.loads(result)
+        # May return False for non-Tasmota/OpenBK devices - that's acceptable
+        if data["success"] is False:
+            print(f"\n[WARN] device_get_wifi_status: {data.get('error', 'no wifi info')}")
+        else:
+            assert "connection_state" in data or "ssid" in data or "rssi" in data
+            print(f"\n[OK] device_get_wifi_status: connection={data.get('connection_state', 'N/A')}")
+
+    def test_get_device_triggers_by_entity(self, real_mcp):
+        """get_device_triggers should work for sun.sun entity."""
+        result = real_mcp.call_tool("get_device_triggers", entity_id="sun.sun")
+        data = json.loads(result)
+        assert data["success"] is True
+        # Device may or may not have triggers - that's fine
+        assert "device_id" in data
+        assert "triggers" in data
+        assert isinstance(data["triggers"], list)
+        print(f"\n[OK] get_device_triggers: device={data.get('device_id', 'N/A')}, {len(data['triggers'])} triggers")
+
+    def test_get_device_triggers_by_id(self, real_mcp):
+        """get_device_triggers should work for first device."""
+        device_id = self._find_any_device(real_mcp)
+        if not device_id:
+            pytest.skip("No devices found in registry")
+
+        result = real_mcp.call_tool("get_device_triggers", device_id=device_id)
+        data = json.loads(result)
+        assert data["success"] is True
+        assert "device_id" in data
+        assert "triggers" in data
+        print(f"\n[OK] get_device_triggers(by_id): {len(data['triggers'])} triggers")
+
+
+# ============================================================
+# 🤖 8 NEW AUTOMATION TOOLS (v1.8+)
+# ============================================================
+
+
+class TestNewAutomationTools:
+    """Integration tests for 8 automation tools:
+    get_automation_file_location, search_inside_automations,
+    diagnose_uncategorized_automations, diagnose_automation_aliases,
+    validate_automation_names, get_automation_entity_id,
+    resolve_blueprint_automation, diagnose_category_alias_mismatch.
+    """
+
+    def test_get_automation_file_location(self, real_mcp):
+        """get_automation_file_location: known alias -> file_path + line_start/line_end."""
+        list_data = real_mcp.call_tool("list_automations")
+        list_result = json.loads(list_data)
+        autos = list_result.get("automations", [])
+        if not autos:
+            pytest.skip("No automations available")
+
+        alias = autos[0].get("alias")
+        result = real_mcp.call_tool("get_automation_file_location", automation_id=alias)
+        data = json.loads(result)
+        assert data["success"] is True
+        assert data["file_path"] == "automations.yaml"
+        assert data["line_start"] > 0
+        assert data["line_end"] >= data["line_start"]
+        print(
+            f"\n[OK] get_automation_file_location: lines {data['line_start']}-{data['line_end']}"
+        )
+
+    def test_search_inside_automations(self, real_mcp):
+        """search_inside_automations: pattern=light in actions -> matches list."""
+        result = real_mcp.call_tool(
+            "search_inside_automations", pattern="light", search_in="actions"
+        )
+        data = json.loads(result)
+        assert data["success"] is True
+        assert data["match_count"] >= 0
+        assert isinstance(data["matches"], list)
+        print(
+            f"\n[OK] search_inside_automations: {data['match_count']} matches for 'light'"
+        )
+
+    def test_diagnose_uncategorized_automations(self, real_mcp):
+        """diagnose_uncategorized_automations: scope=automation -> uncategorized list."""
+        result = real_mcp.call_tool("diagnose_uncategorized_automations", scope="automation")
+        data = json.loads(result)
+        assert data["success"] is True
+        assert data["total_uncategorized"] >= 0
+        assert isinstance(data["uncategorized"], list)
+        print(
+            f"\n[OK] diagnose_uncategorized_automations: {data['total_uncategorized']} uncategorized"
+        )
+
+    def test_diagnose_automation_aliases(self, real_mcp):
+        """diagnose_automation_aliases: assert duplicate_count or results."""
+        result = real_mcp.call_tool("diagnose_automation_aliases")
+        data = json.loads(result)
+        assert data["success"] is True
+        assert "total_duplicates" in data
+        assert data["total_duplicates"] >= 0
+        print(
+            f"\n[OK] diagnose_automation_aliases: {data['total_duplicates']} duplicate groups"
+        )
+
+    def test_validate_automation_names(self, real_mcp):
+        """validate_automation_names: assert validation results."""
+        result = real_mcp.call_tool("validate_automation_names")
+        data = json.loads(result)
+        assert data["success"] is True
+        assert data["total_violations"] >= 0
+        assert isinstance(data["violations"], list)
+        print(
+            f"\n[OK] validate_automation_names: {data['total_violations']} violations"
+        )
+
+    def test_get_automation_entity_id(self, real_mcp):
+        """get_automation_entity_id: known alias -> entity_id starts with automation."""
+        list_data = real_mcp.call_tool("list_automations")
+        list_result = json.loads(list_data)
+        autos = list_result.get("automations", [])
+        if not autos:
+            pytest.skip("No automations available")
+
+        alias = autos[0].get("alias")
+        result = real_mcp.call_tool("get_automation_entity_id", identifier=alias)
+        data = json.loads(result)
+        assert data["success"] is True
+        assert "entity_id" in data
+        assert data["entity_id"].startswith("automation.")
+        print(
+            f"\n[OK] get_automation_entity_id: {alias} -> {data['entity_id']}"
+        )
+
+    def test_resolve_blueprint_automation(self, real_mcp):
+        """resolve_blueprint_automation: find blueprint-based automation -> verify resolution."""
+        # Find a blueprint-based automation
+        bp_result = real_mcp.call_tool("search_automations", uses_blueprint=True)
+        bp_data = json.loads(bp_result)
+        bp_autos = bp_data.get("results", [])
+        if not bp_autos:
+            pytest.skip("No blueprint-based automations available")
+
+        alias = bp_autos[0].get("alias")
+        result = real_mcp.call_tool("resolve_blueprint_automation", automation_id=alias)
+        data = json.loads(result)
+        assert data["success"] is True
+        assert data.get("is_blueprint") is True
+        assert "resolved_yaml" in data
+        assert "blueprint_path" in data
+        print(
+            f"\n[OK] resolve_blueprint_automation: {alias} -> blueprint={data['blueprint_path']}"
+        )
+
+    def test_diagnose_category_alias_mismatch(self, real_mcp):
+        """diagnose_category_alias_mismatch: assert mismatches list (isinstance fix!)."""
+        result = real_mcp.call_tool("diagnose_category_alias_mismatch")
+        data = json.loads(result)
+        assert data["success"] is True
+        assert data["total_mismatches"] >= 0
+        assert isinstance(data["mismatches"], list)
+        print(
+            f"\n[OK] diagnose_category_alias_mismatch: {data['total_mismatches']} mismatches"
+        )
+
+
+# ============================================================
+# STORAGE TOOLS (v1.8+) — get_lovelace_config, diagnose_lovelace_setup,
+# get_exposed_entities, hacs_get_update_count, get_nfc_tags, get_cache_stats
+# ============================================================
+
+
+class TestNewToolsV13:
+    """Integration tests for 6 storage tools added in v1.8+."""
+
+    def test_get_lovelace_config(self, real_mcp):
+        """get_lovelace_config with dashboard='default' should return views config."""
+        result = real_mcp.call_tool("get_lovelace_config", dashboard="default")
+        data = json.loads(result)
+        if data.get("success"):
+            config = data.get("data", {}).get("config", {})
+            views = config.get("views", [])
+            assert isinstance(views, list)
+            print(f"\n[OK] get_lovelace_config: {len(views)} views in default dashboard")
+        else:
+            # Dashboard may not exist in storage (e.g., YAML-mode dashboards)
+            assert "error" in data
+            print(f"\n[WARN] get_lovelace_config: {data.get('error')}")
+
+    def test_diagnose_lovelace_setup(self, real_mcp):
+        """diagnose_lovelace_setup should return dashboards list and issues."""
+        result = real_mcp.call_tool("diagnose_lovelace_setup")
+        data = json.loads(result)
+        assert data["success"] is True
+        assert "dashboards" in data
+        dashboard_count = len(data.get("dashboards", []))
+        assert dashboard_count >= 0
+        assert "issues" in data
+        assert isinstance(data.get("issues", []), list)
+        print(
+            f"\n[OK] diagnose_lovelace_setup: {dashboard_count} dashboards, "
+            f"{len(data.get('issues', []))} issues"
+        )
+
+    def test_get_exposed_entities(self, real_mcp):
+        """get_exposed_entities should return entities dict."""
+        result = real_mcp.call_tool("get_exposed_entities")
+        data = json.loads(result)
+        assert data["success"] is True
+        entities = data.get("entities", {})
+        assert isinstance(entities, dict)
+        print(
+            f"\n[OK] get_exposed_entities: {data.get('total_exposed', 0)} exposed entities"
+        )
+
+    def test_hacs_get_update_count(self, real_mcp):
+        """hacs_get_update_count verifies dict-repositories fix with total_installed and updates_available."""
+        result = real_mcp.call_tool("hacs_get_update_count")
+        data = json.loads(result)
+        if data.get("success"):
+            assert "total_installed" in data
+            assert "updates_available" in data
+            assert isinstance(data["total_installed"], int)
+            assert isinstance(data["updates_available"], int)
+            print(
+                f"\n[OK] hacs_get_update_count: {data['total_installed']} installed, "
+                f"{data['updates_available']} updates available"
+            )
+        else:
+            assert "error" in data
+            assert "HACS" in data.get("error", "") or "not" in data.get("error", "")
+            print(f"\n[WARN] hacs_get_update_count: {data.get('error')}")
+
+    def test_get_nfc_tags(self, real_mcp):
+        """get_nfc_tags should return tags list and total count."""
+        result = real_mcp.call_tool("get_nfc_tags")
+        data = json.loads(result)
+        assert data["success"] is True
+        tags = data.get("tags", [])
+        assert isinstance(tags, list)
+        assert "total" in data
+        assert data["total"] >= 0
+        print(
+            f"\n[OK] get_nfc_tags: {data['total']} tags, "
+            f"{data.get('unused_count', 0)} unused"
+        )
+
+    def test_get_cache_stats(self, real_mcp):
+        """get_cache_stats should return hits, misses, and hit_rate_percent."""
+        result = real_mcp.call_tool("get_cache_stats")
+        data = json.loads(result)
+        assert data["success"] is True
+        assert "hits" in data
+        assert "misses" in data
+        assert "hit_rate_percent" in data
+        assert isinstance(data["hits"], int)
+        assert isinstance(data["misses"], int)
+        assert isinstance(data["hit_rate_percent"], (int, float))
+        print(
+            f"\n[OK] get_cache_stats: {data['hits']} hits, "
+            f"{data['misses']} misses, "
+            f"{data['hit_rate_percent']}% hit rate"
         )
