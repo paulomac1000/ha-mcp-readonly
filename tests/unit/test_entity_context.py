@@ -130,7 +130,6 @@ class TestEntityGetContextTree:
                 else {"success": True, "data": {"automations": []}}
             ),
         ):
-            with patch("tools.entity_context.load_registry", return_value={"data": {}}):
                 result = await tools["entity_get_context_tree"]("light.test")
                 data = json.loads(result)
 
@@ -244,7 +243,6 @@ class TestEntityContextWithAutomations:
             return {"success": True, "data": []}
 
         with patch("tools.entity_context.make_ha_request", side_effect=mock_request):
-            with patch("tools.entity_context.load_registry", return_value={"data": {}}):
                 result = await tools["entity_get_context_tree"]("light.kitchen")
                 data = json.loads(result)
 
@@ -322,7 +320,6 @@ class TestEntityContextSourceBreakdown:
             return {"success": True, "data": []}
 
         with patch("tools.entity_context.make_ha_request", side_effect=mock_request):
-            with patch("tools.entity_context.load_registry", return_value={"data": {}}):
                 result = await tools["entity_get_context_tree"]("light.test_entity")
                 data = json.loads(result)
 
@@ -402,7 +399,6 @@ class TestEntityContextSourceBreakdown:
             return {"success": True, "data": []}
 
         with patch("tools.entity_context.make_ha_request", side_effect=mock_request):
-            with patch("tools.entity_context.load_registry", return_value={"data": {}}):
                 result = await tools["entity_get_context_tree"]("light.test_entity")
                 data = json.loads(result)
 
@@ -501,7 +497,6 @@ class TestEntityContextSourceBreakdown:
             return {"success": True, "data": []}
 
         with patch("tools.entity_context.make_ha_request", side_effect=mock_request):
-            with patch("tools.entity_context.load_registry", return_value={"data": {}}):
                 result = await tools["entity_get_context_tree"]("light.test_entity")
                 data = json.loads(result)
 

@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "active_work_id": "skills-audit-v2-1-0-15a83f1f",
+  "active_work_id": "integration-e2e-test-gap-d1ea8b4e",
   "works": {
     "mcp-standard-v2-compliance-18dd5833": {
       "work_id": "mcp-standard-v2-compliance-18dd5833",
@@ -113,21 +113,111 @@
       },
       "agent": "atlas",
       "task_sessions": {}
+    },
+    "integration-e2e-test-gap-d1ea8b4e": {
+      "work_id": "integration-e2e-test-gap-d1ea8b4e",
+      "active_plan": "/home/pablo/ha-mcp-readonly/.omo/plans/integration-e2e-test-gap.md",
+      "plan_name": "integration-e2e-test-gap",
+      "status": "active",
+      "started_at": "2026-06-10T20:44:22.037Z",
+      "updated_at": "2026-06-10T21:50:39.911Z",
+      "session_ids": [
+        "opencode:ses_14dddabfeffeZRi6nUpzoxgmqs",
+        "opencode:ses_14caa4783ffejMLIAzCmFwXX2f",
+        "opencode:ses_14caa3a5cffeqxjqZMepJPkDz6",
+        "opencode:ses_14caa2dbfffevUxS1gcdNXS7Ux"
+      ],
+      "session_origins": {
+        "opencode:ses_14dddabfeffeZRi6nUpzoxgmqs": "direct",
+        "opencode:ses_14caa4783ffejMLIAzCmFwXX2f": "appended",
+        "opencode:ses_14caa3a5cffeqxjqZMepJPkDz6": "appended",
+        "opencode:ses_14caa2dbfffevUxS1gcdNXS7Ux": "appended"
+      },
+      "agent": "atlas",
+      "task_sessions": {
+        "todo:1": {
+          "task_key": "todo:1",
+          "task_label": "1",
+          "task_title": "Graph Tools integration tests (7 tools)",
+          "session_id": "opencode:ses_14cb82e6fffe8t0fVAewtphguN",
+          "agent": "Sisyphus-Junior",
+          "category": "deep",
+          "updated_at": "2026-06-10T20:47:51.346Z",
+          "started_at": "2026-06-10T20:47:51.346Z",
+          "status": "running"
+        },
+        "todo:4": {
+          "task_key": "todo:4",
+          "task_label": "4",
+          "task_title": "Diagnostics integration tests — batch 1 (6 tools)",
+          "session_id": "opencode:ses_14caa2dbfffevUxS1gcdNXS7Ux",
+          "agent": "Sisyphus-Junior",
+          "category": "deep",
+          "updated_at": "2026-06-10T21:00:06.900Z"
+        },
+        "todo:7": {
+          "task_key": "todo:7",
+          "task_label": "7",
+          "task_title": "Storage tools — batch 1 (new tools) (6 tools)",
+          "session_id": "opencode:ses_14c83bc97ffeb4uvRjiqNXMZlc",
+          "agent": "Sisyphus-Junior",
+          "category": "deep",
+          "started_at": "2026-06-10T21:41:30.304Z",
+          "status": "running",
+          "updated_at": "2026-06-10T21:50:39.912Z"
+        }
+      }
     }
   },
-  "active_plan": "/home/pablo/ha-mcp-readonly/.omo/plans/skills-audit-v2-1-0.md",
-  "started_at": "2026-06-07T18:31:18.171Z",
+  "active_plan": "/home/pablo/ha-mcp-readonly/.omo/plans/integration-e2e-test-gap.md",
+  "started_at": "2026-06-10T20:44:22.037Z",
   "status": "active",
-  "updated_at": "2026-06-07T18:31:43.806Z",
+  "updated_at": "2026-06-10T21:50:39.911Z",
   "session_ids": [
-    "opencode:ses_1619fc89dffe3hKKyOL4vDO1T6",
-    "opencode:ses_15ca51e5affe62kk9t6owTn3wb"
+    "opencode:ses_14dddabfeffeZRi6nUpzoxgmqs",
+    "opencode:ses_14caa4783ffejMLIAzCmFwXX2f",
+    "opencode:ses_14caa3a5cffeqxjqZMepJPkDz6",
+    "opencode:ses_14caa2dbfffevUxS1gcdNXS7Ux"
   ],
   "session_origins": {
-    "opencode:ses_1619fc89dffe3hKKyOL4vDO1T6": "direct",
-    "opencode:ses_15ca51e5affe62kk9t6owTn3wb": "appended"
+    "opencode:ses_14dddabfeffeZRi6nUpzoxgmqs": "direct",
+    "opencode:ses_14caa4783ffejMLIAzCmFwXX2f": "appended",
+    "opencode:ses_14caa3a5cffeqxjqZMepJPkDz6": "appended",
+    "opencode:ses_14caa2dbfffevUxS1gcdNXS7Ux": "appended"
   },
-  "plan_name": "skills-audit-v2-1-0",
-  "task_sessions": {},
+  "plan_name": "integration-e2e-test-gap",
+  "task_sessions": {
+    "todo:1": {
+      "task_key": "todo:1",
+      "task_label": "1",
+      "task_title": "Graph Tools integration tests (7 tools)",
+      "session_id": "opencode:ses_14cb82e6fffe8t0fVAewtphguN",
+      "agent": "Sisyphus-Junior",
+      "category": "deep",
+      "updated_at": "2026-06-10T20:47:51.346Z",
+      "started_at": "2026-06-10T20:47:51.346Z",
+      "status": "running"
+    },
+    "todo:4": {
+      "task_key": "todo:4",
+      "task_label": "4",
+      "task_title": "Diagnostics integration tests — batch 1 (6 tools)",
+      "session_id": "opencode:ses_14caa2dbfffevUxS1gcdNXS7Ux",
+      "agent": "Sisyphus-Junior",
+      "category": "deep",
+      "updated_at": "2026-06-10T21:00:06.900Z"
+    },
+    "todo:7": {
+      "task_key": "todo:7",
+      "task_label": "7",
+      "task_title": "Storage tools — batch 1 (new tools) (6 tools)",
+      "session_id": "opencode:ses_14c83bc97ffeb4uvRjiqNXMZlc",
+      "agent": "Sisyphus-Junior",
+      "category": "deep",
+      "started_at": "2026-06-10T21:41:30.304Z",
+      "status": "running",
+      "updated_at": "2026-06-10T21:50:39.912Z"
+    }
+  },
   "agent": "atlas"
 }

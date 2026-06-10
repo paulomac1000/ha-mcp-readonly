@@ -11,7 +11,7 @@ Traces the sources of entity state changes:
 
 import logging
 from collections import defaultdict
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from tools.utils import (
@@ -20,7 +20,6 @@ from tools.utils import (
     _success_response,
     get_registry_devices,
     get_registry_entities,
-    load_registry,
     make_ha_request,
 )
 
@@ -44,7 +43,7 @@ def _do_entity_get_context_tree(
     entities = get_registry_entities(config_path)
     entity_reg = next((e for e in entities if e.get("entity_id") == entity_id), None)
 
-    end_time = datetime.now()
+    end_time = datetime.now(UTC)
     start_time = end_time - timedelta(hours=hours_back)
 
     history_response = make_ha_request(
@@ -90,7 +89,6 @@ def _do_entity_get_context_tree(
                     }
                 )
 
-    load_registry("automations.yaml", config_path)
     affecting_automations = []
 
     all_entities = entities
@@ -223,7 +221,7 @@ def _do_get_context_chain(
 
     max_depth = min(max(depth, 0), 5)
 
-    start_time = (datetime.now() - timedelta(hours=24)).isoformat()
+    start_time = (datetime.now(UTC) - timedelta(hours=24)).isoformat()
 
     entity_response = make_ha_request(
         ha_url, ha_token, f"/api/logbook/{start_time}?entity={entity_id}"
@@ -343,7 +341,7 @@ def register_entity_context_tools(mcp, config_path: str, ha_url: str, ha_token: 
         Returns:
             JSON with context tree showing:
             - current_state: current entity state
-            - recent_changes: list of recent state changes with sources
+            - recent_changes: object with total_history_entries, total_logbook_entries, last_changed, last_updated
             - sources: breakdown by source type (automation/user/device/script)
             - automation_triggers: which automations affect this entity
             - potential_sources: inferred sources from configuration

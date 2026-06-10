@@ -90,7 +90,7 @@ def _parse_log_line(line: str) -> dict[str, Any]:
         result["message"] = line.strip()
 
     if "timestamp" not in result and "level" not in result:
-        result["unparsed"] = True  # type: ignore[assignment]
+        result["unparsed"] = True
 
     return result
 
@@ -224,7 +224,7 @@ def _do_get_log_insights(
     _meta: dict[str, object] = (
         {"source": "api_fallback", "truncated": False, "max_lines": 10000}
         if api_fallback_used
-        else dict(file_meta)  # type: ignore[arg-type]
+        else dict(file_meta)
     )
 
     cutoff_time = datetime.now(UTC) - timedelta(hours=hours)

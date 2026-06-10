@@ -24,7 +24,7 @@ TOOLS_VERSION = "1.0.0"
 def collect_system_metrics(ha_url: str, ha_token: str | None, config_path: str) -> dict[str, Any]:
     """Collect basic system metrics from HA API (lightweight)."""
     try:
-        metrics: dict[str, Any] = {"timestamp": datetime.now().isoformat()}
+        metrics: dict[str, Any] = {"timestamp": datetime.now(UTC).isoformat()}
 
         try:
             response = make_ha_request(ha_url, ha_token, "/api/config")
@@ -71,7 +71,7 @@ def collect_system_metrics(ha_url: str, ha_token: str | None, config_path: str) 
         return metrics
 
     except Exception as e:
-        return {"error": str(e)[:200], "timestamp": datetime.now().isoformat()}
+        return {"error": str(e)[:200], "timestamp": datetime.now(UTC).isoformat()}
 
 
 def collect_log_summary_optimized(
@@ -335,7 +335,7 @@ def prepare_report(data: dict[str, Any]) -> dict[str, Any]:
 
     report = {
         "version": "1.3",
-        "generated_at": datetime.now().isoformat(),
+        "generated_at": datetime.now(UTC).isoformat(),
         "health_score": health_score,
         "system_metrics": data.get("system_metrics", {}),
         "log_summary": data.get("log_summary", {}),
@@ -368,7 +368,7 @@ def run_once(ha_url: str, ha_token: str | None, config_path: str) -> dict[str, A
 
         return {
             "version": "1.3",
-            "generated_at": datetime.now().isoformat(),
+            "generated_at": datetime.now(UTC).isoformat(),
             "health_score": {
                 "score": 0,
                 "status": "error",
