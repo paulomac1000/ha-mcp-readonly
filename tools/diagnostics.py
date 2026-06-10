@@ -15,7 +15,7 @@ import re
 import threading
 import time
 from collections import Counter, defaultdict
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -109,7 +109,7 @@ def _get_log_errors_with_patterns(
     api_errors: list[dict] = []  # type: ignore[type-arg]
     slow_entities: list[dict] = []  # type: ignore[type-arg]
 
-    cutoff = datetime.now() - timedelta(hours=hours)
+    cutoff = datetime.now(UTC) - timedelta(hours=hours)
 
     # Regex patterns
     entity_pattern = re.compile(
@@ -141,7 +141,7 @@ def _get_log_errors_with_patterns(
                     ts_match = timestamp_pattern.match(line)
                     if ts_match:
                         ts_str = ts_match.group(1)
-                        ts = datetime.strptime(ts_str, "%Y-%m-%d %H:%M:%S")
+                        ts = datetime.strptime(ts_str, "%Y-%m-%d %H:%M:%S").replace(tzinfo=UTC)
                         if ts < cutoff:
                             continue
                     else:
@@ -1478,7 +1478,7 @@ def _do_diagnose_performance(
     logbook_res = make_ha_request(
         ha_url,
         ha_token,
-        f"/api/logbook/{(datetime.now() - timedelta(hours=24)).isoformat()}",
+        f"/api/logbook/{(datetime.now(UTC) - timedelta(hours=24)).isoformat()}",
     )
     if logbook_res.get("success"):
         trigger_counts: Counter[str] = Counter()

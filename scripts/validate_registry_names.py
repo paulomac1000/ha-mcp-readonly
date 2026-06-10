@@ -72,9 +72,7 @@ def _collect_violations() -> list[tuple[str, int, str]]:
                 continue
 
             first_arg = node.args[0]
-            if not isinstance(first_arg, ast.Constant) or not isinstance(
-                first_arg.value, str
-            ):
+            if not isinstance(first_arg, ast.Constant) or not isinstance(first_arg.value, str):
                 continue  # non-literal first arg, can't statically check
 
             name = first_arg.value

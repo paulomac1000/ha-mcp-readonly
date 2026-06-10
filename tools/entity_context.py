@@ -12,8 +12,10 @@ Traces the sources of entity state changes:
 import logging
 from collections import defaultdict
 from datetime import datetime, timedelta
+from typing import Any
 
 from tools.utils import (
+    _build_history_url,
     _error_response,
     _success_response,
     get_registry_devices,
@@ -48,7 +50,7 @@ def _do_entity_get_context_tree(
     history_response = make_ha_request(
         ha_url,
         ha_token,
-        f"/api/history/period/{start_time.isoformat()}?filter_entity_id={entity_id}&minimal_response=True",
+        _build_history_url(start_time, entity_id=entity_id, minimal=True),
     )
 
     history_entries = []
@@ -196,8 +198,136 @@ def _do_entity_get_context_tree(
     return _success_response({"context_tree": context_tree})
 
 
+def _do_get_context_chain(
+    entity_id: str,
+    ha_url: str,
+    ha_token: str,
+    depth: int = 3,
+    include_timestamps: bool = True,
+) -> str:
+    """Trace the context parent_id chain for entity state changes.
+
+    Recursively follows context.parent_id from logbook entries to
+    reconstruct the chain of events that led to a state change.
+
+    Args:
+        entity_id: Entity to trace context chain for (e.g., "light.living_room")
+        depth: Maximum chain depth to follow (capped at 5)
+        include_timestamps: Include timestamp per chain step
+
+    Returns:
+        JSON with chain (list of steps) and chain_length
+    """
+    if not entity_id or "." not in entity_id:
+        return _error_response("Invalid entity_id format. Expected: domain.name")
+
+    max_depth = min(max(depth, 0), 5)
+
+    start_time = (datetime.now() - timedelta(hours=24)).isoformat()
+
+    entity_response = make_ha_request(
+        ha_url, ha_token, f"/api/logbook/{start_time}?entity={entity_id}"
+    )
+    if not entity_response.get("success"):
+        return _error_response(f"Failed to fetch logbook entries for '{entity_id}'")
+
+    entity_entries = entity_response.get("data", [])
+    _logger.debug(
+        "Fetched %d entity-filtered logbook entries for %s",
+        len(entity_entries),
+        entity_id,
+    )
+
+    full_response = make_ha_request(ha_url, ha_token, f"/api/logbook/{start_time}")
+    full_entries: list[dict[str, Any]] = []
+    if full_response.get("success"):
+        full_entries = full_response.get("data", [])
+    _logger.debug("Fetched %d unfiltered logbook entries", len(full_entries))
+
+    context_lookup: dict[str, dict[str, Any]] = {}
+    for entry in full_entries:
+        ctx_id = entry.get("context_id")
+        if ctx_id and ctx_id not in context_lookup:
+            context_lookup[ctx_id] = entry
+
+    for entry in entity_entries:
+        ctx_id = entry.get("context_id")
+        if ctx_id and ctx_id not in context_lookup:
+            context_lookup[ctx_id] = entry
+
+    chain: list[dict[str, Any]] = []
+    seen: set[str] = set()
+
+    def follow_chain(ctx_id: str, current_depth: int) -> None:
+        if current_depth > max_depth or ctx_id in seen:
+            return
+        if ctx_id not in context_lookup:
+            chain.append(
+                {
+                    "context_id": ctx_id,
+                    "parent_id": None,
+                    "entity_id": None,
+                    "depth": current_depth,
+                    "note": "Parent context not found in logbook window",
+                }
+            )
+            seen.add(ctx_id)
+            return
+
+        seen.add(ctx_id)
+        entry = context_lookup[ctx_id]
+        parent_id = entry.get("context_parent_id")
+
+        chain_entry: dict[str, Any] = {
+            "context_id": ctx_id,
+            "parent_id": parent_id,
+            "entity_id": entry.get("entity_id"),
+            "depth": current_depth,
+        }
+        if include_timestamps:
+            chain_entry["timestamp"] = entry.get("when")
+        chain.append(chain_entry)
+
+        if parent_id:
+            follow_chain(parent_id, current_depth + 1)
+
+    for entry in entity_entries:
+        ctx_id = entry.get("context_id")
+        if ctx_id:
+            follow_chain(ctx_id, 0)
+
+    return _success_response({"chain": chain, "chain_length": len(chain)})
+
+
 def register_entity_context_tools(mcp, config_path: str, ha_url: str, ha_token: str) -> None:  # type: ignore[no-untyped-def]
     """Register entity context tracing tools."""
+
+    @mcp.tool()
+    async def get_context_chain(
+        entity_id: str,
+        depth: int = 3,
+        include_timestamps: bool = True,
+    ) -> str:
+        """[READ] Trace the context parent_id chain for entity state changes.
+
+        Follows context.parent_id links from logbook entries to reconstruct
+        the chain of events that led to a state change (e.g. automation →
+        script → light).
+
+        Args:
+            entity_id: Entity to trace context chain for (e.g., "light.living_room")
+            depth: Maximum chain depth to follow (capped at 5, default 3)
+            include_timestamps: Include timestamp for each chain step (default True)
+
+        Returns:
+            JSON with chain (list of steps, each containing context_id,
+            parent_id, entity_id, depth, and optionally timestamp) and
+            chain_length.
+        """
+        try:
+            return _do_get_context_chain(entity_id, ha_url, ha_token, depth, include_timestamps)
+        except Exception as e:
+            return _error_response(str(e))
 
     @mcp.tool()
     async def entity_get_context_tree(entity_id: str, hours_back: int = 24) -> str:

@@ -23,6 +23,7 @@ import re
 import subprocess
 import threading
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -486,6 +487,43 @@ def sanitize_response_data(data: object) -> object:
     if isinstance(data, list):
         return [sanitize_response_data(item) for item in data]
     return data
+
+
+# =============================================================================
+# HISTORY URL BUILDER
+# =============================================================================
+
+
+def _build_history_url(
+    start_time: datetime,
+    entity_id: str | None = None,
+    minimal: bool = True,
+) -> str:
+    """
+    Build a Home Assistant history API URL path with proper parameters.
+
+    Centralises the ``/api/history/period/`` URL construction to prevent
+    divergence and URL-encoding bugs across tools.
+
+    Args:
+        start_time: Start time for the history query (uses ``.isoformat()``
+            raw — no ``urllib.parse.quote``, so colons and plus signs are
+            sent as-is, which HA accepts).
+        entity_id: Optional entity ID or comma-separated list to filter by.
+        minimal: When True, appends ``&minimal_response=true`` (default).
+
+    Returns:
+        A URL path string ready for use with ``make_ha_request``.
+    """
+    minimal_str = "true" if minimal else "false"
+    start_str = start_time.isoformat()
+    if entity_id:
+        return (
+            f"/api/history/period/{start_str}"
+            f"?filter_entity_id={entity_id}"
+            f"&minimal_response={minimal_str}"
+        )
+    return f"/api/history/period/{start_str}?minimal_response={minimal_str}"
 
 
 # Backward-compatible aliases

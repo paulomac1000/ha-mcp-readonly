@@ -72,10 +72,7 @@ def main() -> int:
             all_violations.append((pyfile, lineno, text))
 
     if all_violations:
-        print(
-            "ERROR: Naive datetime.now() calls detected "
-            "(use datetime.now(UTC) instead):"
-        )
+        print("ERROR: Naive datetime.now() calls detected (use datetime.now(UTC) instead):")
         print()
         for filepath, lineno, text in all_violations:
             print(f"  {filepath}:{lineno}:  {text}")

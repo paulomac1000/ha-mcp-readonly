@@ -148,7 +148,7 @@ register_blueprint_tools(mcp, HA_CONFIG_PATH)
 
 register_config_tools(mcp, HA_CONFIG_PATH, HA_URL, HA_TOKEN)
 
-register_log_tools(mcp, HA_CONFIG_PATH)
+register_log_tools(mcp, HA_CONFIG_PATH, HA_URL, HA_TOKEN)
 
 register_storage_tools(mcp, HA_CONFIG_PATH, HA_URL, HA_TOKEN)
 

@@ -25,6 +25,7 @@ import yaml
 
 from tools.manifests import make_manifest, register_manifest
 from tools.utils import (
+    _build_history_url,
     _error_response,
     _success_response,
     create_error_response,
@@ -517,7 +518,7 @@ def _do_get_history_stats(
     hours_back = min(hours_back, 168)
 
     start_time = datetime.now(UTC) - timedelta(hours=hours_back)
-    url = f"/api/history/period/{start_time.isoformat()}?filter_entity_id={entity_id}&minimal_response=true"
+    url = _build_history_url(start_time, entity_id=entity_id, minimal=True)
 
     res = make_ha_request(ha_url, ha_token, url)
     if not res["success"] or not res["data"] or not res["data"][0]:

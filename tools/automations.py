@@ -14,7 +14,13 @@ from typing import Any, cast
 import yaml
 
 from tools.manifests import make_manifest, register_manifest
-from tools.utils import _error_response, _success_response, load_registry, make_ha_request
+from tools.utils import (
+    _build_history_url,
+    _error_response,
+    _success_response,
+    load_registry,
+    make_ha_request,
+)
 from tools.yaml_utils import HomeAssistantLoader
 
 _logger = logging.getLogger(__name__)
@@ -541,6 +547,95 @@ def _do_get_automation_conflicts(entity_id: str, config_path: str) -> dict[str, 
     }
 
 
+def _analyze_choose_branches(actions: list[dict]) -> dict:
+    """Analyze choose blocks in automation actions.
+
+    Extracts structured metadata from each choose branch: condition types,
+    action count, and whether a default branch exists.
+
+    Args:
+        actions: List of action dicts from an automation.
+
+    Returns:
+        Dict with choose_count and branches list.
+    """
+    choose_count = 0
+    branches: list[dict] = []
+    has_default = False
+
+    for action in actions:
+        if not isinstance(action, dict) or "choose" not in action:
+            continue
+
+        act_default = action.get("default")
+        choose_block = action["choose"]
+        if act_default is not None:
+            has_default = True
+
+        if not isinstance(choose_block, list):
+            continue
+
+        for branch_idx, choice in enumerate(choose_block):
+            if not isinstance(choice, dict):
+                continue
+
+            choose_count += 1
+
+            raw_conditions = choice.get("conditions", [])
+            if isinstance(raw_conditions, dict):
+                raw_conditions = [raw_conditions]
+            elif not isinstance(raw_conditions, list):
+                raw_conditions = []
+
+            condition_types: list[str] = []
+            for cond in raw_conditions:
+                if isinstance(cond, str):
+                    condition_types.append(f"alias:{cond}")
+                elif isinstance(cond, dict):
+                    cond_type = cond.get("condition", "unknown")
+                    if cond_type == "trigger":
+                        tid = cond.get("id", "?")
+                        if isinstance(tid, list):
+                            tid = ",".join(tid)
+                        condition_types.append(f"trigger:{tid}")
+                    elif cond_type == "state":
+                        condition_types.append(f"state:{cond.get('entity_id', '?')}")
+                    elif cond_type == "numeric_state":
+                        condition_types.append(f"numeric_state:{cond.get('entity_id', '?')}")
+                    elif cond_type == "time":
+                        condition_types.append(
+                            f"time:{cond.get('after', cond.get('before', cond.get('weekday', '?')))}"
+                        )
+                    elif cond_type == "sun":
+                        condition_types.append(f"sun:{cond.get('after', cond.get('before', '?'))}")
+                    elif cond_type == "template":
+                        vt = cond.get("value_template", "")
+                        condition_types.append(f"template:{vt[:40]}" if vt else "template:?")
+                    elif cond_type == "zone":
+                        condition_types.append(f"zone:{cond.get('entity_id', '?')}")
+                    else:
+                        condition_types.append(cond_type)
+
+            raw_sequence = choice.get("sequence", [])
+            if not isinstance(raw_sequence, list):
+                raw_sequence = [raw_sequence] if raw_sequence else []
+
+            branches.append(
+                {
+                    "index": branch_idx,
+                    "conditions": condition_types,
+                    "actions_count": len(raw_sequence),
+                    "has_default": False,
+                }
+            )
+
+    return {
+        "choose_count": choose_count,
+        "has_default": has_default,
+        "branches": branches,
+    }
+
+
 def _do_diagnose_automation(
     automation_id: str,
     detail_level: str = "summary",
@@ -1019,6 +1114,11 @@ def _do_diagnose_automation(
                     )
 
             result["action_analysis"].append(analysis)  # type: ignore[attr-defined]
+
+        # Analyze choose blocks (full detail only)
+        choose_analysis = _analyze_choose_branches(actions)
+        if choose_analysis["choose_count"] > 0:
+            result["choose_analysis"] = choose_analysis
     else:
         for idx, action in enumerate(actions):
             if "variables" in action:
@@ -1254,11 +1354,12 @@ def _do_get_automation_usage_stats(
                 if eid not in states_dict:
                     missing_entities.append(eid)
 
-    start_time = (datetime.now(UTC) - timedelta(hours=hours_back)).isoformat()
+    start_dt = datetime.now(UTC) - timedelta(hours=hours_back)
+    start_time = start_dt.isoformat()
     history_result = make_ha_request(
         ha_url,
         ha_token,
-        f"/api/history/period/{start_time}?filter_entity_id={entity_id}",
+        _build_history_url(start_dt, entity_id=entity_id, minimal=False),
     )
 
     last_run = None
@@ -1379,7 +1480,7 @@ def _do_get_automation_usage_stats(
                 entity_hist_result = make_ha_request(
                     ha_url,
                     ha_token,
-                    f"/api/history/period/{start_time}?filter_entity_id={history_filter}",
+                    _build_history_url(start_dt, entity_id=history_filter, minimal=False),
                 )
                 if entity_hist_result.get("success") and isinstance(
                     entity_hist_result.get("data"), list
@@ -2239,6 +2340,143 @@ def _do_validate_automation_names(
     }
 
 
+def _deep_substitute_inputs(obj: Any, user_inputs: dict[str, Any]) -> Any:
+    """Recursively substitute ``!input <var>`` strings with user-provided values.
+
+    Blueprint YAML templates use ``!input <variable_name>`` tags that the
+    ``HomeAssistantLoader`` converts to plain strings (e.g. ``"!input motion_sensor"``).
+    This function walks the parsed dict/list structure and replaces those placeholder
+    strings with the concrete values from ``user_inputs``.
+
+    Args:
+        obj: Parsed blueprint template (dict, list, or scalar).
+        user_inputs: Dictionary mapping input variable names to their values.
+
+    Returns:
+        The same structure with ``!input <var>`` strings replaced by concrete values.
+    """
+    if isinstance(obj, dict):
+        return {key: _deep_substitute_inputs(value, user_inputs) for key, value in obj.items()}
+    if isinstance(obj, list):
+        return [_deep_substitute_inputs(item, user_inputs) for item in obj]
+    if isinstance(obj, str) and obj.startswith("!input ") and len(obj) > 7:
+        var_name = obj[7:].strip()
+        if var_name in user_inputs:
+            return user_inputs[var_name]
+    return obj
+
+
+def _do_resolve_blueprint_automation(
+    automation_id: str,
+    config_path: str,
+) -> dict[str, Any]:
+    """Resolve a blueprint automation to its concrete configuration.
+
+    If the automation uses a blueprint (``use_blueprint`` key present), loads the
+    blueprint YAML, substitutes the user-provided input values into the blueprint
+    template, and returns the resolved automation as if it were a regular
+    (non-blueprint) automation.  The stored YAML is never modified — resolution is
+    computed, not persisted.
+
+    If the automation does NOT use a blueprint, returns it unchanged (same shape as
+    ``_do_get_automation_code``).
+
+    Args:
+        automation_id: Automation alias or id (from ``automations.yaml``).
+        config_path: Path to the Home Assistant config directory.
+
+    Returns:
+        Dict with ``success``, ``alias``, ``automation_id``, ``is_blueprint``,
+        ``resolved_yaml``, and optionally ``blueprint_path`` and ``user_inputs``.
+    """
+    if not automation_id or not isinstance(automation_id, str) or not automation_id.strip():
+        return {
+            "success": False,
+            "error": "automation_id is required and must be a non-empty string",
+        }
+
+    data = _load_automations(config_path)
+    item = _get_automation_by_id_or_alias(data, automation_id)
+
+    if not item:
+        return {"success": False, "error": f"Automation '{automation_id}' not found"}
+
+    automation_id_value = item.get("id")
+    use_blueprint = item.get("use_blueprint")
+
+    if not use_blueprint:
+        clean_item = item.copy()
+        clean_item.pop("id", None)
+        return {
+            "success": True,
+            "alias": item.get("alias"),
+            "automation_id": automation_id_value,
+            "is_blueprint": False,
+            "resolved_yaml": clean_item,
+        }
+
+    # Blueprint automation — resolve
+    blueprint_path = use_blueprint.get("path")
+    user_inputs = use_blueprint.get("input", {})
+
+    if not blueprint_path:
+        return {
+            "success": False,
+            "error": "Automation uses a blueprint but no path specified",
+        }
+
+    # Load the blueprint YAML file
+    import os as _os
+
+    blueprint_file = _os.path.join(config_path, "blueprints", blueprint_path)
+    if not _os.path.isfile(blueprint_file):
+        return {
+            "success": False,
+            "error": f"Blueprint file not found: {blueprint_path}",
+        }
+
+    try:
+        with open(blueprint_file, encoding="utf-8") as f:
+            blueprint_data = yaml.load(f, Loader=HomeAssistantLoader)  # nosec B506
+    except Exception as e:
+        return {
+            "success": False,
+            "error": f"Failed to load blueprint '{blueprint_path}': {str(e)}",
+        }
+
+    if not isinstance(blueprint_data, dict):
+        return {
+            "success": False,
+            "error": f"Blueprint '{blueprint_path}' is not a valid mapping",
+        }
+
+    # Build the resolved automation from the blueprint template.
+    # The blueprint contains a `blueprint:` metadata key and the template sections
+    # (trigger, condition, action, mode, max, max_exceeded, variables).
+    # We take everything EXCEPT the `blueprint:` key and substitute inputs.
+    template_keys = {k for k in blueprint_data if k != "blueprint"}
+
+    resolved: dict[str, Any] = {}
+    for key in template_keys:
+        resolved[key] = _deep_substitute_inputs(blueprint_data[key], user_inputs)
+
+    # Merge automation-level fields from the blueprint instance
+    # (alias, description, mode, max, max_exceeded) that may override template values.
+    for override_key in ("alias", "description", "mode", "max", "max_exceeded"):
+        if override_key in item:
+            resolved[override_key] = item[override_key]
+
+    return {
+        "success": True,
+        "alias": item.get("alias"),
+        "automation_id": automation_id_value,
+        "is_blueprint": True,
+        "blueprint_path": blueprint_path,
+        "user_inputs": user_inputs,
+        "resolved_yaml": resolved,
+    }
+
+
 def _do_diagnose_category_alias_mismatch(
     config_path: str | None = None,
 ) -> dict[str, Any]:
@@ -2752,6 +2990,36 @@ def register_automation_tools(mcp, config_path, ha_url=None, ha_token=None) -> N
             return _error_response(str(exc))
 
     @mcp.tool()
+    def resolve_blueprint_automation(automation_id: str) -> str:
+        """[READ] Resolves a blueprint automation to its concrete configuration.
+
+        If the automation uses a blueprint (``use_blueprint`` key), loads the
+        blueprint YAML, substitutes user-provided input values into the template,
+        and returns the resolved automation as if it were a regular (non-blueprint)
+        automation.  Regular automations are returned unchanged.
+
+        Resolution is computed, not persisted — the stored YAML is never modified.
+
+        Args:
+            automation_id: Automation alias or id (from automations.yaml).
+
+        Returns:
+            JSON with ``resolved_yaml`` containing the concrete triggers, conditions,
+            and actions with all ``!input`` tags substituted.  Includes ``is_blueprint``
+            flag and, for blueprint automations, ``blueprint_path`` and ``user_inputs``.
+        """
+        try:
+            result = _do_resolve_blueprint_automation(automation_id, config_path)
+            return (
+                _success_response(result)
+                if result.get("success")
+                else _error_response(result.get("error", "Unknown error"))
+            )
+        except Exception as exc:
+            _logger.exception("resolve_blueprint_automation failed")
+            return _error_response(str(exc))
+
+    @mcp.tool()
     def diagnose_category_alias_mismatch() -> str:
         """Detect mismatches between automation alias prefixes and assigned categories.
 
@@ -2791,4 +3059,8 @@ def register_automation_tools(mcp, config_path, ha_url=None, ha_token=None) -> N
     register_manifest(
         "diagnose_category_alias_mismatch",
         make_manifest("diagnose_category_alias_mismatch", latency="fast"),
+    )
+    register_manifest(
+        "resolve_blueprint_automation",
+        make_manifest("resolve_blueprint_automation", latency="fast"),
     )

@@ -323,3 +323,129 @@ class TestCaching:
         result2 = tool(hours=1, severity="warning")
 
         assert result1 == result2
+
+
+class TestReadLogFileTruncation:
+    def test_truncation_when_max_lines_is_none(self, config_path):
+        """_read_log_file defaults to 10000 lines and sets truncated when exceeded."""
+        log_path = Path(config_path) / "home-assistant.log"
+        # Create 15000 lines
+        log_path.write_text(
+            "\n".join(
+                f"2099-01-01 12:00:{i:02d}.000 INFO (MainThread) [comp] line_{i}"
+                for i in range(15000)
+            )
+        )
+
+        lines, meta = logs_module._read_log_file("home-assistant.log", config_path)
+        assert lines is not None
+        assert len(lines) <= 10000
+        assert meta["truncated"] is True
+        assert meta["max_lines"] == 10000
+        assert meta["source"] == "log_file"
+
+    def test_no_truncation_when_under_limit(self, config_path):
+        """_read_log_file does not truncate when under 10000 lines."""
+        log_path = Path(config_path) / "home-assistant.log"
+        # Create 5 lines only
+        log_path.write_text(
+            "\n".join(
+                f"2099-01-01 12:00:{i:02d}.000 INFO (MainThread) [comp] line_{i}" for i in range(5)
+            )
+        )
+
+        lines, meta = logs_module._read_log_file("home-assistant.log", config_path)
+        assert lines is not None
+        assert len(lines) <= 5
+        assert meta["truncated"] is False
+        assert meta["max_lines"] == 10000
+        assert meta["source"] == "log_file"
+
+    def test_custom_max_lines_respected(self, config_path):
+        """_read_log_file respects explicit max_lines parameter."""
+        log_path = Path(config_path) / "home-assistant.log"
+        log_path.write_text(
+            "\n".join(
+                f"2099-01-01 12:00:{i:02d}.000 INFO (MainThread) [comp] line_{i}"
+                for i in range(500)
+            )
+        )
+
+        lines, meta = logs_module._read_log_file("home-assistant.log", config_path, max_lines=100)
+        assert lines is not None
+        assert len(lines) <= 100
+        assert meta["truncated"] is True
+        assert meta["max_lines"] == 100
+
+    def test_file_not_found_returns_none_with_meta(self, config_path):
+        """_read_log_file returns (None, meta) when file not found."""
+        lines, meta = logs_module._read_log_file("nonexistent.log", config_path)
+        assert lines is None
+        assert meta["source"] == "log_file"
+        assert meta["truncated"] is False
+
+
+class TestGetLogInsightsMeta:
+    def test_meta_source_is_log_file(self, mock_mcp, config_path, sample_log_lines):
+        log_path = Path(config_path) / "home-assistant.log"
+        log_path.write_text("".join(sample_log_lines), encoding="utf-8")
+
+        register_log_tools(mock_mcp, config_path)
+        data = json.loads(mock_mcp._tools["get_log_insights"](hours=1))
+        assert data["success"] is True
+        assert data["_meta"]["source"] == "log_file"
+
+
+class TestGetLogInsightsApiFallback:
+    def test_api_fallback_when_file_not_found(self, mock_mcp, config_path):
+        """When log file not found, try HA API /api/error_log."""
+        register_log_tools(mock_mcp, config_path, ha_url="http://ha:8123", ha_token="test")
+
+        with patch("tools.utils.make_ha_request") as mock_request:
+            mock_request.return_value = {
+                "success": True,
+                "data": (
+                    "2099-01-01 12:01:00.000 ERROR (MainThread) [comp] API fallback error\n"
+                    "2099-01-01 12:02:00.000 WARNING (MainThread) [comp2] Test warning\n"
+                ),
+            }
+            data = json.loads(mock_mcp._tools["get_log_insights"](hours=1))
+            assert data["success"] is True
+            assert data["_meta"]["source"] == "api_fallback"
+            assert data["summary"]["total_errors"] >= 1
+
+    def test_fallback_to_logbook_when_error_log_fails(self, mock_mcp, config_path):
+        """When /api/error_log fails, try /api/logbook."""
+        register_log_tools(mock_mcp, config_path, ha_url="http://ha:8123", ha_token="test")
+
+        with patch("tools.utils.make_ha_request") as mock_request:
+            # First call (error_log) fails, second (logbook) succeeds
+            mock_request.side_effect = [
+                {"success": False, "error": "not found"},
+                {
+                    "success": True,
+                    "data": [
+                        {"when": "2099-01-01T12:01:00", "message": "Logbook entry from fallback"},
+                    ],
+                },
+            ]
+            data = json.loads(mock_mcp._tools["get_log_insights"](hours=1))
+            assert data["success"] is True
+            assert data["_meta"]["source"] == "api_fallback"
+
+    def test_error_when_both_sources_fail(self, mock_mcp, config_path):
+        """When file not found and all API fallbacks fail, return error."""
+        register_log_tools(mock_mcp, config_path, ha_url="http://ha:8123", ha_token="test")
+
+        with patch("tools.utils.make_ha_request") as mock_request:
+            mock_request.return_value = {"success": False, "error": "not found"}
+            data = json.loads(mock_mcp._tools["get_log_insights"](hours=1))
+            assert data["success"] is False
+            assert "not found" in data["error"].lower()
+
+    def test_no_api_fallback_without_credentials(self, mock_mcp, config_path):
+        """Without ha_url/ha_token, file-not-found returns error (no API attempt)."""
+        register_log_tools(mock_mcp, config_path)
+        data = json.loads(mock_mcp._tools["get_log_insights"](hours=1))
+        assert data["success"] is False
+        assert "not found" in data["error"].lower()

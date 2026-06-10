@@ -11,7 +11,7 @@ import os
 import re
 import traceback
 from collections import Counter
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from tools.utils import _error_response, _success_response, make_ha_request, tail_log_file
@@ -92,10 +92,10 @@ def collect_log_summary_optimized(
             pass
 
         if uptime_seconds > 0:
-            cutoff = datetime.now() - timedelta(seconds=uptime_seconds + 60)
+            cutoff = datetime.now(UTC) - timedelta(seconds=uptime_seconds + 60)
             hours = min(hours, int(uptime_seconds / 3600) + 1)
         else:
-            cutoff = datetime.now() - timedelta(hours=hours)
+            cutoff = datetime.now(UTC) - timedelta(hours=hours)
 
         errors_raw = []
         warnings_raw = []
@@ -110,7 +110,7 @@ def collect_log_summary_optimized(
             match = re.match(r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})", line)
             if match:
                 try:
-                    ts = datetime.strptime(match.group(1), "%Y-%m-%d %H:%M:%S")
+                    ts = datetime.strptime(match.group(1), "%Y-%m-%d %H:%M:%S").replace(tzinfo=UTC)
                     if ts < cutoff:
                         continue
                 except Exception:
@@ -380,7 +380,14 @@ def run_once(ha_url: str, ha_token: str | None, config_path: str) -> dict[str, A
 
 
 def _do_trigger_health_report(ha_url: str, ha_token: str | None, config_path: str) -> str:
-    """Generate system health report."""
+    """Generate system health report.
+
+    NOTE: This uses a unique ``_do_*`` -> ``_success_response`` pattern
+    intentionally. ``run_once()`` performs its own internal caching and
+    error handling, returning a fully-formed response dict. The wrapper
+    simply serializes it, unlike most tools where ``_do_*`` returns a
+    raw dict that the wrapper inspects for ``success`` before forwarding.
+    """
     report = run_once(ha_url, ha_token, config_path)
     return _success_response(report)
 
@@ -396,4 +403,5 @@ def register_health_reporter_tools(
         try:
             return _do_trigger_health_report(ha_url, ha_token, config_path)
         except Exception as e:
+            _logger.exception("trigger_health_report failed")
             return _error_response(str(e))

@@ -1539,3 +1539,84 @@ class TestGetEntityDetailsCompact:
             )
         assert data["success"] is False
         assert "compact fail" in data["error"]
+
+
+class TestGetCacheStats:
+    """Tests for the get_cache_stats tool."""
+
+    @pytest.mark.asyncio
+    async def test_returns_cache_stats(self, mock_mcp, config_path):
+        """get_cache_stats returns hits/misses/blocked/hit_rate_percent/cached_keys."""
+        register_storage_tools(mock_mcp, config_path)
+        data = json.loads(await mock_mcp._tools["get_cache_stats"]())
+        assert data["success"] is True
+        assert "hits" in data
+        assert "misses" in data
+        assert "blocked" in data
+        assert "total" in data
+        assert "hit_rate_percent" in data
+        assert "cached_keys" in data
+        assert isinstance(data["hits"], int)
+        assert isinstance(data["misses"], int)
+        assert isinstance(data["blocked"], int)
+
+    @pytest.mark.asyncio
+    async def test_exception_handler(self, mock_mcp, config_path):
+        """get_cache_stats exception is caught and returned as error."""
+        register_storage_tools(mock_mcp, config_path)
+        with patch(
+            "tools.storage.get_registry_cache_stats",
+            side_effect=RuntimeError("stats fail"),
+        ):
+            data = json.loads(await mock_mcp._tools["get_cache_stats"]())
+        assert data["success"] is False
+        assert "stats fail" in data["error"]
+
+
+class TestForceReloadInvalidatesEntityRegistry:
+    """Tests for entity_registry cache invalidation on force_reload=True."""
+
+    @pytest.mark.asyncio
+    async def test_force_reload_invalidates_entity_registry(self, mock_mcp, config_path):
+        """When force_reload=True, both core.config_entries AND core.entity_registry are invalidated."""
+        with (
+            patch("tools.storage.load_registry") as mock_load,
+            patch("tools.utils.invalidate_registry_cache") as mock_invalidate,
+        ):
+            mock_load.return_value = {"data": {"entries": [], "entities": []}}
+            register_storage_tools(mock_mcp, config_path)
+            await mock_mcp._tools["get_template_entity_code"](
+                entity_id="sensor.test", force_reload=True
+            )
+            # Verify invalidate_registry_cache was called for both registries
+            calls = [call[0] for call in mock_invalidate.call_args_list]
+            assert ("core.config_entries", config_path) in calls
+            assert ("core.entity_registry", config_path) in calls
+
+    @pytest.mark.asyncio
+    async def test_no_force_reload_leaves_cache_intact(self, mock_mcp, config_path):
+        """When force_reload=False (default), no invalidation occurs."""
+        with (
+            patch("tools.storage.load_registry") as mock_load,
+            patch("tools.utils.invalidate_registry_cache") as mock_invalidate,
+        ):
+            mock_load.return_value = {"data": {"entries": [], "entities": []}}
+            register_storage_tools(mock_mcp, config_path)
+            await mock_mcp._tools["get_template_entity_code"](entity_id="sensor.test")
+            mock_invalidate.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_force_reload_invalidates_both_registries_exact_count(
+        self, mock_mcp, config_path
+    ):
+        """force_reload=True triggers exactly 2 invalidate calls (config_entries + entity_registry)."""
+        with (
+            patch("tools.storage.load_registry") as mock_load,
+            patch("tools.utils.invalidate_registry_cache") as mock_invalidate,
+        ):
+            mock_load.return_value = {"data": {"entries": [], "entities": []}}
+            register_storage_tools(mock_mcp, config_path)
+            await mock_mcp._tools["get_template_entity_code"](
+                entity_id="sensor.test", force_reload=True
+            )
+            assert mock_invalidate.call_count == 2

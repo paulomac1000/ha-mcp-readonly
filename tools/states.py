@@ -17,7 +17,13 @@ from datetime import UTC, datetime, timedelta
 from fnmatch import fnmatch
 from typing import Any
 
-from tools.utils import _error_response, _success_response, load_registry, make_ha_request
+from tools.utils import (
+    _build_history_url,
+    _error_response,
+    _success_response,
+    load_registry,
+    make_ha_request,
+)
 
 TOOLS_VERSION = "1.0.0"
 _logger = logging.getLogger(__name__)
@@ -848,7 +854,6 @@ def _do_get_history_batch(
     limit = min(int(limit), 50)
 
     start_time = datetime.now(UTC) - timedelta(hours=hours_back)
-    start_str = start_time.isoformat()
 
     ids_list = [e.strip() for e in entity_ids.split(",") if e.strip()]
     if not ids_list:
@@ -863,7 +868,7 @@ def _do_get_history_batch(
 
     ids_param = ",".join(ids_list)
 
-    url = f"/api/history/period/{start_str}?filter_entity_id={ids_param}&minimal_response=true"
+    url = _build_history_url(start_time, entity_id=ids_param, minimal=True)
 
     result = make_ha_request(ha_url, ha_token, url)
     if not result["success"]:

@@ -11,7 +11,7 @@ from collections import Counter, defaultdict
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from tools.utils import _error_response, _success_response, make_ha_request
+from tools.utils import _build_history_url, _error_response, _success_response, make_ha_request
 
 _logger = logging.getLogger(__name__)
 
@@ -86,8 +86,9 @@ def _do_get_entity_state_history_summary(
     end_time = datetime.now(UTC)
     start_time = end_time - timedelta(hours=hours_back)
 
-    minimal = "true" if (detail_level == "summary" or compact) else "false"
-    url = f"/api/history/period/{start_time.isoformat()}?filter_entity_id={entity_id}&minimal_response={minimal}"
+    url = _build_history_url(
+        start_time, entity_id=entity_id, minimal=(detail_level == "summary" or compact)
+    )
     result = make_ha_request(ha_url, ha_token, url)
 
     if not result["success"]:
@@ -217,7 +218,7 @@ def _do_get_recent_state_changes(
     end_time = datetime.now(UTC)
     start_time = end_time - timedelta(minutes=minutes)
 
-    url = f"/api/history/period/{start_time.isoformat()}?minimal_response=false"
+    url = _build_history_url(start_time, minimal=False)
     result = make_ha_request(ha_url, ha_token, url)
 
     if not result["success"]:

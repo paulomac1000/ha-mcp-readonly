@@ -98,7 +98,7 @@ def register_categories_tools(mcp, config_path: str) -> None:  # type: ignore[no
         try:
             data = _do_list_automation_categories(include_entity_count, config_path)
             if data.get("success") is False:
-                return _error_response(str(data.get("error", data)))
+                return _error_response(data.get("error", data))
             return _success_response(data)
         except Exception as exc:
             _logger.exception("list_automation_categories failed")

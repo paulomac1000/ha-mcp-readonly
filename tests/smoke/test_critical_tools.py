@@ -112,9 +112,9 @@ class TestCriticalSmokeHealth:
         result = data.get("result", {})
         assert isinstance(result, dict), "result should be a dict"
         # System overview should have basic structure info
-        assert any(
-            key in result for key in ("summary", "domains", "entities", "overview")
-        ), "should have recognizable top-level keys"
+        assert any(key in result for key in ("summary", "domains", "entities", "overview")), (
+            "should have recognizable top-level keys"
+        )
 
     def test_list_automations(self):
         """Automation listing should return results."""
@@ -258,10 +258,9 @@ class TestBlueprintSmoke:
         assert data["success"] is True
         result = data.get("result", {})
         assert isinstance(result, dict), "result should be a dict"
-        assert any(
-            key in result
-            for key in ("summary", "used", "unused", "total", "usage")
-        ), "should have blueprint usage keys"
+        assert any(key in result for key in ("summary", "used", "unused", "total", "usage")), (
+            "should have blueprint usage keys"
+        )
 
 
 class TestConfigSmoke:
@@ -272,27 +271,27 @@ class TestConfigSmoke:
         assert data["success"] is True
         result = data.get("result", {})
         assert isinstance(result, dict), "result should be a dict"
-        assert any(
-            key in result for key in ("data", "config", "content", "configuration")
-        ), "should have config content key"
+        assert any(key in result for key in ("data", "config", "content", "configuration")), (
+            "should have config content key"
+        )
 
     def test_get_config_structure(self):
         data = _call_tool("get_config_structure")
         assert data["success"] is True
         result = data.get("result", {})
         assert isinstance(result, dict), "result should be a dict"
-        assert any(
-            key in result for key in ("structure", "directories", "files", "tree")
-        ), "should have structure key"
+        assert any(key in result for key in ("structure", "directories", "files", "tree")), (
+            "should have structure key"
+        )
 
     def test_read_config_file(self):
         data = _call_tool("read_config_file", file_path="configuration.yaml", max_lines=10)
         assert data["success"] is True
         result = data.get("result", {})
         assert isinstance(result, dict), "result should be a dict"
-        assert any(
-            key in result for key in ("content", "lines", "data")
-        ), "should have content/lines key"
+        assert any(key in result for key in ("content", "lines", "data")), (
+            "should have content/lines key"
+        )
 
 
 class TestDeviceSmoke:
@@ -328,9 +327,7 @@ class TestDiagnosticsExtraSmoke:
         assert "summary" in result, "should have summary key"
         assert isinstance(result["summary"], dict), "summary should be a dict"
         assert "total_errors" in result["summary"], "summary should have total_errors"
-        assert isinstance(result["summary"]["total_errors"], int), (
-            "total_errors should be int"
-        )
+        assert isinstance(result["summary"]["total_errors"], int), "total_errors should be int"
         # Should have at least one of: grouped_errors, error_categories, recommendations
         assert any(
             key in result
@@ -349,7 +346,8 @@ class TestDiagnosticsExtraSmoke:
         result = data.get("result", {})
         assert isinstance(result, dict), "result should be a dict"
         assert any(
-            key in result for key in ("startup_errors", "errors", "total_errors", "startup_warnings")
+            key in result
+            for key in ("startup_errors", "errors", "total_errors", "startup_warnings")
         ), "should have startup error/warning keys"
 
 
@@ -366,8 +364,7 @@ class TestHistorySmoke:
         result = data.get("result", {})
         assert isinstance(result, dict), "result should be a dict"
         assert any(
-            key in result
-            for key in ("summary", "changes", "history", "period_hours", "entity_id")
+            key in result for key in ("summary", "changes", "history", "period_hours", "entity_id")
         ), "should have history-related keys"
 
     def test_get_recent_state_changes(self):
@@ -481,9 +478,7 @@ class TestDiagnosticsExtraSmoke2:
             "notifications",
             result.get("results", result.get("messages", [])),
         )
-        assert isinstance(notifications, (list, dict)), (
-            "notifications should be list or dict"
-        )
+        assert isinstance(notifications, (list, dict)), "notifications should be list or dict"
 
     def test_get_area_automation_summary(self):
         registry_data = _call_tool("get_area_registry")
@@ -541,9 +536,9 @@ class TestFilesystemSmoke:
         assert data["success"] is True
         result = data.get("result", {})
         assert isinstance(result, dict), "result should be a dict"
-        assert any(
-            key in result for key in ("content", "lines", "data")
-        ), "should have file content key"
+        assert any(key in result for key in ("content", "lines", "data")), (
+            "should have file content key"
+        )
 
     def test_search_files(self):
         data = _call_tool(
@@ -562,9 +557,9 @@ class TestHealthReporterSmoke:
         assert data["success"] is True
         result = data.get("result", {})
         assert isinstance(result, dict), "result should be a dict"
-        assert any(
-            key in result for key in ("metrics", "health_score", "summary", "report")
-        ), "should have health report keys"
+        assert any(key in result for key in ("metrics", "health_score", "summary", "report")), (
+            "should have health report keys"
+        )
 
 
 class TestChangesAndCompareSmoke:
@@ -696,9 +691,9 @@ class TestZeroParamSmoke:
         assert data["success"] is True
         result = data.get("result", {})
         assert isinstance(result, dict), "result should be a dict"
-        assert any(
-            key in result for key in ("logs", "results", "total_found", "component")
-        ), "should have log result keys"
+        assert any(key in result for key in ("logs", "results", "total_found", "component")), (
+            "should have log result keys"
+        )
 
     def test_get_integration_entities(self):
         data = _call_tool("get_integration_entities", domain="sun")

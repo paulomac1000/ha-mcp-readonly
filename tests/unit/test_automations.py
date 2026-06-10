@@ -454,6 +454,139 @@ class TestDiagnoseAutomation:
         assert "trigger_analysis" in data
         assert "action_analysis" in data
 
+    def test_diagnose_automation_choose_analysis(self, tmp_path):
+        """Test choose branch analysis with 7-branch choose automation."""
+        choose_yaml = """
+- id: "789"
+  alias: "Multi-Branch Choose"
+  description: "Automation with 7 choose branches"
+  mode: "single"
+  trigger:
+    - platform: state
+      entity_id: "sensor.mode"
+  condition: []
+  action:
+    - choose:
+        - conditions:
+            - condition: trigger
+              id: morning
+          sequence:
+            - service: light.turn_on
+              entity_id: light.kitchen
+        - conditions:
+            - condition: state
+              entity_id: sensor.mode
+              state: "away"
+          sequence:
+            - service: climate.set_temperature
+              data:
+                temperature: 18
+            - service: lock.lock
+              entity_id: lock.front_door
+        - conditions:
+            - condition: numeric_state
+              entity_id: sensor.temperature
+              above: 30
+          sequence:
+            - service: climate.turn_on
+              entity_id: climate.ac
+        - conditions:
+            - condition: time
+              after: "22:00:00"
+          sequence:
+            - service: light.turn_off
+              entity_id: light.living_room
+            - service: cover.close
+              entity_id: cover.bedroom
+            - service: lock.lock
+              entity_id: lock.front_door
+        - conditions:
+            - condition: sun
+              after: sunset
+          sequence:
+            - service: light.turn_on
+              entity_id: light.outdoor
+        - conditions:
+            - condition: template
+              value_template: "{{ states('sensor.temperature') | float > 25 }}"
+          sequence:
+            - service: notify.notify
+              data:
+                message: "Too hot!"
+        - conditions:
+            - condition: trigger
+              id: evening
+          sequence:
+            - service: scene.turn_on
+              entity_id: scene.movie_night
+      default:
+        - service: homeassistant.toggle
+          entity_id: switch.guest_mode
+"""
+        from tools.automations import _do_diagnose_automation
+
+        (tmp_path / "automations.yaml").write_text(choose_yaml, encoding="utf-8")
+
+        with patch("tools.automations.make_ha_request", return_value={"success": True, "data": []}):
+            result = _do_diagnose_automation(
+                "Multi-Branch Choose",
+                detail_level="full",
+                config_path=str(tmp_path),
+                ha_url="http://test-ha",
+                ha_token="test-token",
+            )
+
+        assert result["success"] is True
+        assert "choose_analysis" in result
+        ca = result["choose_analysis"]
+        assert ca["choose_count"] == 7
+
+        branches = ca["branches"]
+        assert len(branches) == 7
+
+        # Branch 0: trigger:morning
+        assert branches[0]["conditions"] == ["trigger:morning"]
+        assert branches[0]["actions_count"] == 1
+        assert branches[0]["has_default"] is False
+
+        # Branch 1: state condition
+        assert branches[1]["conditions"] == ["state:sensor.mode"]
+        assert branches[1]["actions_count"] == 2
+
+        # Branch 2: numeric_state
+        assert branches[2]["conditions"] == ["numeric_state:sensor.temperature"]
+        assert branches[2]["actions_count"] == 1
+
+        # Branch 3: time
+        assert branches[3]["conditions"] == ["time:22:00:00"]
+        assert branches[3]["actions_count"] == 3
+
+        # Branch 4: sun
+        assert branches[4]["conditions"] == ["sun:sunset"]
+
+        # Branch 5: template
+        assert branches[5]["conditions"][0].startswith("template:")
+
+        # Branch 6: trigger:evening
+        assert branches[6]["conditions"] == ["trigger:evening"]
+
+        # Top-level has_default flag due to default: clause in choose action
+        assert ca["has_default"] is True
+
+    def test_diagnose_automation_choose_summary_omitted(
+        self, mock_mcp, config_path, ha_url, ha_token
+    ):
+        """Verify choose_analysis is NOT present in summary mode."""
+        from tools.automations import register_automation_tools
+
+        with patch("tools.automations.make_ha_request", return_value={"success": True, "data": []}):
+            register_automation_tools(mock_mcp, config_path, ha_url, ha_token)
+            tool = mock_mcp._tools["diagnose_automation"]
+            data = json.loads(tool("Test Automation One", detail_level="summary"))
+
+        assert data["success"] is True
+        assert "choose_analysis" not in data
+
 
 class TestAutomationUsageStats:
     def test_get_automation_usage_stats(self, mock_mcp, config_path, ha_url, ha_token):
@@ -2340,3 +2473,221 @@ class TestChooseBranchesAndEdgeCases:
         entities = deps["entities"]
         assert "light.living_room" in entities
         assert "binary_sensor.motion" in entities
+
+
+# ============================================================
+# Blueprint Resolution Tests
+# ============================================================
+
+MOTION_BLUEPRINT_YAML = """
+blueprint:
+  name: Motion Light
+  description: Turn on a light when motion is detected
+  domain: automation
+  input:
+    motion_entity:
+      name: Motion Sensor
+      selector:
+        entity:
+          domain: binary_sensor
+          device_class: motion
+    light_target:
+      name: Light
+      selector:
+        target:
+          entity:
+            domain: light
+    no_motion_wait:
+      name: Wait time
+      default: 120
+      selector:
+        number:
+          min: 0
+          max: 3600
+          unit_of_measurement: seconds
+
+trigger:
+  - platform: state
+    entity_id: !input motion_entity
+    to: "on"
+
+action:
+  - service: light.turn_on
+    target: !input light_target
+  - wait_for_trigger:
+      - platform: state
+        entity_id: !input motion_entity
+        to: "off"
+        for: !input no_motion_wait
+  - service: light.turn_off
+    target: !input light_target
+"""
+
+RESOLVE_BLUEPRINT_AUTOMATION_YAML = """
+- id: "rbp001"
+  alias: "Resolved Motion"
+  description: "Motion light via blueprint"
+  use_blueprint:
+    path: "test/motion_light.yaml"
+    input:
+      motion_entity: "binary_sensor.kitchen_motion"
+      light_target:
+        entity_id: "light.kitchen"
+      no_motion_wait: 60
+  mode: "restart"
+- id: "rbp002"
+  alias: "Regular Lights"
+  description: "Just a regular automation"
+  mode: "single"
+  trigger:
+    - platform: time
+      at: "08:00:00"
+  action:
+    - service: light.turn_on
+      target:
+        entity_id: "light.bedroom"
+"""
+
+
+@pytest.fixture
+def config_path_resolve(tmp_path) -> str:
+    """Config path with a blueprint automation and a blueprint file."""
+    yaml_path = tmp_path / "automations.yaml"
+    yaml_path.write_text(RESOLVE_BLUEPRINT_AUTOMATION_YAML, encoding="utf-8")
+    bp_dir = tmp_path / "blueprints" / "test"
+    bp_dir.mkdir(parents=True, exist_ok=True)
+    (bp_dir / "motion_light.yaml").write_text(MOTION_BLUEPRINT_YAML, encoding="utf-8")
+    return str(tmp_path)
+
+
+class TestResolveBlueprintAutomation:
+    def test_resolve_blueprint_returns_concrete_values(self, mock_mcp, config_path_resolve):
+        """Blueprint automation resolves !input tags to concrete user values."""
+        register_automation_tools(mock_mcp, config_path_resolve)
+        tool = mock_mcp._tools["resolve_blueprint_automation"]
+        data = json.loads(tool("Resolved Motion"))
+
+        assert data["success"] is True
+        assert data["is_blueprint"] is True
+        assert data["alias"] == "Resolved Motion"
+        assert data["blueprint_path"] == "test/motion_light.yaml"
+
+        resolved = data["resolved_yaml"]
+        assert "trigger" in resolved
+        assert "action" in resolved
+        assert resolved["mode"] == "restart"
+
+        # Verify !input substitution happened
+        trigger = resolved["trigger"]
+        assert len(trigger) == 1
+        assert trigger[0]["entity_id"] == "binary_sensor.kitchen_motion"
+
+        action = resolved["action"]
+        assert len(action) >= 3
+        assert action[0]["service"] == "light.turn_on"
+        assert action[0]["target"] == {"entity_id": "light.kitchen"}
+        assert action[1]["wait_for_trigger"][0]["for"] == 60
+
+    def test_resolve_blueprint_by_id(self, mock_mcp, config_path_resolve):
+        """Blueprint automation can be looked up by its id field."""
+        register_automation_tools(mock_mcp, config_path_resolve)
+        tool = mock_mcp._tools["resolve_blueprint_automation"]
+        data = json.loads(tool("rbp001"))
+
+        assert data["success"] is True
+        assert data["is_blueprint"] is True
+        assert data["alias"] == "Resolved Motion"
+
+    def test_regular_automation_returned_unchanged(self, mock_mcp, config_path_resolve):
+        """Regular automation (no use_blueprint) is returned as-is."""
+        register_automation_tools(mock_mcp, config_path_resolve)
+        tool = mock_mcp._tools["resolve_blueprint_automation"]
+        data = json.loads(tool("Regular Lights"))
+
+        assert data["success"] is True
+        assert data["is_blueprint"] is False
+        assert data["alias"] == "Regular Lights"
+
+        resolved = data["resolved_yaml"]
+        assert "trigger" in resolved
+        assert "action" in resolved
+        assert resolved["trigger"][0]["at"] == "08:00:00"
+        assert resolved["action"][0]["service"] == "light.turn_on"
+        assert resolved["action"][0]["target"]["entity_id"] == "light.bedroom"
+
+    def test_resolve_nonexistent_automation(self, mock_mcp, config_path_resolve):
+        """Non-existent automation returns error."""
+        register_automation_tools(mock_mcp, config_path_resolve)
+        tool = mock_mcp._tools["resolve_blueprint_automation"]
+        data = json.loads(tool("no_such_automation"))
+        assert data["success"] is False
+        assert "not found" in data["error"].lower()
+
+    def test_resolve_missing_blueprint_file(self, mock_mcp, tmp_path):
+        """Blueprint automation referencing a missing blueprint file returns error."""
+        auto_yaml = """
+- id: "bad_bp"
+  alias: "Bad Blueprint"
+  use_blueprint:
+    path: "nonexistent/missing.yaml"
+    input:
+      x: "y"
+"""
+        (tmp_path / "automations.yaml").write_text(auto_yaml, encoding="utf-8")
+        register_automation_tools(mock_mcp, str(tmp_path))
+        tool = mock_mcp._tools["resolve_blueprint_automation"]
+        data = json.loads(tool("Bad Blueprint"))
+        assert data["success"] is False
+        assert "not found" in data["error"].lower()
+
+    def test_resolve_blueprint_no_path(self, mock_mcp, tmp_path):
+        """Blueprint automation without a path returns error."""
+        auto_yaml = """
+- id: "no_path"
+  alias: "No Path"
+  use_blueprint:
+    input:
+      x: "y"
+"""
+        (tmp_path / "automations.yaml").write_text(auto_yaml, encoding="utf-8")
+        register_automation_tools(mock_mcp, str(tmp_path))
+        tool = mock_mcp._tools["resolve_blueprint_automation"]
+        data = json.loads(tool("No Path"))
+        assert data["success"] is False
+        assert "no path" in data["error"].lower()
+
+    def test_resolve_empty_inputs(self, mock_mcp, tmp_path):
+        """Blueprint with empty inputs still resolves (no substitutions needed)."""
+        simple_bp = """
+blueprint:
+  name: Simple
+  domain: automation
+trigger:
+  - platform: time
+    at: "12:00:00"
+action:
+  - service: light.turn_off
+    target:
+      entity_id: "light.all"
+"""
+        auto_yaml = """
+- id: "simple_bp"
+  alias: "Simple BP"
+  use_blueprint:
+    path: "test/simple.yaml"
+    input: {}
+"""
+        (tmp_path / "automations.yaml").write_text(auto_yaml, encoding="utf-8")
+        bp_dir = tmp_path / "blueprints" / "test"
+        bp_dir.mkdir(parents=True, exist_ok=True)
+        (bp_dir / "simple.yaml").write_text(simple_bp, encoding="utf-8")
+
+        register_automation_tools(mock_mcp, str(tmp_path))
+        tool = mock_mcp._tools["resolve_blueprint_automation"]
+        data = json.loads(tool("Simple BP"))
+
+        assert data["success"] is True
+        assert data["is_blueprint"] is True
+        resolved = data["resolved_yaml"]
+        assert resolved["trigger"][0]["at"] == "12:00:00"
+        assert resolved["action"][0]["service"] == "light.turn_off"
