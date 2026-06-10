@@ -23,7 +23,6 @@ from __future__ import annotations
 
 import logging
 import os
-import urllib.parse
 from collections import defaultdict
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -500,8 +499,8 @@ def _do_investigate_entity(
         if include_history and primary_entity and ha_url and ha_token:
             start_time = datetime.now(UTC) - timedelta(hours=min(hours_back, 168))
             url = (
-                f"/api/history/period/{urllib.parse.quote(start_time.isoformat())}"
-                f"?filter_entity_id={urllib.parse.quote(primary_entity)}"
+                f"/api/history/period/{start_time.isoformat()}"
+                f"?filter_entity_id={primary_entity}"
                 f"&minimal_response=true"
             )
             hist_res = make_ha_request(ha_url, ha_token, url)
@@ -724,9 +723,12 @@ def _do_audit_config_orphans(
         orphan_entities = sorted(entity_ids - referenced)
 
         never_triggered: list[dict[str, Any]] = []
+        states_api_ok = False
+        states_api_error: str | None = None
         if ha_url and ha_token:
             states_data = make_ha_request(ha_url, ha_token, "/api/states")
             if states_data.get("success"):
+                states_api_ok = True
                 for s in states_data["data"]:
                     eid = s.get("entity_id", "")
                     if eid.startswith("automation."):
@@ -740,6 +742,8 @@ def _do_audit_config_orphans(
                                     "alias": attrs.get("friendly_name", ""),
                                 }
                             )
+            else:
+                states_api_error = states_data.get("error", "Unknown error from /api/states")
 
         all_config_entities: set[str] = set()
         for item in automations:
@@ -788,6 +792,15 @@ def _do_audit_config_orphans(
             "orphan_count": len(orphan_entities),
             "never_triggered_automations": never_triggered,
             "never_triggered_count": len(never_triggered),
+            "never_triggered_status": "unknown" if not states_api_ok else "complete",
+            "data_quality": (
+                {"overall": "complete"}
+                if states_api_ok
+                else {
+                    "states_api": "failed",
+                    "states_error": states_api_error or "Unknown error",
+                }
+            ),
             "broken_references": broken_references[:100],
             "broken_reference_count": len(broken_references),
             "unused_blueprints": unused_blueprints,

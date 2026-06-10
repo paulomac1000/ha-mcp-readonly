@@ -199,6 +199,28 @@ class TestSearchAutomationsByEntity:
         assert data["success"] is True
         assert data["found_in_count"] == 0
 
+    def test_blueprint_input_entity_found(self, mock_mcp, config_path_blueprint):
+        """Entity in use_blueprint.input should be found with usage_type blueprint_input."""
+        register_automation_tools(mock_mcp, config_path_blueprint)
+
+        tool = mock_mcp._tools["search_automations_by_entity"]
+        data = json.loads(tool("light.test"))
+
+        assert data["success"] is True
+        assert data["found_in_count"] == 1
+        assert data["automations"][0]["alias"] == "Blueprint Automation"
+        assert "blueprint_input" in data["automations"][0]["usage_type"]
+
+    def test_blueprint_input_entity_not_found(self, mock_mcp, config_path_blueprint):
+        """Entity not in any automation (including blueprint) returns found_in_count=0."""
+        register_automation_tools(mock_mcp, config_path_blueprint)
+
+        tool = mock_mcp._tools["search_automations_by_entity"]
+        data = json.loads(tool("sensor.nonexistent"))
+
+        assert data["success"] is True
+        assert data["found_in_count"] == 0
+
 
 class TestSearchAutomations:
     def test_search_by_alias(self, mock_mcp, config_path):

@@ -546,10 +546,14 @@ def _do_validate_yaml_syntax(
 
 def _do_get_lovelace_entity_usage(entity_id: str, config_path: str) -> dict[str, Any]:
     usage_results = []
-    dashboards_registry = load_registry("lovelace.dashboards", config_path)
+    dashboards_registry = load_registry("lovelace_dashboards", config_path)
     if not dashboards_registry:
-        if not (Path(config_path) / ".storage/lovelace").exists():
-            return {"success": False, "error": "Could not load lovelace.dashboards registry"}
+        if not (Path(config_path) / ".storage/lovelace_dashboards").exists():
+            return {
+                "success": False,
+                "error": "Could not load lovelace_dashboards registry",
+                "_meta": {"registry_path": ".storage/lovelace_dashboards"},
+            }
     dashboards_data = dashboards_registry.get("data", {}).get("items", [])
     dashboard_ids = [d.get("url_path", "lovelace") for d in dashboards_data]
     if "lovelace" not in dashboard_ids:

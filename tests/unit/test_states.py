@@ -849,6 +849,31 @@ class TestGetHistoryBatch:
         assert "history" in data
         assert "sensor.test" in data["history"]
 
+    def test_history_batch_url_no_encoding(self, mock_mcp, config_path, ha_url, ha_token):
+        """Verify history_batch URL does NOT contain percent-encoded chars (%3A, %2B, %2E)."""
+        captured_urls = []
+
+        def capture_url(*args, **kwargs):
+            captured_urls.append(args[2])
+            return {"success": True, "data": []}
+
+        with patch("tools.states.make_ha_request", side_effect=capture_url):
+            register_state_tools(mock_mcp, ha_url, ha_token, config_path)
+            run_async(
+                mock_mcp._tools["get_history_batch"](
+                    entity_ids="sensor.temperature,light.living_room",
+                    hours_back=24,
+                    limit=10,
+                )
+            )
+
+        assert len(captured_urls) == 1
+        url = captured_urls[0]
+        assert "%3A" not in url, f"URL contains encoded colon: {url}"
+        assert "%2B" not in url, f"URL contains encoded plus: {url}"
+        assert "%2E" not in url, f"URL contains encoded dot: {url}"
+        assert "T" in url and ":" in url, f"URL missing raw ISO datetime: {url}"
+
     def test_history_too_many_entities(self, mock_mcp, config_path, ha_url, ha_token):
         register_state_tools(mock_mcp, ha_url, ha_token, config_path)
 

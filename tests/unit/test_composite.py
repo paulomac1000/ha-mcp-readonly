@@ -1260,6 +1260,80 @@ class TestAuditConfigOrphans:
         assert result["broken_reference_count"] == 0
 
     @pytest.mark.asyncio
+    async def test_states_api_failure_data_quality(self):
+        """States API failure should produce data_quality.failed and never_triggered_status unknown."""
+        automations = [
+            {
+                "id": "auto1",
+                "alias": "Test Auto",
+                "trigger": [{"platform": "state", "entity_id": "sensor.temperature_living_room"}],
+                "action": [],
+            }
+        ]
+        with open(os.path.join(self.config_path, "automations.yaml"), "w") as f:
+            yaml.dump(automations, f)
+
+        with (
+            patch("tools.composite.load_registry") as mock_load,
+            patch("tools.composite.make_ha_request") as mock_req,
+        ):
+            mock_load.side_effect = lambda name, path: self.mock_registry_data.get(name, {})
+            mock_req.return_value = {
+                "success": False,
+                "error": "Connection refused to /api/states",
+            }
+
+            result = json.loads(await self.mcp._tools["audit_config_orphans"]())
+
+        assert result["success"] is True
+        assert result["data_quality"]["states_api"] == "failed"
+        assert "Connection refused" in result["data_quality"]["states_error"]
+        assert result["never_triggered_status"] == "unknown"
+        assert result["never_triggered_automations"] == []
+        assert result["never_triggered_count"] == 0
+
+    @pytest.mark.asyncio
+    async def test_states_api_success_data_quality(self):
+        """States API success should produce data_quality.complete and never_triggered_status complete."""
+        automations = [
+            {
+                "id": "auto1",
+                "alias": "Test Auto",
+                "trigger": [{"platform": "state", "entity_id": "sensor.temperature_living_room"}],
+                "action": [],
+            }
+        ]
+        with open(os.path.join(self.config_path, "automations.yaml"), "w") as f:
+            yaml.dump(automations, f)
+
+        with (
+            patch("tools.composite.load_registry") as mock_load,
+            patch("tools.composite.make_ha_request") as mock_req,
+        ):
+            mock_load.side_effect = lambda name, path: self.mock_registry_data.get(name, {})
+            mock_req.return_value = {
+                "success": True,
+                "data": [
+                    {
+                        "entity_id": "automation.test_auto",
+                        "state": "on",
+                        "attributes": {
+                            "last_triggered": "2024-01-01T00:00:00",
+                            "friendly_name": "Test",
+                        },
+                    }
+                ],
+            }
+
+            result = json.loads(await self.mcp._tools["audit_config_orphans"]())
+
+        assert result["success"] is True
+        assert result["data_quality"]["overall"] == "complete"
+        assert result["never_triggered_status"] == "complete"
+        # Automation was triggered, so never_triggered should be empty
+        assert result["never_triggered_automations"] == []
+
+    @pytest.mark.asyncio
     async def test_exception_handler(self):
         with patch("tools.composite._do_audit_config_orphans") as mock_do:
             mock_do.side_effect = RuntimeError("audit failed")

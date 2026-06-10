@@ -474,6 +474,8 @@ def _do_search_automations_by_entity(entity_id: str, config_path: str) -> dict[s
             usage.append("condition")
         if entity_id in str(item.get("action", [])):
             usage.append("action")
+        if "use_blueprint" in item and entity_id in str(item["use_blueprint"].get("input", {})):
+            usage.append("blueprint_input")
 
         if usage:
             results.append(

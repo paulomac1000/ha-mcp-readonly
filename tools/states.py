@@ -12,7 +12,6 @@ Optimizations:
 import asyncio
 import logging
 import time
-import urllib.parse
 from collections import Counter, defaultdict
 from datetime import UTC, datetime, timedelta
 from fnmatch import fnmatch
@@ -864,7 +863,7 @@ def _do_get_history_batch(
 
     ids_param = ",".join(ids_list)
 
-    url = f"/api/history/period/{urllib.parse.quote(start_str)}?filter_entity_id={urllib.parse.quote(ids_param)}&minimal_response=true"
+    url = f"/api/history/period/{start_str}?filter_entity_id={ids_param}&minimal_response=true"
 
     result = make_ha_request(ha_url, ha_token, url)
     if not result["success"]:
