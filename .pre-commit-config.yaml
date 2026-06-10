@@ -122,8 +122,8 @@ repos:
         fail_fast: false
 
       # ── Docs ──
-      - id: cafds-docs
-        name: CAFDS documentation validation
+      - id: afds-docs
+        name: AFDS documentation validation
         entry: bash -c 'if [ -f afds_config.yaml ] && command -v curl >/dev/null 2>&1; then curl -sS https://raw.githubusercontent.com/paulomac1000/ai-skills/main/skills/afds-doc-writer/docs_validate.py | python3 - --config afds_config.yaml --baseline .afds-baseline.json docs/ ./README.md ./CHANGELOG.md ./AGENTS.md ./CONTRIBUTING.md ./SECURITY.md; fi'
         language: system
         pass_filenames: false
