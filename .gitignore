@@ -73,3 +73,4 @@ ha-ai-context*.md
 .opencode/
 semgrep.sarif
 .omo/
+learnings.md
