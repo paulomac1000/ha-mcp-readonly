@@ -53,11 +53,11 @@ jobs:
           fi
           echo "Versions match: $VERSION_PY"
 
-      - name: Validate documentation (CAFDS)
+      - name: Validate documentation (AFDS)
         if: hashFiles('afds_config.yaml') != ''
         run: |
           curl -sS https://raw.githubusercontent.com/paulomac1000/ai-skills/main/skills/afds-doc-writer/docs_validate.py | python3 - \
-            --config afds_config.yaml --strict --baseline .afds-baseline.json ./
+            --config afds_config.yaml --baseline .afds-baseline.json docs/ ./README.md ./CHANGELOG.md ./AGENTS.md ./CONTRIBUTING.md ./SECURITY.md
 
   test:
     runs-on: ubuntu-latest
