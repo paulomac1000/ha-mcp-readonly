@@ -33,6 +33,7 @@ class ReportGenerator:
         helpers=None,
         services=None,
         hacs=None,
+        cache=None,
     ):
         self.registry = registry
         self.automation = automation
@@ -46,6 +47,7 @@ class ReportGenerator:
         self.helpers = helpers
         self.services = services
         self.hacs = hacs
+        self.cache = cache
 
     def generate(self, output_file: str):
         """Generates MD file."""
@@ -54,6 +56,7 @@ class ReportGenerator:
         with open(output_file, "w", encoding="utf-8") as f:
             self._write_header(f)
             self._write_executive_summary(f)
+            self._write_cache_health(f)
             self._write_system_health(f)
             self._write_integration_status(f)
             self._write_topology(f)
@@ -106,7 +109,11 @@ class ReportGenerator:
         f.write(f"| Template Entities | {len(self.templates.template_entities)} |\n")
         f.write(f"| Integrations | {len(self.registry.config_entries)} |\n")
         f.write(f"| Blueprints | {len(self.automation.blueprints)} |\n")
-        f.write(f"| Dashboards | {len(self.dashboard.dashboards_found)} |\n\n")
+        f.write(f"| Dashboards | {len(self.dashboard.dashboards_found)} |\n")
+        updates = self.registry.updates_available
+        if updates["total"] > 0:
+            f.write(f"| Updates Available | {updates['available']} of {updates['total']} |\n")
+        f.write("\n")
 
         # Health score
         health_score = 100
@@ -171,6 +178,43 @@ class ReportGenerator:
             f.write("\n")
         else:
             f.write("### No Critical Issues\n\n")
+
+        f.write("### Data Quality\n")
+        if self.registry.data_quality_overall == "complete":
+            f.write("> Data Quality: All sources available\n")
+        else:
+            f.write("> WARNING: Data Quality: Some sources unavailable (see below)\n")
+            for source, status in self.registry.data_quality.items():
+                if status != "complete":
+                    f.write(f">   - {source}: {status}\n")
+        f.write("\n")
+
+        f.write("---\n\n")
+
+    def _write_cache_health(self, f):
+        """Cache health section."""
+        if not self.cache or not self.cache.cache_stats:
+            return
+
+        stats = self.cache.cache_stats
+        f.write("## Cache Health\n\n")
+
+        f.write("| Metric | Value |\n")
+        f.write("|--------|-------|\n")
+        f.write(f"| Hits | {stats.get('hits', 0)} |\n")
+        f.write(f"| Misses | {stats.get('misses', 0)} |\n")
+        f.write(f"| Blocked | {stats.get('blocked', 0)} |\n")
+        f.write(f"| Total Requests | {stats.get('total', 0)} |\n")
+        f.write(f"| Hit Rate | {stats.get('hit_rate_percent', 0)}% |\n")
+        f.write(f"| Cached Keys | {len(stats.get('cached_keys', []))} |\n")
+        f.write("\n")
+
+        hit_rate = stats.get("hit_rate_percent", 100)
+        if hit_rate < 50:
+            f.write(
+                f"> **Warning:** Cache hit rate is {hit_rate}% — below 50%. "
+                "Consider increasing CACHE_TTL or checking registry file stability.\n\n"
+            )
 
         f.write("---\n\n")
 
@@ -494,8 +538,8 @@ class ReportGenerator:
         f.write(f"### 🤖 Automations ({len(self.automation.automation_analysis)} total)\n\n")
 
         f.write("<details>\n<summary>Automation List</summary>\n\n")
-        f.write("| Alias | Mode | Triggers | Controls | Status | Last Triggered |\n")
-        f.write("|-------|------|----------|----------|--------|----------------|\n")
+        f.write("| Alias | Mode | Triggers | Controls | Status | Last Triggered | Choose |\n")
+        f.write("|-------|------|----------|----------|--------|----------------|--------|\n")
 
         for auto in self.automation.automation_analysis[:50]:
             triggers = ", ".join(auto.get("trigger_platforms", [])[:2])
@@ -505,7 +549,16 @@ class ReportGenerator:
             last = auto.get("last_triggered", "")
             if last:
                 last = last[:16]
-            f.write(f"| {alias} | {auto['mode']} | {triggers} | {controls} | {status} | {last} |\n")
+            choose_data = auto.get("choose_analysis", {})
+            if choose_data and choose_data.get("choose_count", 0) > 0:
+                bc = choose_data["choose_count"]
+                dflt = "Y" if choose_data.get("has_default") else "N"
+                choose_str = f"{bc} br, dflt:{dflt}"
+            else:
+                choose_str = "-"
+            f.write(
+                f"| {alias} | {auto['mode']} | {triggers} | {controls} | {status} | {last} | {choose_str} |\n"
+            )
 
         if len(self.automation.automation_analysis) > 50:
             f.write(f"\n*... and {len(self.automation.automation_analysis) - 50} more*\n")
@@ -921,6 +974,54 @@ class ReportGenerator:
                 f.write(f"| `{item['entity_id']}` | {item.get('state', '-')[:50]} |\n")
             f.write("\n")
 
+        # Input datetimes
+        if self.helpers.input_datetimes:
+            f.write(f"### Input Date/Time ({len(self.helpers.input_datetimes)})\n\n")
+            f.write("| Entity | State | Date | Time |\n")
+            f.write("|--------|-------|------|------|\n")
+            for item in self.helpers.input_datetimes:
+                has_date = item.get("has_date", False)
+                has_time = item.get("has_time", False)
+                f.write(
+                    f"| `{item['entity_id']}` | {item['state']} | {'yes' if has_date else '-'} | {'yes' if has_time else '-'} |\n"
+                )
+            f.write("\n")
+
+        # Input buttons
+        if self.helpers.input_buttons:
+            f.write(f"### Input Buttons ({len(self.helpers.input_buttons)})\n\n")
+            f.write("| Entity | State |\n")
+            f.write("|--------|-------|\n")
+            for item in self.helpers.input_buttons:
+                f.write(f"| `{item['entity_id']}` | {item['state']} |\n")
+            f.write("\n")
+
+        # NFC tags
+        if self.helpers.nfc_tags:
+            # Count used vs unused in automations
+            used_tag_ids: set[str] = set()
+            for auto in self.automation.automations:
+                auto_str = json.dumps(auto)
+                for tag in self.helpers.nfc_tags:
+                    tid = tag["id"]
+                    if tid != "unknown" and tid in auto_str:
+                        used_tag_ids.add(tid)
+
+            total = len(self.helpers.nfc_tags)
+            used = len(used_tag_ids)
+            unused = total - used
+
+            f.write(
+                f"### NFC Tags ({total} total, {used} used in automations, {unused} unused)\n\n"
+            )
+            f.write("| Tag ID | Name | Used in Automations |\n")
+            f.write("|--------|------|--------------------|\n")
+            for tag in self.helpers.nfc_tags:
+                tid = tag["id"]
+                in_use = "Yes" if tid in used_tag_ids else "No"
+                f.write(f"| `{tid}` | {tag['name']} | {in_use} |\n")
+            f.write("\n")
+
     def _write_services_catalog(self, f):
         """Services catalog section."""
         if not self.services or not self.services.services:
@@ -963,9 +1064,11 @@ class ReportGenerator:
                     f.write(f"- ... *{len(services) - 10} more services*\n")
                 f.write("\n")
 
-        # Remaining domains
+        # Remaining domains (filtering out internal-only domains)
         for domain, services in sorted(self.services.services.items()):
             if domain in shown:
+                continue
+            if domain in constants.INTERNAL_SERVICE_DOMAINS:
                 continue
             f.write(f"- **`{domain}`** ({len(services)} services)\n")
 
@@ -1069,7 +1172,7 @@ class ReportGenerator:
                 card_types[u.get("card_type", "unknown")] += 1
 
         if card_types:
-            f.write("### Card typeee Distribution\n\n")
+            f.write("### Card Type Distribution\n\n")
             f.write("| Card Type | Entity References |\n")
             f.write("|-----------|------------------|\n")
 

@@ -22,6 +22,17 @@ _registry_cache_timestamps: dict[str, float] = {}
 CACHE_TTL = 300  # 5 minutes
 _CACHE_LOCK = threading.Lock()
 
+BLOCKED_REGISTRIES = frozenset(
+    {
+        "auth",
+        "auth_provider.homeassistant",
+        "onboarding",
+    }
+)
+"""Registry names that must never be loaded -- contain credentials."""
+
+_CACHE_STATS: dict[str, int] = {"hits": 0, "misses": 0, "blocked": 0, "total": 0}
+
 
 def invalidate_registry_cache():
     """Clears registry cache."""
@@ -31,12 +42,30 @@ def invalidate_registry_cache():
         _registry_cache_timestamps.clear()
 
 
+def get_cache_stats() -> dict[str, int | float | list[str]]:
+    """Returns cache statistics with calculated fields."""
+    with _CACHE_LOCK:
+        stats = dict(_CACHE_STATS)
+        stats["hit_rate_percent"] = round(
+            (stats["hits"] / stats["total"] * 100) if stats["total"] > 0 else 0, 1
+        )
+        stats["cached_keys"] = list(_registry_cache.keys())
+    return stats
+
+
 def load_registry(name: str, use_cache: bool = True) -> dict:
     """
     Loads file from .storage/ with caching.
     Based on test_utils.py load_registry.
     """
     global _registry_cache, _registry_cache_timestamps
+
+    _CACHE_STATS["total"] += 1
+
+    if name in BLOCKED_REGISTRIES or any(name.startswith(prefix) for prefix in ("auth_provider.",)):
+        with _CACHE_LOCK:
+            _CACHE_STATS["blocked"] += 1
+        return {}
 
     cache_key = f"{constants.HA_CONFIG_PATH}:{name}"
     now = datetime.now().timestamp()
@@ -45,7 +74,11 @@ def load_registry(name: str, use_cache: bool = True) -> dict:
     with _CACHE_LOCK:
         if use_cache and cache_key in _registry_cache:
             if now - _registry_cache_timestamps.get(cache_key, 0) < CACHE_TTL:
+                _CACHE_STATS["hits"] += 1
                 return _registry_cache[cache_key]
+
+    with _CACHE_LOCK:
+        _CACHE_STATS["misses"] += 1
 
     try:
         path = Path(constants.HA_CONFIG_PATH) / ".storage" / name

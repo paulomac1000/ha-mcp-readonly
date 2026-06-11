@@ -17,6 +17,7 @@ from .utils import (
     extract_services,
     extract_trigger_info,
     get_best_name,
+    get_cache_stats,
     load_registry,
     load_yaml_file,
     make_ha_request,
@@ -82,6 +83,15 @@ class RegistryCollector:
         self._build_maps()
         self._compute_config_entry_health()
         self._compute_domain_summary()
+
+        # Data quality tracking
+        self.data_quality: dict[str, str] = {}
+        self.data_quality["entity_registry"] = "complete" if self.entities else "failed"
+        self.data_quality["device_registry"] = "complete" if self.devices else "failed"
+        self.data_quality["states_api"] = "complete" if self.states else "failed"
+        self.data_quality_overall: str = (
+            "complete" if all(v == "complete" for v in self.data_quality.values()) else "partial"
+        )
 
         print(
             f"   Registry: {len(self.entities)} entities, {len(self.devices)} devices, {len(self.areas)} areas"
@@ -166,8 +176,6 @@ class RegistryCollector:
         """Compute aggregated domain statistics."""
         self.domain_counts = Counter()
         self.state_distribution = Counter()
-        self.unavailable_by_domain = defaultdict(int)
-        self.unavailable_by_integration = defaultdict(int)
 
         for state in self.states:
             eid = state.get("entity_id", "")
@@ -175,10 +183,14 @@ class RegistryCollector:
             self.domain_counts[domain] += 1
             self.state_distribution[state.get("state", "unknown")] += 1
 
-            if state.get("state") == "unavailable":
-                self.unavailable_by_domain[domain] += 1
-                platform = self.entity_to_platform.get(eid, "unknown")
-                self.unavailable_by_integration[platform] += 1
+        self.updates_available = {"total": 0, "available": 0, "entities": []}
+        for state in self.states:
+            eid = state.get("entity_id", "")
+            if eid.startswith("update."):
+                self.updates_available["total"] += 1
+                if state.get("state") == "on":
+                    self.updates_available["available"] += 1
+                    self.updates_available["entities"].append(eid)
 
     def get_entity_ids(self) -> list[str]:
         """
@@ -276,6 +288,95 @@ class RegistryCollector:
         """Checks if entity is virtual (may not have a state)."""
         domain = entity_id.split(".")[0]
         return domain in constants.VIRTUAL_ENTITY_DOMAINS
+
+
+def _analyze_choose_branches(actions: list[dict[str, Any]]) -> dict[str, Any]:
+    """Analyze choose blocks in automation actions.
+
+    Extracts structured metadata from each choose branch: condition types,
+    action count, and whether a default branch exists.
+
+    Args:
+        actions: List of action dicts from an automation.
+
+    Returns:
+        Dict with choose_count and branches list.
+    """
+    choose_count = 0
+    branches: list[dict[str, Any]] = []
+    has_default = False
+
+    for action in actions:
+        if not isinstance(action, dict) or "choose" not in action:
+            continue
+
+        act_default = action.get("default")
+        choose_block = action["choose"]
+        if act_default is not None:
+            has_default = True
+
+        if not isinstance(choose_block, list):
+            continue
+
+        for branch_idx, choice in enumerate(choose_block):
+            if not isinstance(choice, dict):
+                continue
+
+            choose_count += 1
+
+            raw_conditions = choice.get("conditions", [])
+            if isinstance(raw_conditions, dict):
+                raw_conditions = [raw_conditions]
+            elif not isinstance(raw_conditions, list):
+                raw_conditions = []
+
+            condition_types: list[str] = []
+            for cond in raw_conditions:
+                if isinstance(cond, str):
+                    condition_types.append(f"alias:{cond}")
+                elif isinstance(cond, dict):
+                    cond_type = cond.get("condition", "unknown")
+                    if cond_type == "trigger":
+                        tid = cond.get("id", "?")
+                        if isinstance(tid, list):
+                            tid = ",".join(tid)
+                        condition_types.append(f"trigger:{tid}")
+                    elif cond_type == "state":
+                        condition_types.append(f"state:{cond.get('entity_id', '?')}")
+                    elif cond_type == "numeric_state":
+                        condition_types.append(f"numeric_state:{cond.get('entity_id', '?')}")
+                    elif cond_type == "time":
+                        condition_types.append(
+                            f"time:{cond.get('after', cond.get('before', cond.get('weekday', '?')))}"
+                        )
+                    elif cond_type == "sun":
+                        condition_types.append(f"sun:{cond.get('after', cond.get('before', '?'))}")
+                    elif cond_type == "template":
+                        vt = cond.get("value_template", "")
+                        condition_types.append(f"template:{vt[:40]}" if vt else "template:?")
+                    elif cond_type == "zone":
+                        condition_types.append(f"zone:{cond.get('entity_id', '?')}")
+                    else:
+                        condition_types.append(cond_type)
+
+            raw_sequence = choice.get("sequence", [])
+            if not isinstance(raw_sequence, list):
+                raw_sequence = [raw_sequence] if raw_sequence else []
+
+            branches.append(
+                {
+                    "index": branch_idx,
+                    "conditions": condition_types,
+                    "actions_count": len(raw_sequence),
+                    "has_default": False,
+                }
+            )
+
+    return {
+        "choose_count": choose_count,
+        "has_default": has_default,
+        "branches": branches,
+    }
 
 
 class AutomationAnalyzer:
@@ -469,6 +570,7 @@ class AutomationAnalyzer:
                     "is_disabled": is_disabled,
                     "last_triggered": last_triggered,
                     "uses_blueprint": "use_blueprint" in auto,
+                    "choose_analysis": _analyze_choose_branches(actions),
                 }
             )
 
@@ -1264,7 +1366,7 @@ class LogAnalyzer:
         category_recommendations = {
             "timeout": (
                 "high",
-                "🕐 Many timeouts - check network connections and system load",
+                "[TIMING] Many timeouts - check network connections and system load",
             ),
             "connection": (
                 "high",
@@ -1274,15 +1376,15 @@ class LogAnalyzer:
                 "high",
                 " Many unavailable entities - check devices and integrations",
             ),
-            "template": ("medium", "📝 Template errors - check Jinja2 syntax"),
+            "template": ("medium", "[LOGS] Template errors - check Jinja2 syntax"),
             "api": (
                 "medium",
-                "🌐 API issues - check rate limits and service availability",
+                "[NETWORK] API issues - check rate limits and service availability",
             ),
             "configuration": ("medium", " Configuration errors - check YAML files"),
             "authentication": (
                 "high",
-                "🔐 Authentication issues - check tokens and passwords",
+                "[SECURITY] Authentication issues - check tokens and passwords",
             ),
             "setup": (
                 "high",
@@ -1310,7 +1412,7 @@ class LogAnalyzer:
                     {
                         "priority": "high" if count >= 20 else "medium",
                         "issue": f"integration_{integration}",
-                        "message": f"🔧 Integration '{integration}' generates {count} errors - requires attention",
+                        "message": f"[MAINTENANCE] Integration '{integration}' generates {count} errors - requires attention",
                         "count": count,
                         "integration": integration,
                     }
@@ -1674,6 +1776,7 @@ class HelperAnalyzer:
         self.input_selects: list[dict] = []
         self.input_datetimes: list[dict] = []
         self.input_buttons: list[dict] = []
+        self.nfc_tags: list[dict] = []
 
     def collect(self):
         """Collect helper entity data from states and registry."""
@@ -1718,12 +1821,26 @@ class HelperAnalyzer:
             elif eid.startswith("input_button."):
                 self.input_buttons.append(base)
 
+        # NFC tags from core.tag registry
+        tag_reg = load_registry("core.tag")
+        tags_data = tag_reg.get("data", {}).get("tags", [])
+        if isinstance(tags_data, list):
+            for tag in tags_data:
+                if isinstance(tag, dict):
+                    self.nfc_tags.append(
+                        {
+                            "id": tag.get("id", "unknown"),
+                            "name": tag.get("name", tag.get("id", "unknown")),
+                        }
+                    )
+
         print(f"   Timers: {len(self.timers)}, Counters: {len(self.counters)}")
         print(f"   Input booleans: {len(self.input_booleans)}, numbers: {len(self.input_numbers)}")
         print(f"   Input texts: {len(self.input_texts)}, selects: {len(self.input_selects)}")
         print(
             f"   Input datetimes: {len(self.input_datetimes)}, buttons: {len(self.input_buttons)}"
         )
+        print(f"   NFC tags: {len(self.nfc_tags)}")
 
 
 class ServiceCatalogAnalyzer:
@@ -1828,6 +1945,20 @@ class HacsAnalyzer:
         print(
             f"   HACS repos: {len(self.hacs_repos)}, Custom components: {len(self.custom_components)}"
         )
+
+
+class CacheAnalyzer:
+    """Analyzes registry cache performance."""
+
+    def __init__(self, registry: RegistryCollector):
+        self.registry = registry
+        self.cache_stats: dict[str, Any] = {}
+
+    def collect(self):
+        """Collects cache statistics."""
+        self.cache_stats = get_cache_stats()
+        hit_rate = self.cache_stats.get("hit_rate_percent", 0)
+        print(f"Collecting cache statistics... Hit rate: {hit_rate}%")
 
 
 # --- REPORT GENERATOR ---

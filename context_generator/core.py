@@ -5,6 +5,7 @@ import os
 from . import constants
 from .analyzers import (
     AutomationAnalyzer,
+    CacheAnalyzer,
     DashboardAnalyzer,
     EnergyAnalyzer,
     HacsAnalyzer,
@@ -77,6 +78,9 @@ def main():
     hacs = HacsAnalyzer(registry)
     hacs.collect()
 
+    cache = CacheAnalyzer(registry)
+    cache.collect()
+
     # Generate report
     generator = ReportGenerator(
         registry,
@@ -91,6 +95,7 @@ def main():
         helpers,
         services,
         hacs,
+        cache=cache,
     )
     generator.generate(constants.OUTPUT_FILE)
 
@@ -116,6 +121,9 @@ def main():
     )
     print(f"   Services: {services.total_services}")
     print(f"   HACS: {len(hacs.hacs_repos)} repos, {len(hacs.custom_components)} custom")
+    print(
+        f"   Cache: {cache.cache_stats.get('hits', 0)} hits / {cache.cache_stats.get('total', 0)} total ({cache.cache_stats.get('hit_rate_percent', 0)}% hit rate)"
+    )
     print("=" * 60 + "\n")
 
 
