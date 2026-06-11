@@ -312,7 +312,7 @@ class TestContextGeneratorUtils:
         from context_generator.utils import is_ignorable_entity
 
         assert is_ignorable_entity("sun.sun") is True
-        assert is_ignorable_entity("update.home_assistant") is True
+        assert is_ignorable_entity("update.home_assistant") is False
         assert is_ignorable_entity("sensor.temperature") is False
 
     def test_get_best_name_entity(self):
@@ -577,6 +577,7 @@ class TestContextGeneratorFormatter:
         registry.entity_to_config_entry = {}
         registry.device_to_config_entry = {}
         registry.config_entry_health = {}
+        registry.updates_available = {"total": 0, "available": 0, "entities": []}
 
         automation = MagicMock()
         automation.automation_analysis = []

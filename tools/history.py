@@ -11,7 +11,7 @@ from collections import Counter, defaultdict
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from tools.utils import _error_response, _success_response, make_ha_request
+from tools.utils import _build_history_url, _error_response, _success_response, make_ha_request
 
 _logger = logging.getLogger(__name__)
 
@@ -59,6 +59,8 @@ def _do_get_entity_state_history_summary(
     ha_url: str,
     ha_token: str,
     group_by: str | None = None,
+    detail_level: str = "full",
+    compact: bool = False,
 ) -> str:
     """Summarize entity state history instead of returning raw rows.
 
@@ -69,13 +71,24 @@ def _do_get_entity_state_history_summary(
         ha_token: Authorization token.
         group_by: Optional aggregation — ``"hour"`` or ``"day"`` to return
             grouped statistics instead of raw change entries.
+        detail_level: "summary" (minimal_response=True, fewer attributes) or
+            "full" (default, full attribute data).
+        compact: If True, force minimal_response=True to reduce API payload
+            (same effect as detail_level="summary"). Default False.
     """
+    if detail_level not in ("summary", "full"):
+        return _error_response(
+            f"Invalid detail_level '{detail_level}'. Must be 'summary' or 'full'."
+        )
+
     hours_back = min(max(int(hours_back), 1), MAX_HISTORY_HOURS)
 
     end_time = datetime.now(UTC)
     start_time = end_time - timedelta(hours=hours_back)
 
-    url = f"/api/history/period/{start_time.isoformat()}?filter_entity_id={entity_id}&minimal_response=false"
+    url = _build_history_url(
+        start_time, entity_id=entity_id, minimal=(detail_level == "summary" or compact)
+    )
     result = make_ha_request(ha_url, ha_token, url)
 
     if not result["success"]:
@@ -205,7 +218,7 @@ def _do_get_recent_state_changes(
     end_time = datetime.now(UTC)
     start_time = end_time - timedelta(minutes=minutes)
 
-    url = f"/api/history/period/{start_time.isoformat()}?minimal_response=false"
+    url = _build_history_url(start_time, minimal=False)
     result = make_ha_request(ha_url, ha_token, url)
 
     if not result["success"]:
@@ -273,6 +286,8 @@ def register_history_tools(mcp, ha_url: str, ha_token: str) -> None:  # type: ig
         entity_id: str,
         hours_back: int = 24,
         group_by: str | None = None,
+        detail_level: str = "full",
+        compact: bool = False,
     ) -> str:
         """[READ] Summarize entity state history instead of returning raw rows.
 
@@ -282,6 +297,10 @@ def register_history_tools(mcp, ha_url: str, ha_token: str) -> None:  # type: ig
             group_by: Optional aggregation level — ``"hour"`` or ``"day"``.
                 When set, returns grouped statistics (count, min, max, avg)
                 instead of raw change entries (default: None).
+            detail_level: "summary" (minimal_response, fewer attributes) or
+                "full" (default, complete attribute data).
+            compact: If True, force minimal_response=True to reduce API payload
+                (same effect as detail_level="summary"). Default False.
 
         Returns:
             JSON string with summary fields:
@@ -293,7 +312,7 @@ def register_history_tools(mcp, ha_url: str, ha_token: str) -> None:  # type: ig
         """
         try:
             return _do_get_entity_state_history_summary(
-                entity_id, hours_back, ha_url, ha_token, group_by
+                entity_id, hours_back, ha_url, ha_token, group_by, detail_level, compact
             )
         except Exception as e:
             return _error_response(str(e))

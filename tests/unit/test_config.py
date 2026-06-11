@@ -606,6 +606,39 @@ class TestLovelaceEntityUsage:
         assert data["usage_count"] >= 1
         assert data["usage"][0]["entity_id"] == "light.test_entity"
 
+    def test_correct_registry_key_used(self, mock_mcp, config_path):
+        register_config_tools(mock_mcp, config_path)
+
+        dashboard_config = json.loads(json.dumps(MOCK_DASHBOARD_CONFIG_BASE))
+
+        with patch("tools.config.load_registry") as mock_load:
+            mock_load.side_effect = [
+                MOCK_DASHBOARD_REGISTRY,
+                dashboard_config,
+            ]
+
+            result = mock_mcp._tools["get_lovelace_entity_usage"](entity_id="light.test_entity")
+            data = json.loads(result)
+
+        assert data["success"] is True
+        call_args = [c.args[0] for c in mock_load.call_args_list]
+        assert "lovelace_dashboards" in call_args
+
+    def test_missing_registry_file_returns_error(self, mock_mcp, config_path):
+        register_config_tools(mock_mcp, config_path)
+
+        with patch("tools.config.load_registry") as mock_load:
+            mock_load.return_value = {}
+
+            result = mock_mcp._tools["get_lovelace_entity_usage"](entity_id="light.test_entity")
+            data = json.loads(result)
+
+        assert data["success"] is False
+        assert "lovelace_dashboards" in data["error"]
+        assert data["_meta"]["registry_path"] == ".storage/lovelace_dashboards"
+        call_args = [c.args[0] for c in mock_load.call_args_list]
+        assert "lovelace_dashboards" in call_args
+
 
 # ============================================================
 # Tests for template validation in validate_yaml_syntax()

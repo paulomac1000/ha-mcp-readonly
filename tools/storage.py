@@ -25,10 +25,12 @@ import yaml
 
 from tools.manifests import make_manifest, register_manifest
 from tools.utils import (
+    _build_history_url,
     _error_response,
     _success_response,
     create_error_response,
     get_best_name,
+    get_registry_cache_stats,
     load_registry,
     make_ha_request,
     resolve_area_id,
@@ -516,7 +518,7 @@ def _do_get_history_stats(
     hours_back = min(hours_back, 168)
 
     start_time = datetime.now(UTC) - timedelta(hours=hours_back)
-    url = f"/api/history/period/{start_time.isoformat()}?filter_entity_id={entity_id}&minimal_response=true"
+    url = _build_history_url(start_time, entity_id=entity_id, minimal=True)
 
     res = make_ha_request(ha_url, ha_token, url)
     if not res["success"] or not res["data"] or not res["data"][0]:
@@ -556,7 +558,7 @@ def _do_get_history_stats(
     return {"entity_id": entity_id, "analysis": analysis}
 
 
-def _do_get_entity_registry(config_path: str) -> dict[str, Any]:
+def _do_get_entity_registry(config_path: str, limit: int = 200, offset: int = 0) -> dict[str, Any]:
     data = load_registry("core.entity_registry", config_path).get("data", {}).get("entities", [])
     simplified = []
     for e in data:
@@ -575,7 +577,12 @@ def _do_get_entity_registry(config_path: str) -> dict[str, Any]:
                 "labels": e.get("labels"),
             }
         )
-    return {"total_entities": len(simplified), "entities": simplified}
+    total_count = len(simplified)
+    paginated = simplified[offset : offset + limit]
+    result: dict[str, Any] = {"total_entities": len(paginated), "entities": paginated}
+    if total_count > len(paginated):
+        result["_meta"] = {"truncated": True, "total_count": total_count}
+    return result
 
 
 def _do_get_entity_registry_batch(
@@ -646,7 +653,7 @@ def _do_get_entity_registry_batch(
     return {"total_entities": len(simplified), "entities": simplified}
 
 
-def _do_get_device_registry(config_path: str) -> dict[str, Any]:
+def _do_get_device_registry(config_path: str, limit: int = 200, offset: int = 0) -> dict[str, Any]:
     data = load_registry("core.device_registry", config_path).get("data", {}).get("devices", [])
     simplified = []
     for d in data:
@@ -662,15 +669,25 @@ def _do_get_device_registry(config_path: str) -> dict[str, Any]:
                 "config_entries": d.get("config_entries", []),
             }
         )
-    return {"total_devices": len(simplified), "devices": simplified}
+    total_count = len(simplified)
+    paginated = simplified[offset : offset + limit]
+    result: dict[str, Any] = {"total_devices": len(paginated), "devices": paginated}
+    if total_count > len(paginated):
+        result["_meta"] = {"truncated": True, "total_count": total_count}
+    return result
 
 
-def _do_get_area_registry(config_path: str) -> dict[str, Any]:
+def _do_get_area_registry(config_path: str, limit: int = 200, offset: int = 0) -> dict[str, Any]:
     data = load_registry("core.area_registry", config_path).get("data", {}).get("areas", [])
-    return {"total_areas": len(data), "areas": data}
+    total_count = len(data)
+    paginated = data[offset : offset + limit]
+    result: dict[str, Any] = {"total_areas": len(paginated), "areas": paginated}
+    if total_count > len(paginated):
+        result["_meta"] = {"truncated": True, "total_count": total_count}
+    return result
 
 
-def _do_get_config_entries(config_path: str) -> dict[str, Any]:
+def _do_get_config_entries(config_path: str, limit: int = 200, offset: int = 0) -> dict[str, Any]:
     data = load_registry("core.config_entries", config_path).get("data", {}).get("entries", [])
     simplified = []
     for entry in data:
@@ -685,7 +702,12 @@ def _do_get_config_entries(config_path: str) -> dict[str, Any]:
                 "options": entry.get("options", {}),
             }
         )
-    return {"total_entries": len(simplified), "entries": simplified}
+    total_count = len(simplified)
+    paginated = simplified[offset : offset + limit]
+    result: dict[str, Any] = {"total_entries": len(paginated), "entries": paginated}
+    if total_count > len(paginated):
+        result["_meta"] = {"truncated": True, "total_count": total_count}
+    return result
 
 
 def _do_get_lovelace_dashboards(config_path: str) -> dict[str, Any]:
@@ -1109,13 +1131,21 @@ def _do_hacs_get_update_count(config_path: str) -> dict[str, Any]:
     if not data:
         return {"error": "HACS not installed or storage file not found"}
 
-    repos = data.get("data", {}).get("repositories", [])
+    raw_repos = data.get("data", {}).get("repositories", {})
     total_installed = 0
     updates_available = 0
     critical_updates: list[dict[str, Any]] = []
     major_version_bumps: list[dict[str, Any]] = []
 
-    for repo in repos:
+    if isinstance(raw_repos, dict):
+        repo_list = []
+        for repo_type, repos_of_type in raw_repos.items():
+            if isinstance(repos_of_type, list):
+                repo_list.extend(repos_of_type)
+    else:
+        repo_list = raw_repos if isinstance(raw_repos, list) else []
+
+    for repo in repo_list:
         installed = repo.get("installed", False)
         if not installed:
             continue
@@ -1164,13 +1194,16 @@ def _do_get_nfc_tags(config_path: str, ha_url: str | None, ha_token: str | None)
     tag_registry = load_registry("core.tag", config_path)
     if tag_registry.get("data", {}).get("tags"):
         for t in tag_registry["data"]["tags"]:
-            tags.append(
-                {
-                    "tag_id": t.get("id"),
-                    "name": t.get("name"),
-                    "last_scanned": t.get("last_scanned"),
-                }
-            )
+            if isinstance(t, str):
+                tags.append({"tag_id": t, "name": t, "last_scanned": None})
+            else:
+                tags.append(
+                    {
+                        "tag_id": t.get("id"),
+                        "name": t.get("name"),
+                        "last_scanned": t.get("last_scanned"),
+                    }
+                )
 
     if not tags and ha_url and ha_token:
         states_data = make_ha_request(ha_url, ha_token, "/api/states")
@@ -1284,6 +1317,7 @@ def _do_get_template_entity_code(
         from tools.utils import invalidate_registry_cache
 
         invalidate_registry_cache("core.config_entries", config_path)
+        invalidate_registry_cache("core.entity_registry", config_path)
 
     data = load_registry("core.config_entries", config_path).get("data", {}).get("entries", [])
 
@@ -1732,18 +1766,74 @@ def _do_search_entity_by_name(
     )
 
 
+def _compact_entity_result(result: dict[str, Any]) -> dict[str, Any]:
+    """Strip registry metadata to essential fields for compact mode.
+
+    Args:
+        result: Full result dict from _do_get_entity_context().
+
+    Returns:
+        Flat dict with only entity_id, name, platform, device_id, area_id,
+        disabled_by, and hidden_by.
+    """
+    compact: dict[str, Any] = {"entity_id": result.get("entity_id")}
+    entity_info = result.get("entity_info", {})
+    for field in ("name", "platform", "device_id", "area_id", "disabled_by", "hidden_by"):
+        compact[field] = entity_info.get(field)
+    return compact
+
+
 def _do_get_entity_details(
-    entity_id: str,
+    entity_ids: str,
     config_path: str,
     ha_url: str | None,
     ha_token: str | None,
+    compact: bool = False,
 ) -> dict[str, Any]:
-    return _do_get_entity_context(
-        entity_id=entity_id,
-        config_path=config_path,
-        ha_url=ha_url,
-        ha_token=ha_token,
-    )
+    if not entity_ids or not entity_ids.strip():
+        return {"success": False, "error": "entity_id is required and must be a non-empty string"}
+
+    ids = [e.strip() for e in entity_ids.split(",") if e.strip()]
+
+    # Single entity (no comma) - backward compat
+    if "," not in entity_ids:
+        result = _do_get_entity_context(
+            entity_id=ids[0],
+            config_path=config_path,
+            ha_url=ha_url,
+            ha_token=ha_token,
+        )
+        if compact and not result.get("error"):
+            return _compact_entity_result(result)
+        return result
+
+    # Batch mode
+    if len(ids) > 100:
+        return {
+            "success": False,
+            "error": "Maximum of 100 entities per batch call",
+        }
+
+    results: dict[str, Any] = {}
+    not_found: list[str] = []
+    for eid in ids:
+        ctx = _do_get_entity_context(
+            entity_id=eid,
+            config_path=config_path,
+            ha_url=ha_url,
+            ha_token=ha_token,
+        )
+        if ctx.get("error"):
+            not_found.append(eid)
+        else:
+            if compact:
+                ctx = _compact_entity_result(ctx)
+            results[eid] = ctx
+
+    if not results:
+        return {"success": False, "error": "No entities found"}
+
+    return {"results": results, "not_found": not_found}
 
 
 # ========================================
@@ -1913,47 +2003,63 @@ def register_storage_tools(  # type: ignore[no-untyped-def]
     # ========================================
 
     @mcp.tool()
-    async def get_entity_registry() -> str:
+    async def get_entity_registry(limit: int = 200, offset: int = 0) -> str:
         """[READ] Fetches registry of all entities from .storage.
         Contains: entity_id, platform, device_id, aliases, disabled_by, hidden_by.
 
         Warning: returns all entities - use search_registries_batch() for filtering.
+
+        Args:
+            limit: Maximum number of entities to return (default: 200).
+            offset: Number of entities to skip for pagination (default: 0).
         """
         try:
-            result = _do_get_entity_registry(config_path=config_path)
+            result = _do_get_entity_registry(config_path=config_path, limit=limit, offset=offset)
             return _success_response(result)
         except Exception as e:
             return _error_response(str(e))
 
     @mcp.tool()
-    async def get_device_registry() -> str:
+    async def get_device_registry(limit: int = 200, offset: int = 0) -> str:
         """[READ] Fetches registry of all devices from .storage.
         Contains: name, manufacturer, model, sw_version, connections, identifiers.
+
+        Args:
+            limit: Maximum number of devices to return (default: 200).
+            offset: Number of devices to skip for pagination (default: 0).
         """
         try:
-            result = _do_get_device_registry(config_path=config_path)
+            result = _do_get_device_registry(config_path=config_path, limit=limit, offset=offset)
             return _success_response(result)
         except Exception as e:
             return _error_response(str(e))
 
     @mcp.tool()
-    async def get_area_registry() -> str:
+    async def get_area_registry(limit: int = 200, offset: int = 0) -> str:
         """[READ] Fetches registry of all areas/rooms from .storage.
         Contains: name, aliases, picture, icon.
+
+        Args:
+            limit: Maximum number of areas to return (default: 200).
+            offset: Number of areas to skip for pagination (default: 0).
         """
         try:
-            result = _do_get_area_registry(config_path=config_path)
+            result = _do_get_area_registry(config_path=config_path, limit=limit, offset=offset)
             return _success_response(result)
         except Exception as e:
             return _error_response(str(e))
 
     @mcp.tool()
-    async def get_config_entries() -> str:
+    async def get_config_entries(limit: int = 200, offset: int = 0) -> str:
         """[READ] Fetches all configuration entries of integrations.
         Shows installed integrations, their domains, titles, versions, options.
+
+        Args:
+            limit: Maximum number of entries to return (default: 200).
+            offset: Number of entries to skip for pagination (default: 0).
         """
         try:
-            result = _do_get_config_entries(config_path=config_path)
+            result = _do_get_config_entries(config_path=config_path, limit=limit, offset=offset)
             return _success_response(result)
         except Exception as e:
             return _error_response(str(e))
@@ -2272,7 +2378,7 @@ def register_storage_tools(  # type: ignore[no-untyped-def]
             return _error_response(str(e))
 
     @mcp.tool()
-    async def get_entity_details(entity_id: str) -> str:
+    async def get_entity_details(entity_id: str, compact: bool = False) -> str:
         """[READ] Fetches detailed information about a specific entity from the registry.
         Contains related device and area.
 
@@ -2280,13 +2386,16 @@ def register_storage_tools(  # type: ignore[no-untyped-def]
 
         Args:
             entity_id: Entity id (e.g. "sensor.temperature_living_room")
+            compact: If True, return only essential fields: entity_id, name,
+                platform, device_id, area_id, disabled_by, hidden_by. Default: False.
         """
         try:
             result = _do_get_entity_details(
-                entity_id=entity_id,
+                entity_ids=entity_id,
                 config_path=config_path,
                 ha_url=ha_url,
                 ha_token=ha_token,
+                compact=compact,
             )
             if "error" in result:
                 return _error_response(result["error"])
@@ -2321,5 +2430,31 @@ def register_storage_tools(  # type: ignore[no-untyped-def]
                 fields=fields,
             )
             return _success_response(result)
+        except Exception as e:
+            return _error_response(str(e))
+
+    # ========================================
+    # CACHE STATISTICS
+    # ========================================
+
+    register_manifest(
+        "get_cache_stats",
+        make_manifest("get_cache_stats", latency="fast"),
+    )
+
+    @mcp.tool()
+    async def get_cache_stats() -> str:
+        """Return registry cache hit/miss/blocked statistics.
+
+        Returns cache performance data including hit rate percentage,
+        total hits, misses, blocked requests, and number of cached keys.
+
+        Returns:
+            JSON with hits, misses, blocked, total, hit_rate_percent,
+            and cached_keys fields.
+        """
+        try:
+            stats = get_registry_cache_stats()
+            return _success_response(stats)
         except Exception as e:
             return _error_response(str(e))

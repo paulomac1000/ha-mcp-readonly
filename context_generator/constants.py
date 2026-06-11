@@ -44,18 +44,31 @@ TEMPLATE_ENTITY_PATTERN = re.compile(
 # Alternative pattern for states.sensor.xxx
 STATES_DOT_PATTERN = re.compile(r"states\.([a-zA-Z_]+\.[a-zA-Z0-9_]+)")
 
+# Internal HA service domains to filter from services catalog
+# These domains provide internal system services not useful for end users.
+# homeassistant is intentionally excluded (has user-facing services like toggle, turn_on).
+INTERNAL_SERVICE_DOMAINS = {
+    "system_log",
+    "frontend",
+    "lovelace",
+    "recorder",
+    "api",
+    "logbook",
+    "websocket_api",
+    "python_script",
+    "persistent_notification",
+}
+
 # Domains to ignore in unavailable reports
 IGNORABLE_DOMAINS = {
     "sun",
     "weather",
     "calendar",
-    "update",
     "persistent_notification",
     "conversation",
 }
 
 IGNORABLE_PATTERNS = [
-    r"update\..*",
     r".*_firmware$",
     r".*_update$",
     r"sensor\.hacs.*",

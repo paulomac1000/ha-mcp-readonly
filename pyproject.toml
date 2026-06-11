@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ha-mcp-readonly"
-version = "1.5.0"
+version = "1.6.0"
 description = "Read-only MCP server for Home Assistant observation by AI assistants"
 readme = "README.md"
 license = { text = "MIT" }
@@ -22,6 +22,7 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Topic :: Home Automation",
 ]
 dependencies = [
@@ -86,7 +87,6 @@ markers = [
 [tool.mypy]
 strict = true
 python_version = "3.14"
-ignore_missing_imports = true
 warn_unused_ignores = true
 exclude = [
     "tests/",
@@ -96,6 +96,26 @@ disable_error_code = [
     "untyped-decorator",
 ]
 
+[[tool.mypy.overrides]]
+module = [
+    "fastmcp.*", "fastmcp",
+    "requests.*", "requests",
+    "pyyaml.*", "pyyaml",
+    "starlette.*", "starlette",
+    "uvicorn.*", "uvicorn",
+    "dateutil.*", "python_dateutil",
+    "pydantic.*", "pydantic",
+    "yaml.*", "yaml",
+]
+ignore_missing_imports = true
+
 [tool.bandit]
 exclude = ["tests/", "build/"]
 skips = ["B101", "B303", "B311", "B404", "B603"]
+
+[tool.coverage.run]
+source = ["tools"]
+omit = ["tests/*"]
+
+[tool.coverage.report]
+fail_under = 80

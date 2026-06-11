@@ -15,7 +15,7 @@ class TestGetEntityStateHistorySummary:
     """Tests for get_entity_state_history_summary()."""
 
     @pytest.fixture(autouse=True)
-    def setup(self, mock_mcp, ha_url, ha_token):
+    def history_setup(self, mock_mcp, ha_url, ha_token):
         self.mock_mcp = mock_mcp
         self.ha_url = ha_url
         self.ha_token = ha_token
@@ -162,6 +162,65 @@ class TestGetEntityStateHistorySummary:
         assert "unavailable" not in data["states_breakdown"]
         assert "unknown" not in data["states_breakdown"]
         assert "on" in data["states_breakdown"]
+
+    @pytest.mark.asyncio
+    async def test_detail_level_full_default_backward_compat(self):
+        """detail_level='full' (default) uses minimal_response=false in the API call."""
+        with patch("tools.history.make_ha_request") as mock_request:
+            mock_request.return_value = {"success": True, "data": [[]]}
+            register_history_tools(self.mock_mcp, self.ha_url, self.ha_token)
+            await self.mock_mcp._tools["get_entity_state_history_summary"]("switch.test", 24)
+
+        called_url = mock_request.call_args[0][2]
+        assert "minimal_response=false" in called_url
+
+    @pytest.mark.asyncio
+    async def test_detail_level_summary_uses_minimal_response(self):
+        """detail_level='summary' uses minimal_response=true in the API call."""
+        with patch("tools.history.make_ha_request") as mock_request:
+            mock_request.return_value = {"success": True, "data": [[]]}
+            register_history_tools(self.mock_mcp, self.ha_url, self.ha_token)
+            await self.mock_mcp._tools["get_entity_state_history_summary"](
+                "switch.test", 24, None, "summary"
+            )
+
+        called_url = mock_request.call_args[0][2]
+        assert "minimal_response=true" in called_url
+
+    @pytest.mark.asyncio
+    async def test_detail_level_invalid_returns_error(self):
+        """Invalid detail_level returns error response."""
+        register_history_tools(self.mock_mcp, self.ha_url, self.ha_token)
+        result = await self.mock_mcp._tools["get_entity_state_history_summary"](
+            "switch.test", 24, None, "minimal"
+        )
+        data = json.loads(result)
+        assert data["success"] is False
+        assert "Invalid detail_level" in data.get("error", "")
+
+    @pytest.mark.asyncio
+    async def test_compact_true_forces_minimal_response(self):
+        """compact=True forces minimal_response=true in the API call."""
+        with patch("tools.history.make_ha_request") as mock_request:
+            mock_request.return_value = {"success": True, "data": [[]]}
+            register_history_tools(self.mock_mcp, self.ha_url, self.ha_token)
+            await self.mock_mcp._tools["get_entity_state_history_summary"](
+                "switch.test", 24, None, "full", True
+            )
+
+        called_url = mock_request.call_args[0][2]
+        assert "minimal_response=true" in called_url
+
+    @pytest.mark.asyncio
+    async def test_compact_false_default_backward_compat(self):
+        """compact=False (default) uses minimal_response=false (with detail_level='full')."""
+        with patch("tools.history.make_ha_request") as mock_request:
+            mock_request.return_value = {"success": True, "data": [[]]}
+            register_history_tools(self.mock_mcp, self.ha_url, self.ha_token)
+            await self.mock_mcp._tools["get_entity_state_history_summary"]("switch.test", 24)
+
+        called_url = mock_request.call_args[0][2]
+        assert "minimal_response=false" in called_url
 
 
 class TestGetRecentStateChanges:

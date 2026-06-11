@@ -7,6 +7,8 @@ from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 
+from tests.fixtures import ENTITY_ID_LIGHT
+
 
 class TestMakeHaRequest:
     """Tests for make_ha_request function."""
@@ -565,6 +567,60 @@ class TestSanitizeResponseData:
         result = sanitize_response_data("password=supersecret")
         assert "supersecret" not in str(result)
         assert "REDACTED" in str(result)
+
+
+class TestBuildHistoryUrl:
+    """Tests for _build_history_url helper."""
+
+    def test_with_entity_id_and_minimal(self):
+        from datetime import UTC, datetime
+
+        from tools.utils import _build_history_url
+
+        dt = datetime(2025, 6, 10, 12, 30, 0, tzinfo=UTC)
+        url = _build_history_url(dt, entity_id=ENTITY_ID_LIGHT)
+        assert url == (
+            "/api/history/period/2025-06-10T12:30:00+00:00"
+            f"?filter_entity_id={ENTITY_ID_LIGHT}"
+            "&minimal_response=true"
+        )
+        # No URL-encoding artifacts from urllib.parse.quote
+        assert "%3A" not in url
+        assert "%2B" not in url
+        assert "%2E" not in url
+
+    def test_without_entity_id_not_minimal(self):
+        from datetime import UTC, datetime
+
+        from tools.utils import _build_history_url
+
+        dt = datetime(2025, 6, 10, 12, 30, 0, tzinfo=UTC)
+        url = _build_history_url(dt, minimal=False)
+        assert url == ("/api/history/period/2025-06-10T12:30:00+00:00?minimal_response=false")
+        assert "%3A" not in url
+
+    def test_with_entity_id_not_minimal(self):
+        from datetime import UTC, datetime
+
+        from tools.utils import _build_history_url
+
+        dt = datetime(2025, 6, 10, 12, 30, 0, tzinfo=UTC)
+        url = _build_history_url(dt, entity_id="sensor.temp", minimal=False)
+        assert url == (
+            "/api/history/period/2025-06-10T12:30:00+00:00"
+            "?filter_entity_id=sensor.temp"
+            "&minimal_response=false"
+        )
+
+    def test_with_comma_separated_entity_ids(self):
+        from datetime import UTC, datetime
+
+        from tools.utils import _build_history_url
+
+        dt = datetime(2025, 6, 10, 12, 30, 0, tzinfo=UTC)
+        url = _build_history_url(dt, entity_id="light.a,light.b")
+        assert "filter_entity_id=light.a,light.b" in url
+        assert "%2C" not in url
 
 
 if __name__ == "__main__":

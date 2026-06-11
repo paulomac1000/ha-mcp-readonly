@@ -6,9 +6,3 @@ starlette>=0.27.0
 uvicorn>=0.22.0
 python-dateutil>=2.8.0
 pydantic>=2.0.0,<3.0.0
-
-# Testing (needed for startup self-tests in Docker)
-pytest>=7.0.0
-pytest-asyncio>=0.21.0
-pytest-mock>=3.10.0
-pytest-cov>=4.0.0

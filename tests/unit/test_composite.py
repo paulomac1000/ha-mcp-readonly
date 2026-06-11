@@ -390,6 +390,75 @@ class TestGetEntityWithAutomations:
             assert "not found" in data.get("error", "").lower()
 
     @pytest.mark.asyncio
+    async def test_data_quality_all_complete(self, sample_states, sample_automations):
+        """All data sources succeed -> data_quality overall complete."""
+        with (
+            patch("tools.composite.load_registry") as mock_load,
+            patch("tools.composite.make_ha_request") as mock_request,
+            patch("tools.composite._load_automations") as mock_auto,
+        ):
+            mock_load.side_effect = lambda name, path: self.mock_registry_data.get(name, {})
+            mock_request.return_value = {"success": True, "data": sample_states}
+            mock_auto.return_value = (sample_automations, None)
+
+            result = await self.mcp._tools["get_entity_with_automations"](
+                "sensor.temperature_living_room", include_automation_code=False
+            )
+            data = json.loads(result)
+
+            assert data["success"] is True
+            assert data["data_quality"] == {"overall": "complete"}
+
+    @pytest.mark.asyncio
+    async def test_data_quality_states_api_failed(self, sample_automations):
+        """States API failure -> data_quality shows failed states_api."""
+        with (
+            patch("tools.composite.load_registry") as mock_load,
+            patch("tools.composite.make_ha_request") as mock_request,
+            patch("tools.composite._load_automations") as mock_auto,
+        ):
+            mock_load.side_effect = lambda name, path: self.mock_registry_data.get(name, {})
+            mock_request.return_value = {
+                "success": False,
+                "error": "Connection refused",
+            }
+            mock_auto.return_value = (sample_automations, None)
+
+            result = await self.mcp._tools["get_entity_with_automations"](
+                "sensor.temperature_living_room", include_automation_code=False
+            )
+            data = json.loads(result)
+
+            assert data["success"] is True
+            assert data["data_quality"]["registry"] == "complete"
+            assert data["data_quality"]["automations"] == "complete"
+            assert data["data_quality"]["states_api"] == "failed"
+            assert "Connection refused" in data["data_quality"]["states_error"]
+
+    @pytest.mark.asyncio
+    async def test_data_quality_automations_failed(self, sample_states):
+        """Automation load failure -> data_quality shows failed automations."""
+        with (
+            patch("tools.composite.load_registry") as mock_load,
+            patch("tools.composite.make_ha_request") as mock_request,
+            patch("tools.composite._load_automations") as mock_auto,
+        ):
+            mock_load.side_effect = lambda name, path: self.mock_registry_data.get(name, {})
+            mock_request.return_value = {"success": True, "data": sample_states}
+            mock_auto.return_value = ([], "automations.yaml not found")
+
+            result = await self.mcp._tools["get_entity_with_automations"](
+                "sensor.temperature_living_room", include_automation_code=False
+            )
+            data = json.loads(result)
+
+            assert data["success"] is True
+            assert data["data_quality"]["registry"] == "complete"
+            assert data["data_quality"]["automations"] == "failed"
+            assert "not found" in data["data_quality"]["automations_error"]
+            assert data["data_quality"]["states_api"] == "complete"
+
+    @pytest.mark.asyncio
     async def test_get_entity_with_code_included(self, sample_states, sample_automations):
         """Test including automation code in response."""
         with (
@@ -488,6 +557,68 @@ class TestGetAreaDiagnostic:
         assert data["area_info"]["unavailable_count"] >= 1
         assert any("unavailable" in i.lower() for i in data["issues"])
         assert any("connectivity" in r.lower() for r in data["recommendations"])
+
+    @pytest.mark.asyncio
+    async def test_data_quality_all_complete(self, sample_states, sample_automations):
+        """All data sources succeed -> data_quality overall complete."""
+        with (
+            patch("tools.composite.load_registry") as mock_load,
+            patch("tools.composite.make_ha_request") as mock_request,
+            patch("tools.composite._load_automations") as mock_auto,
+        ):
+            mock_load.side_effect = lambda name, path: self.mock_registry_data.get(name, {})
+            mock_request.return_value = {"success": True, "data": sample_states}
+            mock_auto.return_value = (sample_automations, None)
+
+            result = await self.mcp._tools["get_area_diagnostic"]("living_room")
+            data = json.loads(result)
+
+            assert data["success"] is True
+            assert data["data_quality"] == {"overall": "complete"}
+
+    @pytest.mark.asyncio
+    async def test_data_quality_states_api_failed(self):
+        """States API failure -> data_quality shows failed states_api."""
+        with (
+            patch("tools.composite.load_registry") as mock_load,
+            patch("tools.composite.make_ha_request") as mock_request,
+        ):
+            mock_load.side_effect = lambda name, path: self.mock_registry_data.get(name, {})
+            mock_request.return_value = {
+                "success": False,
+                "error": "Connection refused",
+            }
+
+            result = await self.mcp._tools["get_area_diagnostic"]("living_room")
+            data = json.loads(result)
+
+            assert data["success"] is True
+            assert data["data_quality"]["registry"] == "complete"
+            assert data["data_quality"]["states_api"] == "failed"
+            assert "Connection refused" in data["data_quality"]["states_error"]
+
+    @pytest.mark.asyncio
+    async def test_data_quality_automations_included_failed(self, sample_states):
+        """Automations included but fail -> data_quality shows failed automations."""
+        with (
+            patch("tools.composite.load_registry") as mock_load,
+            patch("tools.composite.make_ha_request") as mock_request,
+            patch("tools.composite._load_automations") as mock_auto,
+        ):
+            mock_load.side_effect = lambda name, path: self.mock_registry_data.get(name, {})
+            mock_request.return_value = {"success": True, "data": sample_states}
+            mock_auto.return_value = ([], "automations.yaml not found")
+
+            result = await self.mcp._tools["get_area_diagnostic"](
+                "living_room", include_automations=True
+            )
+            data = json.loads(result)
+
+            assert data["success"] is True
+            assert data["data_quality"]["registry"] == "complete"
+            assert data["data_quality"]["automations"] == "failed"
+            assert "not found" in data["data_quality"]["automations_error"]
+            assert data["data_quality"]["states_api"] == "complete"
 
     @pytest.mark.asyncio
     async def test_get_area_diagnostic_exclude_automations_and_sensors(self, sample_states):
@@ -1008,6 +1139,92 @@ class TestAreaAutomationMatching:
         assert data["automations"] == []
 
 
+class TestInvestigateEntityDataQuality:
+    """Tests for data_quality in investigate_entity."""
+
+    @pytest.fixture(autouse=True)
+    def setup(self, mock_mcp, config_path, ha_url, ha_token):
+        """Setup test environment."""
+        from tools.composite import register_composite_tools
+
+        self.mock_registry_data = MOCK_REGISTRY_DATA
+        with patch("tools.composite.load_registry") as mock_load:
+            mock_load.side_effect = lambda name, path: self.mock_registry_data.get(name, {})
+            register_composite_tools(mock_mcp, config_path, ha_url, ha_token)
+        self.mcp = mock_mcp
+
+    @pytest.mark.asyncio
+    async def test_data_quality_all_complete(self, sample_states, sample_automations):
+        """All data sources succeed -> data_quality overall complete."""
+        with (
+            patch("tools.composite.load_registry") as mock_load,
+            patch("tools.composite.make_ha_request") as mock_request,
+            patch("tools.composite._load_automations") as mock_auto,
+        ):
+            mock_load.side_effect = lambda name, path: self.mock_registry_data.get(name, {})
+            mock_request.return_value = {"success": True, "data": sample_states}
+            mock_auto.return_value = (sample_automations, None)
+
+            result = await self.mcp._tools["investigate_entity"]("temperature")
+            data = json.loads(result)
+
+            assert data["success"] is True
+            assert data["data_quality"] == {"overall": "complete"}
+
+    @pytest.mark.asyncio
+    async def test_data_quality_states_api_failed(self, sample_automations):
+        """States API failure -> data_quality shows failed states_api."""
+        with (
+            patch("tools.composite.load_registry") as mock_load,
+            patch("tools.composite.make_ha_request") as mock_request,
+            patch("tools.composite._load_automations") as mock_auto,
+        ):
+            mock_load.side_effect = lambda name, path: self.mock_registry_data.get(name, {})
+            mock_request.return_value = {
+                "success": False,
+                "error": "Connection refused",
+            }
+            mock_auto.return_value = (sample_automations, None)
+
+            result = await self.mcp._tools["investigate_entity"]("temperature")
+            data = json.loads(result)
+
+            assert data["success"] is True
+            assert data["data_quality"]["registry"] == "complete"
+            assert data["data_quality"]["automations"] == "complete"
+            assert data["data_quality"]["states_api"] == "failed"
+            assert "Connection refused" in data["data_quality"]["states_error"]
+
+    @pytest.mark.asyncio
+    async def test_data_quality_history_failed(self, sample_states, sample_automations):
+        """History fetch failure -> data_quality shows failed history."""
+        with (
+            patch("tools.composite.load_registry") as mock_load,
+            patch("tools.composite.make_ha_request") as mock_request,
+            patch("tools.composite._load_automations") as mock_auto,
+        ):
+            mock_load.side_effect = lambda name, path: self.mock_registry_data.get(name, {})
+
+            def side_effect(url, token, endpoint, **kwargs):
+                if endpoint.startswith("/api/history"):
+                    return {"success": False, "error": "timeout"}
+                return {"success": True, "data": sample_states}
+
+            mock_request.side_effect = side_effect
+            mock_auto.return_value = (sample_automations, None)
+
+            result = await self.mcp._tools["investigate_entity"](
+                "temperature", include_history=True, hours_back=24
+            )
+            data = json.loads(result)
+
+            assert data["success"] is True
+            assert data["data_quality"]["registry"] == "complete"
+            assert data["data_quality"]["states_api"] == "complete"
+            assert data["data_quality"]["history"] == "failed"
+            assert "History fetch failed" in data["data_quality"]["history_error"]
+
+
 class TestInvestigateEntityExtended:
     """Tests for investigate_entity with include_automation_code and conflict analysis."""
 
@@ -1258,6 +1475,76 @@ class TestAuditConfigOrphans:
         assert result["success"] is True
         assert result["orphan_count"] == 0
         assert result["broken_reference_count"] == 0
+
+    @pytest.mark.asyncio
+    async def test_states_api_failure_data_quality(self):
+        """States API failure should produce data_quality.failed and never_triggered_status unknown."""
+        automations = [
+            {
+                "id": "auto1",
+                "alias": "Test Auto",
+                "trigger": [{"platform": "state", "entity_id": "sensor.temperature_living_room"}],
+                "action": [],
+            }
+        ]
+        with (
+            patch("tools.composite.load_registry") as mock_load,
+            patch("tools.composite.make_ha_request") as mock_req,
+            patch("tools.composite._load_automations", return_value=(automations, None)),
+        ):
+            mock_load.side_effect = lambda name, path: self.mock_registry_data.get(name, {})
+            mock_req.return_value = {
+                "success": False,
+                "error": "Connection refused to /api/states",
+            }
+
+            result = json.loads(await self.mcp._tools["audit_config_orphans"]())
+
+        assert result["success"] is True
+        assert result["data_quality"]["states_api"] == "failed"
+        assert "Connection refused" in result["data_quality"]["states_error"]
+        assert result["never_triggered_status"] == "unknown"
+        assert result["never_triggered_automations"] == []
+        assert result["never_triggered_count"] == 0
+
+    @pytest.mark.asyncio
+    async def test_states_api_success_data_quality(self):
+        """States API success should produce data_quality.complete and never_triggered_status complete."""
+        automations = [
+            {
+                "id": "auto1",
+                "alias": "Test Auto",
+                "trigger": [{"platform": "state", "entity_id": "sensor.temperature_living_room"}],
+                "action": [],
+            }
+        ]
+        with (
+            patch("tools.composite.load_registry") as mock_load,
+            patch("tools.composite.make_ha_request") as mock_req,
+            patch("tools.composite._load_automations", return_value=(automations, None)),
+        ):
+            mock_load.side_effect = lambda name, path: self.mock_registry_data.get(name, {})
+            mock_req.return_value = {
+                "success": True,
+                "data": [
+                    {
+                        "entity_id": "automation.test_auto",
+                        "state": "on",
+                        "attributes": {
+                            "last_triggered": "2024-01-01T00:00:00",
+                            "friendly_name": "Test",
+                        },
+                    }
+                ],
+            }
+
+            result = json.loads(await self.mcp._tools["audit_config_orphans"]())
+
+        assert result["success"] is True
+        assert result["data_quality"]["overall"] == "complete"
+        assert result["never_triggered_status"] == "complete"
+        # Automation was triggered, so never_triggered should be empty
+        assert result["never_triggered_automations"] == []
 
     @pytest.mark.asyncio
     async def test_exception_handler(self):

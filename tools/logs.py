@@ -14,7 +14,7 @@ import re
 import threading
 import time
 from collections import Counter, defaultdict
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -97,23 +97,27 @@ def _parse_log_line(line: str) -> dict[str, Any]:
 
 def _read_log_file(
     log_file: str, config_path: str, max_lines: int | None = None
-) -> list[str] | None:
-    """Read log file efficiently, handling encoding errors."""
+) -> tuple[list[str] | None, dict[str, object]]:
+    """Read log file efficiently, handling encoding errors.
+
+    Always reads the last ``max_lines`` lines (most recent) via ``tail_log_file``.
+    When ``max_lines`` is ``None``, defaults to 10,000.
+
+    Returns:
+        Tuple of (lines list or None, _meta dict with ``source``, ``truncated``, ``max_lines``).
+    """
+    effective_max = 10000 if max_lines is None else max_lines
     log_path = Path(config_path) / log_file
     if not log_path.exists():
-        return None
+        return None, {"source": "log_file", "truncated": False, "max_lines": effective_max}
 
     try:
-        if max_lines:
-            return [
-                line + "\n" if not line.endswith("\n") else line
-                for line in tail_log_file(str(log_path), lines=max_lines)
-            ]
-
-        with open(log_path, encoding="utf-8", errors="ignore") as f:
-            return f.readlines()
+        tailed = tail_log_file(str(log_path), lines=effective_max)
+        lines = [line + "\n" if not line.endswith("\n") else line for line in tailed]
+        truncated = len(tailed) >= effective_max
+        return lines, {"source": "log_file", "truncated": truncated, "max_lines": effective_max}
     except Exception:
-        return None
+        return None, {"source": "log_file", "truncated": False, "max_lines": effective_max}
 
 
 def _extract_entities(text: str) -> set[str]:
@@ -197,12 +201,33 @@ def _do_get_log_insights(
         return cached  # type: ignore[no-any-return]
 
     hours = min(max(int(hours), 1), 24)
-    log_lines = _read_log_file("home-assistant.log", config_path)
+    log_lines, file_meta = _read_log_file("home-assistant.log", config_path)
+    api_fallback_used = False
+
+    if not log_lines and ha_url and ha_token:
+        from tools.utils import make_ha_request
+
+        api_result = make_ha_request(ha_url, ha_token, "/api/error_log")
+        if api_result.get("success") and isinstance(api_result.get("data"), str):
+            log_lines = api_result["data"].split("\n")
+            api_fallback_used = True
+        else:
+            lb_result = make_ha_request(ha_url, ha_token, "/api/logbook")
+            if lb_result.get("success") and isinstance(lb_result.get("data"), list):
+                entries = lb_result["data"]
+                log_lines = [f"{e.get('when', '')} {e.get('message', '')}\n" for e in entries]
+                api_fallback_used = True
 
     if not log_lines:
         return {"error": "home-assistant.log not found"}
 
-    cutoff_time = datetime.now() - timedelta(hours=hours)
+    _meta: dict[str, object] = (
+        {"source": "api_fallback", "truncated": False, "max_lines": 10000}
+        if api_fallback_used
+        else dict(file_meta)
+    )
+
+    cutoff_time = datetime.now(UTC) - timedelta(hours=hours)
 
     # Data structures
     errors: list[dict] = []  # type: ignore[type-arg]
@@ -245,7 +270,7 @@ def _do_get_log_insights(
 
         # Filter by time
         try:
-            timestamp = datetime.strptime(timestamp_str, "%Y-%m-%d %H:%M:%S")
+            timestamp = datetime.strptime(timestamp_str, "%Y-%m-%d %H:%M:%S").replace(tzinfo=UTC)
             if timestamp < cutoff_time:
                 continue
         except (ValueError, TypeError):
@@ -405,6 +430,7 @@ def _do_get_log_insights(
             }
         )
 
+    result["_meta"] = _meta
     _set_cache_result(cache_key, result)
     return result
 
@@ -424,7 +450,7 @@ def _do_analyze_log_errors(
     max_results = int(max_results)
 
     log_file = "home-assistant.log" if log_source == "current" else "home-assistant.log.1"
-    log_lines = _read_log_file(log_file, config_path)
+    log_lines, _ = _read_log_file(log_file, config_path)
 
     if not log_lines:
         return {"error": f"{log_file} not found"}
@@ -542,7 +568,7 @@ def _do_get_recent_logs(
     ha_token: str = "",
 ) -> dict[str, Any]:
     lines = min(int(lines), 500)
-    log_lines = _read_log_file("home-assistant.log", config_path, lines * 2)
+    log_lines, _ = _read_log_file("home-assistant.log", config_path, lines * 2)
 
     if not log_lines:
         return {"error": "home-assistant.log not found"}
@@ -568,7 +594,7 @@ def _do_get_previous_logs(
     ha_token: str = "",
 ) -> dict[str, Any]:
     lines = min(int(lines), 500)
-    log_lines = _read_log_file("home-assistant.log.1", config_path, lines * 2)
+    log_lines, _ = _read_log_file("home-assistant.log.1", config_path, lines * 2)
 
     if not log_lines:
         return {"error": "home-assistant.log.1 not found"}
@@ -612,7 +638,7 @@ def _do_search_logs(
         log_files.append(("previous", "home-assistant.log.1"))
 
     for source_name, log_file in log_files:
-        log_lines = _read_log_file(log_file, config_path)
+        log_lines, _ = _read_log_file(log_file, config_path)
 
         if not log_lines:
             continue
@@ -670,7 +696,7 @@ def _do_get_component_logs(
         log_files.append(("previous", "home-assistant.log.1"))
 
     for source_name, log_file in log_files:
-        log_lines = _read_log_file(log_file, config_path)
+        log_lines, _ = _read_log_file(log_file, config_path)
 
         if not log_lines:
             continue
@@ -724,7 +750,7 @@ def _do_get_startup_errors(
     ha_url: str = "",
     ha_token: str = "",
 ) -> dict[str, Any]:
-    log_lines = _read_log_file("home-assistant.log", config_path)
+    log_lines, _ = _read_log_file("home-assistant.log", config_path)
 
     if not log_lines:
         return {"error": "home-assistant.log not found"}
@@ -795,12 +821,12 @@ def _do_get_log_timeline(
         hours_int = 1
 
     log_file = "home-assistant.log" if log_source == "current" else "home-assistant.log.1"
-    log_lines = _read_log_file(log_file, config_path)
+    log_lines, _ = _read_log_file(log_file, config_path)
 
     if not log_lines:
         return {"error": f"{log_file} not found"}
 
-    cutoff_time = datetime.now() - timedelta(hours=hours_int)
+    cutoff_time = datetime.now(UTC) - timedelta(hours=hours_int)
     timeline = []
 
     for line in log_lines:
@@ -816,7 +842,7 @@ def _do_get_log_timeline(
             continue
 
         try:
-            timestamp = datetime.strptime(timestamp_str, "%Y-%m-%d %H:%M:%S")
+            timestamp = datetime.strptime(timestamp_str, "%Y-%m-%d %H:%M:%S").replace(tzinfo=UTC)
 
             if timestamp >= cutoff_time:
                 timeline.append(
@@ -846,7 +872,9 @@ def _do_get_log_timeline(
 # ========================================
 
 
-def register_log_tools(mcp, config_path: str) -> None:  # type: ignore[no-untyped-def]
+def register_log_tools(  # type: ignore[no-untyped-def]
+    mcp, config_path: str, ha_url: str = "", ha_token: str = ""
+) -> None:
     """
     Registers tools for analyzing Home Assistant logs.
     """
@@ -885,6 +913,8 @@ def register_log_tools(mcp, config_path: str) -> None:  # type: ignore[no-untype
                 include_affected_entities=include_affected_entities,
                 max_patterns=max_patterns,
                 config_path=config_path,
+                ha_url=ha_url,
+                ha_token=ha_token,
             )
             if isinstance(result, dict) and "error" in result:
                 return _error_response(result["error"])

@@ -130,9 +130,8 @@ class TestEntityGetContextTree:
                 else {"success": True, "data": {"automations": []}}
             ),
         ):
-            with patch("tools.entity_context.load_registry", return_value={"data": {}}):
-                result = await tools["entity_get_context_tree"]("light.test")
-                data = json.loads(result)
+            result = await tools["entity_get_context_tree"]("light.test")
+            data = json.loads(result)
 
         assert data["success"] is True
         assert data["context_tree"]["entity_id"] == "light.test"
@@ -244,9 +243,8 @@ class TestEntityContextWithAutomations:
             return {"success": True, "data": []}
 
         with patch("tools.entity_context.make_ha_request", side_effect=mock_request):
-            with patch("tools.entity_context.load_registry", return_value={"data": {}}):
-                result = await tools["entity_get_context_tree"]("light.kitchen")
-                data = json.loads(result)
+            result = await tools["entity_get_context_tree"]("light.kitchen")
+            data = json.loads(result)
 
         assert data["success"] is True
         assert data["context_tree"]["entity_id"] == "light.kitchen"
@@ -322,9 +320,8 @@ class TestEntityContextSourceBreakdown:
             return {"success": True, "data": []}
 
         with patch("tools.entity_context.make_ha_request", side_effect=mock_request):
-            with patch("tools.entity_context.load_registry", return_value={"data": {}}):
-                result = await tools["entity_get_context_tree"]("light.test_entity")
-                data = json.loads(result)
+            result = await tools["entity_get_context_tree"]("light.test_entity")
+            data = json.loads(result)
 
         assert data["success"] is True
         changes = data["context_tree"]["recent_changes"]
@@ -380,7 +377,7 @@ class TestEntityContextSourceBreakdown:
                 "name": "Test Entity turned on",
                 "message": "turned on by automation Test Automation",
                 "domain": "light",
-                "context": {"id": "ctx1"},
+                "context_id": "ctx1",
             },
             {
                 "entity_id": "light.test_entity",
@@ -388,7 +385,7 @@ class TestEntityContextSourceBreakdown:
                 "name": "Test Entity turned off",
                 "message": "turned off triggered by automation",
                 "domain": "automation",
-                "context": {"id": "ctx2"},
+                "context_id": "ctx2",
             },
         ]
 
@@ -402,9 +399,8 @@ class TestEntityContextSourceBreakdown:
             return {"success": True, "data": []}
 
         with patch("tools.entity_context.make_ha_request", side_effect=mock_request):
-            with patch("tools.entity_context.load_registry", return_value={"data": {}}):
-                result = await tools["entity_get_context_tree"]("light.test_entity")
-                data = json.loads(result)
+            result = await tools["entity_get_context_tree"]("light.test_entity")
+            data = json.loads(result)
 
         assert data["success"] is True
         sources = data["context_tree"]["sources_breakdown"]
@@ -455,7 +451,7 @@ class TestEntityContextSourceBreakdown:
                 "name": "Automation triggered",
                 "message": "turned on by automation Test Automation",
                 "domain": "light",
-                "context": {"id": "ctx1"},
+                "context_id": "ctx1",
             },
             {
                 "entity_id": "light.test_entity",
@@ -463,7 +459,7 @@ class TestEntityContextSourceBreakdown:
                 "name": "Script executed",
                 "message": "executed script morning_routine",
                 "domain": "script",
-                "context": {"id": "ctx2"},
+                "context_id": "ctx2",
             },
             {
                 "entity_id": "light.test_entity",
@@ -471,7 +467,7 @@ class TestEntityContextSourceBreakdown:
                 "name": "User action",
                 "message": "turned off",
                 "domain": "light",
-                "context": {"id": "ctx3"},
+                "context_id": "ctx3",
             },
             {
                 "entity_id": "light.test_entity",
@@ -479,7 +475,7 @@ class TestEntityContextSourceBreakdown:
                 "name": "Device update",
                 "message": "state changed",
                 "domain": "sensor",
-                "context": {"id": "ctx4"},
+                "context_id": "ctx4",
             },
             {
                 "entity_id": "light.test_entity",
@@ -487,7 +483,7 @@ class TestEntityContextSourceBreakdown:
                 "name": "Unknown event",
                 "message": "battery low",
                 "domain": "sensor",
-                "context": {"id": "ctx5"},
+                "context_id": "ctx5",
             },
         ]
 
@@ -501,9 +497,8 @@ class TestEntityContextSourceBreakdown:
             return {"success": True, "data": []}
 
         with patch("tools.entity_context.make_ha_request", side_effect=mock_request):
-            with patch("tools.entity_context.load_registry", return_value={"data": {}}):
-                result = await tools["entity_get_context_tree"]("light.test_entity")
-                data = json.loads(result)
+            result = await tools["entity_get_context_tree"]("light.test_entity")
+            data = json.loads(result)
 
         assert data["success"] is True
         sources = data["context_tree"]["sources_breakdown"]
@@ -512,3 +507,328 @@ class TestEntityContextSourceBreakdown:
         assert sources["user_action"]["count"] == 1
         assert sources["device_update"]["count"] == 1
         assert sources["unknown"]["count"] == 1
+
+
+class TestGetContextChain:
+    """Tests for get_context_chain tool — recursive context parent_id chain tracing."""
+
+    def _make_logbook_entry(self, ctx_id, parent_id, entity_id, when=None):
+        entry = {
+            "context_id": ctx_id,
+            "context_parent_id": parent_id,
+            "entity_id": entity_id,
+            "name": f"Event {ctx_id}",
+            "message": "state changed",
+            "domain": entity_id.split(".")[0] if "." in entity_id else "unknown",
+        }
+        if when:
+            entry["when"] = when
+        return entry
+
+    @pytest.mark.asyncio
+    async def test_invalid_entity_id(self, tools):
+        result = await tools["get_context_chain"]("invalid_no_dot")
+        data = json.loads(result)
+        assert data["success"] is False
+        assert "Invalid entity_id" in data["error"]
+
+    @pytest.mark.asyncio
+    async def test_empty_entity_id(self, tools):
+        result = await tools["get_context_chain"]("")
+        data = json.loads(result)
+        assert data["success"] is False
+
+    @pytest.mark.asyncio
+    async def test_logbook_api_failure(self, tools):
+        with patch(
+            "tools.entity_context.make_ha_request",
+            return_value={"success": False, "error": "API error"},
+        ):
+            result = await tools["get_context_chain"]("light.test")
+            data = json.loads(result)
+        assert data["success"] is False
+        assert "Failed to fetch" in data["error"]
+
+    @pytest.mark.asyncio
+    async def test_no_entity_entries(self, tools):
+        """Entity has no logbook entries → empty chain."""
+        full_entries = [
+            self._make_logbook_entry("ctx_001", None, "automation.morning", "2025-01-01T08:00:00Z"),
+        ]
+
+        def mock_request(url, token, endpoint, **kwargs):
+            if "?entity=" in endpoint:
+                return {"success": True, "data": []}
+            return {"success": True, "data": full_entries}
+
+        with patch("tools.entity_context.make_ha_request", side_effect=mock_request):
+            result = await tools["get_context_chain"]("light.test")
+            data = json.loads(result)
+
+        assert data["success"] is True
+        assert data["chain"] == []
+        assert data["chain_length"] == 0
+
+    @pytest.mark.asyncio
+    async def test_successful_chain_two_levels(self, tools):
+        """Chain: automation triggers → light changes."""
+        when = "2025-01-01T08:00:00Z"
+        entity_entries = [
+            self._make_logbook_entry("ctx_002", "ctx_001", "light.living_room", when),
+        ]
+        full_entries = [
+            self._make_logbook_entry("ctx_001", None, "automation.morning", when),
+            self._make_logbook_entry("ctx_002", "ctx_001", "light.living_room", when),
+        ]
+
+        def mock_request(url, token, endpoint, **kwargs):
+            if "?entity=" in endpoint:
+                return {"success": True, "data": entity_entries}
+            return {"success": True, "data": full_entries}
+
+        with patch("tools.entity_context.make_ha_request", side_effect=mock_request):
+            result = await tools["get_context_chain"]("light.living_room")
+            data = json.loads(result)
+
+        assert data["success"] is True
+        assert data["chain_length"] == 2
+
+        chain = data["chain"]
+        assert chain[0]["context_id"] == "ctx_002"
+        assert chain[0]["entity_id"] == "light.living_room"
+        assert chain[0]["depth"] == 0
+        assert chain[0]["parent_id"] == "ctx_001"
+        assert chain[0]["timestamp"] == when
+
+        assert chain[1]["context_id"] == "ctx_001"
+        assert chain[1]["entity_id"] == "automation.morning"
+        assert chain[1]["depth"] == 1
+        assert chain[1]["parent_id"] is None
+
+    @pytest.mark.asyncio
+    async def test_successful_chain_three_levels(self, tools):
+        """Chain: automation → script → light."""
+        when = "2025-06-01T12:00:00Z"
+        entity_entries = [
+            self._make_logbook_entry("ctx_003", "ctx_002", "light.living_room", when),
+        ]
+        full_entries = [
+            self._make_logbook_entry("ctx_001", None, "automation.morning", when),
+            self._make_logbook_entry("ctx_002", "ctx_001", "script.blink", when),
+            self._make_logbook_entry("ctx_003", "ctx_002", "light.living_room", when),
+        ]
+
+        def mock_request(url, token, endpoint, **kwargs):
+            if "?entity=" in endpoint:
+                return {"success": True, "data": entity_entries}
+            return {"success": True, "data": full_entries}
+
+        with patch("tools.entity_context.make_ha_request", side_effect=mock_request):
+            result = await tools["get_context_chain"]("light.living_room", depth=5)
+            data = json.loads(result)
+
+        assert data["success"] is True
+        assert data["chain_length"] == 3
+        depths = [e["depth"] for e in data["chain"]]
+        assert depths == [0, 1, 2]
+        entities = [e["entity_id"] for e in data["chain"]]
+        assert entities == ["light.living_room", "script.blink", "automation.morning"]
+
+    @pytest.mark.asyncio
+    async def test_depth_capping(self, tools):
+        """depth=1 should stop after entity's own context level."""
+        when = "2025-01-01T08:00:00Z"
+        entity_entries = [
+            self._make_logbook_entry("ctx_003", "ctx_002", "light.test", when),
+        ]
+        full_entries = [
+            self._make_logbook_entry("ctx_001", None, "automation.root", when),
+            self._make_logbook_entry("ctx_002", "ctx_001", "script.mid", when),
+            self._make_logbook_entry("ctx_003", "ctx_002", "light.test", when),
+        ]
+
+        def mock_request(url, token, endpoint, **kwargs):
+            if "?entity=" in endpoint:
+                return {"success": True, "data": entity_entries}
+            return {"success": True, "data": full_entries}
+
+        with patch("tools.entity_context.make_ha_request", side_effect=mock_request):
+            result = await tools["get_context_chain"]("light.test", depth=1)
+            data = json.loads(result)
+
+        assert data["success"] is True
+        assert data["chain_length"] == 2
+        depths = [e["depth"] for e in data["chain"]]
+        assert depths == [0, 1]
+
+    @pytest.mark.asyncio
+    async def test_depth_zero(self, tools):
+        """depth=0 returns only the entity's own logbook entries, no recursion."""
+        when = "2025-01-01T08:00:00Z"
+        entity_entries = [
+            self._make_logbook_entry("ctx_002", "ctx_001", "light.test", when),
+        ]
+        full_entries = [
+            self._make_logbook_entry("ctx_001", None, "automation.root", when),
+            self._make_logbook_entry("ctx_002", "ctx_001", "light.test", when),
+        ]
+
+        def mock_request(url, token, endpoint, **kwargs):
+            if "?entity=" in endpoint:
+                return {"success": True, "data": entity_entries}
+            return {"success": True, "data": full_entries}
+
+        with patch("tools.entity_context.make_ha_request", side_effect=mock_request):
+            result = await tools["get_context_chain"]("light.test", depth=0)
+            data = json.loads(result)
+
+        assert data["success"] is True
+        assert data["chain_length"] == 1
+        assert data["chain"][0]["depth"] == 0
+        assert data["chain"][0]["context_id"] == "ctx_002"
+
+    @pytest.mark.asyncio
+    async def test_depth_exceeds_cap(self, tools):
+        """Passing depth=10 should be silently capped at 5."""
+        when = "2025-01-01T08:00:00Z"
+        entity_entries = [
+            self._make_logbook_entry("ctx_003", "ctx_002", "light.test", when),
+        ]
+        full_entries = [
+            self._make_logbook_entry("ctx_001", None, "automation.root", when),
+            self._make_logbook_entry("ctx_002", "ctx_001", "script.mid", when),
+            self._make_logbook_entry("ctx_003", "ctx_002", "light.test", when),
+        ]
+
+        def mock_request(url, token, endpoint, **kwargs):
+            if "?entity=" in endpoint:
+                return {"success": True, "data": entity_entries}
+            return {"success": True, "data": full_entries}
+
+        with patch("tools.entity_context.make_ha_request", side_effect=mock_request):
+            result = await tools["get_context_chain"]("light.test", depth=10)
+            data = json.loads(result)
+
+        assert data["success"] is True
+        max_depth = max(e["depth"] for e in data["chain"])
+        assert max_depth <= 5
+
+    @pytest.mark.asyncio
+    async def test_missing_parent_context(self, tools):
+        """Parent context not in logbook → terminal node with note."""
+        when = "2025-01-01T08:00:00Z"
+        entity_entries = [
+            self._make_logbook_entry("ctx_002", "ctx_missing", "light.test", when),
+        ]
+        full_entries = [
+            self._make_logbook_entry("ctx_002", "ctx_missing", "light.test", when),
+        ]
+
+        def mock_request(url, token, endpoint, **kwargs):
+            if "?entity=" in endpoint:
+                return {"success": True, "data": entity_entries}
+            return {"success": True, "data": full_entries}
+
+        with patch("tools.entity_context.make_ha_request", side_effect=mock_request):
+            result = await tools["get_context_chain"]("light.test")
+            data = json.loads(result)
+
+        assert data["success"] is True
+        assert data["chain_length"] == 2
+        terminal = data["chain"][1]
+        assert terminal["context_id"] == "ctx_missing"
+        assert terminal["parent_id"] is None
+        assert terminal["entity_id"] is None
+        assert "Parent context not found" in terminal["note"]
+
+    @pytest.mark.asyncio
+    async def test_no_timestamps(self, tools):
+        """include_timestamps=False omits timestamp field."""
+        entity_entries = [
+            self._make_logbook_entry("ctx_002", None, "light.test", "2025-01-01T08:00:00Z"),
+        ]
+        full_entries = [
+            self._make_logbook_entry("ctx_002", None, "light.test", "2025-01-01T08:00:00Z"),
+        ]
+
+        def mock_request(url, token, endpoint, **kwargs):
+            if "?entity=" in endpoint:
+                return {"success": True, "data": entity_entries}
+            return {"success": True, "data": full_entries}
+
+        with patch("tools.entity_context.make_ha_request", side_effect=mock_request):
+            result = await tools["get_context_chain"]("light.test", include_timestamps=False)
+            data = json.loads(result)
+
+        assert data["success"] is True
+        assert data["chain_length"] == 1
+        assert "timestamp" not in data["chain"][0]
+        assert "context_id" in data["chain"][0]
+        assert "entity_id" in data["chain"][0]
+        assert "depth" in data["chain"][0]
+
+    @pytest.mark.asyncio
+    async def test_unfiltered_logbook_failure_graceful(self, tools):
+        """Unfiltered logbook fails but entity-filtered succeeds → partial chain."""
+        entity_entries = [
+            self._make_logbook_entry("ctx_002", "ctx_001", "light.test"),
+        ]
+
+        def mock_request(url, token, endpoint, **kwargs):
+            if "?entity=" in endpoint:
+                return {"success": True, "data": entity_entries}
+            return {"success": False, "data": None}
+
+        with patch("tools.entity_context.make_ha_request", side_effect=mock_request):
+            result = await tools["get_context_chain"]("light.test")
+            data = json.loads(result)
+
+        assert data["success"] is True
+        assert data["chain_length"] == 2
+        assert data["chain"][0]["context_id"] == "ctx_002"
+        assert data["chain"][0]["depth"] == 0
+        assert data["chain"][1]["context_id"] == "ctx_001"
+        assert "Parent context not found" in data["chain"][1]["note"]
+
+    @pytest.mark.asyncio
+    async def test_multiple_entity_entries(self, tools):
+        """Entity has multiple logbook entries — chain should start from each."""
+        when = "2025-01-01T08:00:00Z"
+        entity_entries = [
+            self._make_logbook_entry("ctx_002", "ctx_001", "light.test", when),
+            self._make_logbook_entry("ctx_004", "ctx_003", "light.test", when),
+        ]
+        full_entries = [
+            self._make_logbook_entry("ctx_001", None, "automation.a", when),
+            self._make_logbook_entry("ctx_002", "ctx_001", "light.test", when),
+            self._make_logbook_entry("ctx_003", None, "automation.b", when),
+            self._make_logbook_entry("ctx_004", "ctx_003", "light.test", when),
+        ]
+
+        def mock_request(url, token, endpoint, **kwargs):
+            if "?entity=" in endpoint:
+                return {"success": True, "data": entity_entries}
+            return {"success": True, "data": full_entries}
+
+        with patch("tools.entity_context.make_ha_request", side_effect=mock_request):
+            result = await tools["get_context_chain"]("light.test", depth=3)
+            data = json.loads(result)
+
+        assert data["success"] is True
+        assert data["chain_length"] == 4
+        ctx_ids = [e["context_id"] for e in data["chain"]]
+        assert "ctx_001" in ctx_ids
+        assert "ctx_002" in ctx_ids
+        assert "ctx_003" in ctx_ids
+        assert "ctx_004" in ctx_ids
+
+    @pytest.mark.asyncio
+    async def test_exception_handler(self, tools):
+        with patch(
+            "tools.entity_context._do_get_context_chain",
+            side_effect=RuntimeError("Unexpected failure"),
+        ):
+            result = await tools["get_context_chain"]("light.test")
+            data = json.loads(result)
+        assert data["success"] is False
+        assert "Unexpected failure" in data["error"]

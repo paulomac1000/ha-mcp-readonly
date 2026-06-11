@@ -23,7 +23,6 @@ from __future__ import annotations
 
 import logging
 import os
-import urllib.parse
 from collections import defaultdict
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -33,6 +32,7 @@ import yaml
 
 from tools.automations import _extract_entities_recursive
 from tools.utils import (
+    _build_history_url,
     _error_response,
     _success_response,
     get_best_name,
@@ -286,6 +286,18 @@ def _do_get_entity_with_automations(
         if not result["issues"]:
             result["recommendations"].append("Entity appears healthy")
 
+        dq_quality: dict[str, str] = {}
+        dq_quality["registry"] = "complete"
+        dq_quality["automations"] = "failed" if auto_warn else "complete"
+        dq_quality["states_api"] = "failed" if state_warn else "complete"
+        if dq_quality["automations"] == "failed" and auto_warn:
+            dq_quality["automations_error"] = auto_warn
+        if dq_quality["states_api"] == "failed" and state_warn:
+            dq_quality["states_error"] = state_warn
+        if all(v == "complete" for k, v in dq_quality.items() if not k.endswith("_error")):
+            dq_quality = {"overall": "complete"}
+        result["data_quality"] = dq_quality
+
         result["warnings"] = warnings
         return result
 
@@ -497,15 +509,13 @@ def _do_investigate_entity(
                     result["related_sensors"].append(si)
         result["related_sensors"] = result["related_sensors"][:15]
 
+        history_success: bool | None = None
         if include_history and primary_entity and ha_url and ha_token:
             start_time = datetime.now(UTC) - timedelta(hours=min(hours_back, 168))
-            url = (
-                f"/api/history/period/{urllib.parse.quote(start_time.isoformat())}"
-                f"?filter_entity_id={urllib.parse.quote(primary_entity)}"
-                f"&minimal_response=true"
-            )
+            url = _build_history_url(start_time, entity_id=primary_entity, minimal=True)
             hist_res = make_ha_request(ha_url, ha_token, url)
             if hist_res["success"] and hist_res["data"] and hist_res["data"][0]:
+                history_success = True
                 raw = hist_res["data"][0]
                 result["history"] = {
                     "entity_id": primary_entity,
@@ -516,7 +526,24 @@ def _do_investigate_entity(
                     ],
                 }
             else:
+                history_success = False
                 warnings.append(f"History fetch failed for {primary_entity}")
+
+        data_quality: dict[str, str] = {}
+        data_quality["registry"] = "complete"
+        data_quality["automations"] = "failed" if auto_warn else "complete"
+        data_quality["states_api"] = "failed" if state_warn else "complete"
+        if include_history and primary_entity and ha_url and ha_token:
+            data_quality["history"] = "complete" if history_success else "failed"
+            if history_success is False:
+                data_quality["history_error"] = f"History fetch failed for {primary_entity}"
+        if data_quality["automations"] == "failed" and auto_warn:
+            data_quality["automations_error"] = auto_warn
+        if data_quality["states_api"] == "failed" and state_warn:
+            data_quality["states_error"] = state_warn
+        if all(v == "complete" for k, v in data_quality.items() if not k.endswith("_error")):
+            data_quality = {"overall": "complete"}
+        result["data_quality"] = data_quality
 
         if not result["issues"]:
             result["recommendations"].append("All matched entities appear healthy")
@@ -612,6 +639,7 @@ def _do_get_area_diagnostic(
             by_domain[domain].append(info)
 
         area_automations: list[dict] = []  # type: ignore[type-arg]
+        auto_warn: str | None = None
         if include_automations:
             automations, auto_warn = _load_automations(config_path)
             if auto_warn:
@@ -652,8 +680,21 @@ def _do_get_area_diagnostic(
 
         area_devices = [d for d in dev_data if d.get("area_id") == area_id]
 
+        data_quality: dict[str, str] = {}
+        data_quality["registry"] = "complete"
+        data_quality["states_api"] = "failed" if state_warn else "complete"
+        if include_automations:
+            data_quality["automations"] = "failed" if auto_warn else "complete"
+            if auto_warn:
+                data_quality["automations_error"] = auto_warn
+        if data_quality["states_api"] == "failed" and state_warn:
+            data_quality["states_error"] = state_warn
+        if all(v == "complete" for k, v in data_quality.items() if not k.endswith("_error")):
+            data_quality = {"overall": "complete"}
+
         return {
             "success": True,
+            "data_quality": data_quality,
             "area_info": {
                 "id": area_id,
                 "name": area.get("name"),
@@ -724,9 +765,12 @@ def _do_audit_config_orphans(
         orphan_entities = sorted(entity_ids - referenced)
 
         never_triggered: list[dict[str, Any]] = []
+        states_api_ok = False
+        states_api_error: str | None = None
         if ha_url and ha_token:
             states_data = make_ha_request(ha_url, ha_token, "/api/states")
             if states_data.get("success"):
+                states_api_ok = True
                 for s in states_data["data"]:
                     eid = s.get("entity_id", "")
                     if eid.startswith("automation."):
@@ -740,6 +784,8 @@ def _do_audit_config_orphans(
                                     "alias": attrs.get("friendly_name", ""),
                                 }
                             )
+            else:
+                states_api_error = states_data.get("error", "Unknown error from /api/states")
 
         all_config_entities: set[str] = set()
         for item in automations:
@@ -788,6 +834,15 @@ def _do_audit_config_orphans(
             "orphan_count": len(orphan_entities),
             "never_triggered_automations": never_triggered,
             "never_triggered_count": len(never_triggered),
+            "never_triggered_status": "unknown" if not states_api_ok else "complete",
+            "data_quality": (
+                {"overall": "complete"}
+                if states_api_ok
+                else {
+                    "states_api": "failed",
+                    "states_error": states_api_error or "Unknown error",
+                }
+            ),
             "broken_references": broken_references[:100],
             "broken_reference_count": len(broken_references),
             "unused_blueprints": unused_blueprints,

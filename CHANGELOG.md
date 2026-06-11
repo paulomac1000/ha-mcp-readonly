@@ -10,6 +10,97 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.0] - 2026-06-11
+
+### Added — New Tools (5)
+- `compare_templates` — evaluates two Jinja2 templates side by side and highlights differences
+- `get_automation_entity_id` — resolves automation alias or unique_id to the entity_id
+- `get_context_chain` — traces `context.parent_id` chain for entity state changes
+- `resolve_blueprint_automation` — substitutes blueprint inputs and returns resolved
+  automation YAML
+- `get_cache_stats` — exposes registry cache hit/miss statistics
+
+### Added — Automation Diagnostics
+- `get_automation_choose_summary` — structured choose-block analysis available via
+  `diagnose_automation(detail_level="full")`
+
+### Added — Parameter Extensions
+- `detail_level` parameter on `get_automation_usage_stats` — `full` mode adds logbook traces,
+  state changes, and context chain to usage statistics
+- `include_entity_id` parameter on `search_automations` — resolves entity_id from entity
+  registry for each matching automation
+- Batch support for `get_entity_details` — accepts comma-separated entity IDs for
+  multi-entity registry metadata retrieval
+- `compact` mode on `get_entity_details` — returns only essential fields (entity_id, name,
+  icon, area_id, platform, unique_id, original_name)
+- Enhanced `compact` mode on `get_entity_state` — domain-specific attribute retention
+  (preserves brightness/color for light, temperature/humidity for sensor/climate,
+  current_consumption for switch)
+- `detail_level` and `include_context` parameters on `get_entity_dependencies` —
+  controls verbosity and optionally includes surrounding YAML context
+- `detail_level` parameter on `list_automations` — `summary` mode for alias+mode only
+- `detail_level` parameter on `get_entity_state_history_summary` — controls verbosity
+  of history summary output
+- `include_entity_id`/`include_entities`/`include_disabled`/`include_states` parameters
+  on `search_entities`, `get_device`, `get_integration_entities` — consistent
+  `include_*` pattern for controlling entity detail in results
+- `compact` mode on `get_entity_state_history_summary` and `search_entities` — minimal
+  response format for token efficiency
+
+### Added — Infrastructure
+- Shared `_build_history_url` helper in `utils.py` — prevents URL-encoding regression bugs
+- Log file read cap at 10,000 lines with `_meta.truncated` indicator
+- HA API fallback for `get_log_insights` when log file not found
+- Registry pagination (`limit`/`offset`) on 4 tools: `get_entity_registry`,
+  `get_device_registry`, `get_area_registry`, `get_config_entries`
+- `data_quality` field on all 4 composite diagnostic tools
+- 3 new pre-commit hooks: `validate-registry-names`, `detect-url-encoding`,
+  `detect-naive-datetime`
+
+### Added — Test Infrastructure
+- 67 new integration tests covering previously untested tools
+- 158 E2E parametrized smoke tests (one per tool)
+- Integration test CI job (advisory, non-blocking)
+- Structural smoke test assertions beyond `success: True` check
+
+### Changed
+- 6 tools converted from naive `datetime.now()` to timezone-aware `datetime.now(UTC)`
+- History and logbook endpoints now use 30s timeout (was 10s default)
+- `make_ha_request` timeout tuned for slow endpoints
+- `_REQUIRES_PARAMS` in smoke tests corrected (6 added, 12 removed)
+- `validators.py` deleted (dead code, 0 callers)
+- Docstrings fixed for `get_automation_dependencies` and `entity_get_context_tree`
+- Test dependencies moved from `requirements.txt` to `pyproject.toml` optional dev
+  dependencies (`[project.optional-dependencies] dev = [...]`)
+- Coverage configuration added to `pyproject.toml` under `[tool.coverage]` — `fail_under = 80`
+- Enforced comma-separated string convention for all batch entity ID parameters across
+  the codebase for consistency
+
+### Fixed — Bugs
+- `get_lovelace_entity_usage` — wrong registry key `lovelace.dashboards` (dot) →
+  `lovelace_dashboards` (underscore)
+- `get_history_batch` and `investigate_entity` — removed `urllib.parse.quote` from
+  history URL construction, preventing API errors on some HA versions
+- `search_automations_by_entity` — now detects entity references in
+  `use_blueprint.input` (blueprint automations)
+- `audit_config_orphans` — added `data_quality` field when states API fails
+  (was silent empty)
+- `hacs_get_update_count` — fixed `'str' object has no attribute 'get'` error
+  (repositories is dict, not list)
+- `list_automation_categories` — fixed `'str' object has no attribute 'get'` error
+  (category items can be strings)
+- Added `isinstance` guards for tag, zone, and category registry items to prevent
+  future `AttributeError` on string data
+- `resolve_blueprint_automation` — added `automation/` domain prefix fallback when
+  blueprint path lacks it
+
+### Fixed — CI and Infrastructure
+- Fixed broken `docs-validation.yml` workflow — the `validate_docs.py` script referenced
+  in the workflow was not available in the repository; validation is now gracefully skipped
+  with a clear message
+- Added version sync check between `version.py` and `pyproject.toml` in CI pipeline —
+  ensures version strings stay aligned across builds
+
 ## [1.5.0] - 2026-06-01
 
 ### Added — 13 New Diagnostic Tools (21 gaps from todo.md)

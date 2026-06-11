@@ -32,14 +32,24 @@ def _do_list_automation_categories(
 
     categories = []
     for cat in categories_raw:
-        categories.append(
-            {
-                "category_id": cat.get("category_id", ""),
-                "name": cat.get("name", ""),
-                "icon": cat.get("icon", ""),
-                "scope": cat.get("scope", ""),
-            }
-        )
+        if isinstance(cat, str):
+            categories.append(
+                {
+                    "category_id": cat,
+                    "name": cat,
+                    "icon": None,
+                    "scope": None,
+                }
+            )
+        else:
+            categories.append(
+                {
+                    "category_id": cat.get("category_id", ""),
+                    "name": cat.get("name", ""),
+                    "icon": cat.get("icon", None),
+                    "scope": cat.get("scope", None),
+                }
+            )
 
     empty_categories = []
     if include_entity_count and config_path:
@@ -56,11 +66,12 @@ def _do_list_automation_categories(
                         scope_map[cat_id].append(scope)
         for cat in categories:
             cid = cat["category_id"]
-            cat["entity_count"] = scope_counts.get(cid, 0)
-            if cat["entity_count"] == 0:
+            assert isinstance(cid, str)
+            cat["entity_count"] = scope_counts.get(cid, 0)  # type: ignore[assignment]
+            if cat["entity_count"] == 0:  # type: ignore[comparison-overlap]
                 empty_categories.append(cid)
 
-    categories.sort(key=lambda x: (x.get("scope", ""), x.get("name", "")))
+    categories.sort(key=lambda x: (x.get("scope") or "", x.get("name") or ""))
     return {
         "success": True,
         "categories": categories,
@@ -98,7 +109,7 @@ def register_categories_tools(mcp, config_path: str) -> None:  # type: ignore[no
         try:
             data = _do_list_automation_categories(include_entity_count, config_path)
             if data.get("success") is False:
-                return _error_response(str(data.get("error", data)))
+                return _error_response(data.get("error", data))
             return _success_response(data)
         except Exception as exc:
             _logger.exception("list_automation_categories failed")

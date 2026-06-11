@@ -140,7 +140,7 @@ volumes:
 
 ## MCP Tools
 
-The server exposes 118 read-only MCP tools organized by domain.  
+The server exposes 118 read-only MCP tools organized by domain.
 Call `GET /api/tools` on the REST API for the full, up-to-date list.
 
 ### Entity State Tools
@@ -148,7 +148,7 @@ Call `GET /api/tools` on the REST API for the full, up-to-date list.
 | Tool | Description |
 |------|-------------|
 | `get_all_states` | Get all entities (domain filter, optional attributes) |
-| `get_entity_state` | Get detailed state of a single entity |
+| `get_entity_state` | Get detailed state of a single entity. Compact mode keeps state + domain-specific attributes (unit, device_class for sensors; hvac_action, temperature for climate) |
 | `get_entity_state_batch` | Batch: get states for multiple entities |
 | `get_states_grouped` | Group entities by domain or integration |
 | `get_states_filtered` | Server-side filtering (domain, state, device_class, area) |
@@ -164,14 +164,15 @@ Call `GET /api/tools` on the REST API for the full, up-to-date list.
 
 | Tool | Description |
 |------|-------------|
-| `search_automations` | Find automations by name/pattern |
+| `search_automations` | Find automations by name/pattern (supports include_entity_id) |
 | `list_automations` | List all automations |
+| `get_automation_entity_id` | Resolve automation alias to entity_id via entity registry |
 | `get_automation_code` | Full automation YAML code |
 | `get_automation_dependencies` | Dependency graph (entities, scripts, services) |
 | `search_automations_by_entity` | Reverse lookup: automations using an entity |
 | `get_automation_conflicts` | Detect race conditions and feedback loops |
 | `diagnose_automation` | Comprehensive automation diagnostics |
-| `get_automation_usage_stats` | Usage stats (runs, last trigger, missing entities) |
+| `get_automation_usage_stats` | Usage stats (runs, last trigger, history). Supports detail_level: summary (default) or full (adds activity log, state changes, context chain) |
 | `automation_validate_triggers` | Validate trigger IDs and handlers |
 | `list_scripts` | List all scripts |
 | `get_script_code` | Full script YAML code |
@@ -198,6 +199,8 @@ Call `GET /api/tools` on the REST API for the full, up-to-date list.
 | `device_get_wifi_status` | WiFi status for IoT devices |
 | `get_area_devices_summary` | Summary of devices in an area |
 | `get_entity_registry` | List all registered entities |
+| `get_entity_registry_batch` | Batch fetch entity registry entries (filter by entity IDs and fields) |
+| `get_entity_details` | Entity registry details with compact mode. Supports batch (comma-separated entity IDs) |
 | `get_device_registry` | List all devices |
 | `get_area_registry` | List all areas |
 | `get_config_entries` | List all integrations |
@@ -259,7 +262,7 @@ Call `GET /api/tools` on the REST API for the full, up-to-date list.
 | `get_area_diagnostic` | Full area/room diagnostic |
 | `diagnose_person_tracking` | Person tracking: trackers, zones, automations, staleness |
 | `entity_get_context_tree` | Entity context tree |
-| `get_entity_dependencies` | What an entity depends on |
+| `get_entity_dependencies` | Reverse lookup: where entity is used. detail_level: summary (default) or full (file paths, line numbers). include_context for YAML context lines |
 | `get_entity_consumers` | What depends on an entity |
 
 ### Developer Tools (Optional)
@@ -268,6 +271,7 @@ Call `GET /api/tools` on the REST API for the full, up-to-date list.
 |------|-------------|
 | `test_template` | Test a Jinja2 template |
 | `test_templates_batch` | Batch template testing |
+| `compare_templates` | Compare two Jinja2 template evaluations (detects stale macro cache) |
 | `get_template_performance` | Template performance metrics |
 | `validate_automation_trigger` | Validate automation trigger |
 | `test_condition` | Test HA condition |
@@ -277,6 +281,68 @@ Call `GET /api/tools` on the REST API for the full, up-to-date list.
 | `diagnose_entity` | Entity diagnostics |
 | `diagnose_template` | Template diagnostics (UI + YAML helpers) |
 | `diagnose_energy_setup` | Energy setup diagnostics |
+
+---
+
+## Parameter Patterns
+
+Several tools share common parameter conventions for consistent behavior across the API.
+
+### detail_level
+
+Controls how much data a tool returns. The two-tier pattern is used by `get_automation_usage_stats` and `get_entity_dependencies`.
+
+| Value | Behavior |
+|-------|----------|
+| `"summary"` (default) | Return compact results suitable for quick checks |
+| `"full"` | Include additional data: activity logs, state changes, context chains, file paths, and line numbers |
+
+Specifying `"summary"` saves tokens and provides faster responses for routine queries. Use `"full"` when investigating issues that require deeper context.
+
+### compact
+
+A boolean flag that reduces returned fields to essentials. Available on `get_entity_state`, `get_entity_details`, and related tools.
+
+| Value | Behavior |
+|-------|----------|
+| `false` (default) | Return full entity object with all attributes |
+| `true` | Strip verbose fields. Core fields retained: entity_id, state, friendly_name, last_changed, last_updated |
+
+**Domain-specific compact mode** (`get_entity_state` with `compact=true`): Keeps select attributes relevant to each domain.
+
+| Domain | Attributes preserved in compact mode |
+|--------|--------------------------------------|
+| `climate` | hvac_modes, hvac_action, current_temperature, temperature |
+| `sensor` | unit_of_measurement, device_class |
+| `light` | brightness, color_mode |
+| `cover` | current_position |
+| `binary_sensor` | device_class |
+| all others | No attributes (entity_id, state, friendly_name only) |
+
+### include_* Boolean Flags
+
+Tools accept boolean flags prefixed with `include_` to optionally expand the response.
+
+| Flag | Tools | Effect |
+|------|-------|--------|
+| `include_code` | `search_automations` | Append full automation YAML to each match |
+| `include_entity_id` | `search_automations` | Resolve and append entity_id from entity registry |
+| `include_context` | `get_entity_dependencies` | Add surrounding YAML context lines for each reference |
+
+All flags default to `false` to keep responses compact. Set to `true` only when the extra detail is needed.
+
+### Batch Convention
+
+Tools that accept comma-separated batch inputs use a string parameter (not a list) for transport simplicity:
+
+| Tool | Parameter | Example |
+|------|-----------|---------|
+| `get_entity_details` | `entity_id` | `"sensor.temp,light.kitchen,switch.garage"` |
+| `get_entity_state_batch` | `entity_ids` | `"light.a,light.b,sensor.c"` |
+| `get_entity_registry_batch` | `entity_ids` | `"light.a,light.b"` |
+| `check_entities_batch` | `entity_ids` | `"sensor.x,sensor.y"` |
+
+Most batch tools have a maximum of 100 entities per call. Check individual tool descriptions for limits.
 
 ---
 

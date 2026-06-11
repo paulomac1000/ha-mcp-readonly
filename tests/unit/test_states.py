@@ -272,6 +272,172 @@ class TestGetEntityState:
         assert data["success"] is False
         assert "not found" in data["error"].lower()
 
+    def test_compact_climate_keeps_hvac_modes(self, mock_mcp, config_path, ha_url, ha_token):
+        """Compact on climate keeps hvac_modes, hvac_action, temperature attrs."""
+        climate_state = {
+            "entity_id": "climate.living_room",
+            "state": "heat",
+            "last_changed": "2026-06-01T08:00:00",
+            "last_updated": "2026-06-01T08:00:01",
+            "attributes": {
+                "friendly_name": "Living Room Climate",
+                "hvac_modes": ["heat", "cool", "off"],
+                "hvac_action": "heating",
+                "current_temperature": 21.5,
+                "temperature": 22.0,
+                "min_temp": 15,
+                "max_temp": 30,
+            },
+        }
+        with patch("tools.states.make_ha_request") as mock_req:
+            mock_req.return_value = {"success": True, "data": climate_state}
+            register_state_tools(mock_mcp, ha_url, ha_token, config_path)
+            tool = mock_mcp._tools["get_entity_state"]
+            result = run_async(tool(entity_id="climate.living_room", compact=True))
+            data = json.loads(result)
+
+        assert data["success"] is True
+        entity = data["entity"]
+        assert entity["entity_id"] == "climate.living_room"
+        assert entity["state"] == "heat"
+        assert entity["friendly_name"] == "Living Room Climate"
+        # Domain-specific attrs retained
+        assert entity["attributes"]["hvac_modes"] == ["heat", "cool", "off"]
+        assert entity["attributes"]["hvac_action"] == "heating"
+        assert entity["attributes"]["current_temperature"] == 21.5
+        assert entity["attributes"]["temperature"] == 22.0
+        # Non-domain attrs stripped
+        assert "min_temp" not in entity["attributes"]
+
+    def test_compact_sensor_keeps_unit_of_measurement(
+        self, mock_mcp, config_path, ha_url, ha_token
+    ):
+        """Compact on sensor retains unit_of_measurement and device_class."""
+        sensor_state = {
+            "entity_id": "sensor.temperature",
+            "state": "22.5",
+            "last_changed": "2026-06-01T08:00:00",
+            "last_updated": "2026-06-01T08:00:01",
+            "attributes": {
+                "friendly_name": "Temperature",
+                "unit_of_measurement": "C",
+                "device_class": "temperature",
+                "icon": "mdi:thermometer",
+                "state_class": "measurement",
+            },
+        }
+        with patch("tools.states.make_ha_request") as mock_req:
+            mock_req.return_value = {"success": True, "data": sensor_state}
+            register_state_tools(mock_mcp, ha_url, ha_token, config_path)
+            tool = mock_mcp._tools["get_entity_state"]
+            result = run_async(tool(entity_id="sensor.temperature", compact=True))
+            data = json.loads(result)
+
+        assert data["success"] is True
+        entity = data["entity"]
+        assert entity["attributes"]["unit_of_measurement"] == "C"
+        assert entity["attributes"]["device_class"] == "temperature"
+        assert "icon" not in entity["attributes"]
+        assert "state_class" not in entity["attributes"]
+
+    def test_compact_switch_strips_all_attributes(self, mock_mcp, config_path, ha_url, ha_token):
+        """Compact on switch (no domain rules) strips all attributes."""
+        switch_state = {
+            "entity_id": "switch.kitchen",
+            "state": "off",
+            "last_changed": "2026-06-01T08:00:00",
+            "last_updated": "2026-06-01T08:00:01",
+            "attributes": {
+                "friendly_name": "Kitchen Switch",
+                "icon": "mdi:light-switch",
+            },
+        }
+        with patch("tools.states.make_ha_request") as mock_req:
+            mock_req.return_value = {"success": True, "data": switch_state}
+            register_state_tools(mock_mcp, ha_url, ha_token, config_path)
+            tool = mock_mcp._tools["get_entity_state"]
+            result = run_async(tool(entity_id="switch.kitchen", compact=True))
+            data = json.loads(result)
+
+        assert data["success"] is True
+        entity = data["entity"]
+        # No domain-specific attrs for switch -> no attributes key
+        assert "attributes" not in entity
+
+    def test_compact_climate_missing_hvac_action_does_not_crash(
+        self, mock_mcp, config_path, ha_url, ha_token
+    ):
+        """Climate entity without hvac_action should not crash."""
+        climate_state = {
+            "entity_id": "climate.bedroom",
+            "state": "off",
+            "last_changed": "2026-06-01T08:00:00",
+            "last_updated": "2026-06-01T08:00:01",
+            "attributes": {
+                "friendly_name": "Bedroom Climate",
+                "hvac_modes": ["off"],
+                "current_temperature": 18.0,
+            },
+        }
+        with patch("tools.states.make_ha_request") as mock_req:
+            mock_req.return_value = {"success": True, "data": climate_state}
+            register_state_tools(mock_mcp, ha_url, ha_token, config_path)
+            tool = mock_mcp._tools["get_entity_state"]
+            result = run_async(tool(entity_id="climate.bedroom", compact=True))
+            data = json.loads(result)
+
+        assert data["success"] is True
+        entity = data["entity"]
+        assert entity["attributes"]["hvac_modes"] == ["off"]
+        assert entity["attributes"]["current_temperature"] == 18.0
+        # Missing from source -> absent from compact output
+        assert "hvac_action" not in entity["attributes"]
+        assert "temperature" not in entity["attributes"]
+
+    def test_get_entity_state_compact_false_returns_all_attributes(
+        self, mock_mcp, config_path, ha_url, ha_token
+    ):
+        """Backward compat: compact=False returns ALL attributes unchanged."""
+        light_state = {
+            "entity_id": "light.living_room",
+            "state": "on",
+            "last_changed": "2026-06-01T08:00:00",
+            "last_updated": "2026-06-01T08:00:01",
+            "attributes": {
+                "friendly_name": "Living Room Light",
+                "brightness": 255,
+                "color_mode": "color_temp",
+                "icon": "mdi:lamp",
+                "min_mireds": 153,
+                "max_mireds": 500,
+            },
+        }
+        with patch("tools.states.make_ha_request") as mock_req:
+            mock_req.return_value = {"success": True, "data": light_state}
+            register_state_tools(mock_mcp, ha_url, ha_token, config_path)
+            tool = mock_mcp._tools["get_entity_state"]
+            result = run_async(tool(entity_id="light.living_room", compact=False))
+            data = json.loads(result)
+
+        assert data["success"] is True
+        entity = data["entity"]
+        assert entity["attributes"]["brightness"] == 255
+        assert entity["attributes"]["color_mode"] == "color_temp"
+        assert entity["attributes"]["icon"] == "mdi:lamp"
+        assert entity["attributes"]["min_mireds"] == 153
+        assert entity["attributes"]["max_mireds"] == 500
+
+    def test_get_entity_state_exception_handler(self, mock_mcp, config_path, ha_url, ha_token):
+        """Exception handler catches errors gracefully."""
+        with patch("tools.states.make_ha_request", side_effect=RuntimeError("test error")):
+            register_state_tools(mock_mcp, ha_url, ha_token, config_path)
+            tool = mock_mcp._tools["get_entity_state"]
+            result = run_async(tool(entity_id="sensor.any"))
+            data = json.loads(result)
+
+        assert data["success"] is False
+        assert "test error" in data["error"]
+
 
 class TestGetEntityStateBatch:
     def test_batch_entities(self, mock_mcp, config_path, ha_url, ha_token, sample_states):
@@ -396,6 +562,77 @@ class TestSearchEntities:
         assert data["success"] is True
         for entity in data["results"]:
             assert entity["entity_id"].startswith("sensor.")
+
+    def test_search_with_include_state(
+        self, mock_mcp, config_path, ha_url, ha_token, sample_states
+    ):
+        with patch("tools.states.make_ha_request") as mock_req:
+
+            def mock_request_side_effect(url, token, endpoint, **kwargs):
+                if endpoint == "/api/states":
+                    return {"success": True, "data": sample_states}
+                # Per-entity endpoint: extract entity_id and return matching data
+                entity_id = endpoint.replace("/api/states/", "")
+                return {
+                    "success": True,
+                    "data": {
+                        "entity_id": entity_id,
+                        "state": "22.5",
+                        "attributes": {"unit_of_measurement": "°C"},
+                        "last_changed": "2024-01-01T00:00:00+00:00",
+                        "last_updated": "2024-01-01T00:00:00+00:00",
+                    },
+                }
+
+            mock_req.side_effect = mock_request_side_effect
+
+            register_state_tools(mock_mcp, ha_url, ha_token, config_path)
+
+            tool = mock_mcp._tools["search_entities"]
+            result = run_async(tool(search_term="living room", include_state=True))
+            data = json.loads(result)
+
+        assert data["success"] is True
+        assert data["count"] >= 1
+        for entity in data["results"]:
+            assert "state_data" in entity
+            assert entity["state_data"]["entity_id"] == entity["entity_id"]
+
+    def test_search_compact_returns_minimal(
+        self, mock_mcp, config_path, ha_url, ha_token, sample_states
+    ):
+        with patch("tools.states.make_ha_request") as mock_req:
+            mock_req.return_value = {"success": True, "data": sample_states}
+            register_state_tools(mock_mcp, ha_url, ha_token, config_path)
+            tool = mock_mcp._tools["search_entities"]
+            result = run_async(tool(search_term="living room", compact=True))
+            data = json.loads(result)
+
+        assert data["success"] is True
+        assert data["count"] >= 2
+        for entity in data["results"]:
+            assert set(entity.keys()) == {"entity_id", "state"}
+            assert "friendly_name" not in entity
+            assert "last_changed" not in entity
+            assert "attributes" not in entity
+
+    def test_search_compact_false_backward_compat(
+        self, mock_mcp, config_path, ha_url, ha_token, sample_states
+    ):
+        with patch("tools.states.make_ha_request") as mock_req:
+            mock_req.return_value = {"success": True, "data": sample_states}
+            register_state_tools(mock_mcp, ha_url, ha_token, config_path)
+            tool = mock_mcp._tools["search_entities"]
+            result = run_async(tool(search_term="living room"))
+            data = json.loads(result)
+
+        assert data["success"] is True
+        assert data["count"] >= 2
+        for entity in data["results"]:
+            assert "entity_id" in entity
+            assert "state" in entity
+            assert "friendly_name" in entity
+            assert "last_changed" in entity
 
 
 class TestGetDomainsSummary:
@@ -612,6 +849,31 @@ class TestGetHistoryBatch:
         assert "history" in data
         assert "sensor.test" in data["history"]
 
+    def test_history_batch_url_no_encoding(self, mock_mcp, config_path, ha_url, ha_token):
+        """Verify history_batch URL does NOT contain percent-encoded chars (%3A, %2B, %2E)."""
+        captured_urls = []
+
+        def capture_url(*args, **kwargs):
+            captured_urls.append(args[2])
+            return {"success": True, "data": []}
+
+        with patch("tools.states.make_ha_request", side_effect=capture_url):
+            register_state_tools(mock_mcp, ha_url, ha_token, config_path)
+            run_async(
+                mock_mcp._tools["get_history_batch"](
+                    entity_ids="sensor.temperature,light.living_room",
+                    hours_back=24,
+                    limit=10,
+                )
+            )
+
+        assert len(captured_urls) == 1
+        url = captured_urls[0]
+        assert "%3A" not in url, f"URL contains encoded colon: {url}"
+        assert "%2B" not in url, f"URL contains encoded plus: {url}"
+        assert "%2E" not in url, f"URL contains encoded dot: {url}"
+        assert "T" in url and ":" in url, f"URL missing raw ISO datetime: {url}"
+
     def test_history_too_many_entities(self, mock_mcp, config_path, ha_url, ha_token):
         register_state_tools(mock_mcp, ha_url, ha_token, config_path)
 
@@ -823,3 +1085,392 @@ class TestGetStatesFilteredByArea:
             run_async(tool())
 
             assert call_count == 2  # Two API calls after cache clear
+
+
+class TestGetEntityStateCompactUnknownDomain:
+    """Tests for compact=True on domains with no specific rules."""
+
+    def test_compact_lock_domain_no_attributes(self, mock_mcp, config_path, ha_url, ha_token):
+        """compact=True on 'lock' domain (no specific rules) strips all attributes."""
+        lock_state = {
+            "entity_id": "lock.front_door",
+            "state": "locked",
+            "last_changed": "2026-06-01T08:00:00",
+            "last_updated": "2026-06-01T08:00:01",
+            "attributes": {
+                "friendly_name": "Front Door Lock",
+                "code_format": None,
+                "changed_by": None,
+                "icon": "mdi:lock",
+            },
+        }
+        with patch("tools.states.make_ha_request") as mock_req:
+            mock_req.return_value = {"success": True, "data": lock_state}
+            register_state_tools(mock_mcp, ha_url, ha_token, config_path)
+            tool = mock_mcp._tools["get_entity_state"]
+            result = run_async(tool(entity_id="lock.front_door", compact=True))
+            data = json.loads(result)
+
+        assert data["success"] is True
+        entity = data["entity"]
+        assert entity["entity_id"] == "lock.front_door"
+        assert entity["state"] == "locked"
+        assert entity["friendly_name"] == "Front Door Lock"
+        assert "attributes" not in entity
+
+    def test_compact_media_player_domain_no_attributes(
+        self, mock_mcp, config_path, ha_url, ha_token
+    ):
+        """compact=True on 'media_player' domain (no specific rules) strips all attributes."""
+        media_state = {
+            "entity_id": "media_player.living_room",
+            "state": "playing",
+            "last_changed": "2026-06-01T08:00:00",
+            "last_updated": "2026-06-01T08:00:01",
+            "attributes": {
+                "friendly_name": "Living Room Speaker",
+                "volume_level": 0.5,
+                "is_volume_muted": False,
+            },
+        }
+        with patch("tools.states.make_ha_request") as mock_req:
+            mock_req.return_value = {"success": True, "data": media_state}
+            register_state_tools(mock_mcp, ha_url, ha_token, config_path)
+            tool = mock_mcp._tools["get_entity_state"]
+            result = run_async(tool(entity_id="media_player.living_room", compact=True))
+            data = json.loads(result)
+
+        assert data["success"] is True
+        entity = data["entity"]
+        assert entity["entity_id"] == "media_player.living_room"
+        assert entity["state"] == "playing"
+        assert "attributes" not in entity
+
+    def test_compact_cover_keeps_current_position(self, mock_mcp, config_path, ha_url, ha_token):
+        """compact=True on 'cover' domain keeps current_position attribute."""
+        cover_state = {
+            "entity_id": "cover.garage_door",
+            "state": "open",
+            "last_changed": "2026-06-01T08:00:00",
+            "last_updated": "2026-06-01T08:00:01",
+            "attributes": {
+                "friendly_name": "Garage Door",
+                "current_position": 100,
+                "device_class": "garage",
+            },
+        }
+        with patch("tools.states.make_ha_request") as mock_req:
+            mock_req.return_value = {"success": True, "data": cover_state}
+            register_state_tools(mock_mcp, ha_url, ha_token, config_path)
+            tool = mock_mcp._tools["get_entity_state"]
+            result = run_async(tool(entity_id="cover.garage_door", compact=True))
+            data = json.loads(result)
+
+        assert data["success"] is True
+        entity = data["entity"]
+        assert entity["attributes"]["current_position"] == 100
+        assert "device_class" not in entity["attributes"]
+
+    def test_compact_binary_sensor_keeps_device_class(
+        self, mock_mcp, config_path, ha_url, ha_token
+    ):
+        """compact=True on 'binary_sensor' keeps device_class attribute."""
+        bs_state = {
+            "entity_id": "binary_sensor.door",
+            "state": "off",
+            "last_changed": "2026-06-01T08:00:00",
+            "last_updated": "2026-06-01T08:00:01",
+            "attributes": {
+                "friendly_name": "Door Sensor",
+                "device_class": "door",
+            },
+        }
+        with patch("tools.states.make_ha_request") as mock_req:
+            mock_req.return_value = {"success": True, "data": bs_state}
+            register_state_tools(mock_mcp, ha_url, ha_token, config_path)
+            tool = mock_mcp._tools["get_entity_state"]
+            result = run_async(tool(entity_id="binary_sensor.door", compact=True))
+            data = json.loads(result)
+
+        assert data["success"] is True
+        entity = data["entity"]
+        assert entity["attributes"]["device_class"] == "door"
+
+    def test_compact_light_keeps_brightness_color_mode(
+        self, mock_mcp, config_path, ha_url, ha_token
+    ):
+        """compact=True on 'light' keeps brightness and color_mode attributes."""
+        light_state = {
+            "entity_id": "light.bedroom_lamp",
+            "state": "on",
+            "last_changed": "2026-06-01T08:00:00",
+            "last_updated": "2026-06-01T08:00:01",
+            "attributes": {
+                "friendly_name": "Bedroom Lamp",
+                "brightness": 128,
+                "color_mode": "color_temp",
+                "supported_color_modes": ["color_temp", "hs"],
+            },
+        }
+        with patch("tools.states.make_ha_request") as mock_req:
+            mock_req.return_value = {"success": True, "data": light_state}
+            register_state_tools(mock_mcp, ha_url, ha_token, config_path)
+            tool = mock_mcp._tools["get_entity_state"]
+            result = run_async(tool(entity_id="light.bedroom_lamp", compact=True))
+            data = json.loads(result)
+
+        assert data["success"] is True
+        entity = data["entity"]
+        assert entity["attributes"]["brightness"] == 128
+        assert entity["attributes"]["color_mode"] == "color_temp"
+        assert "supported_color_modes" not in entity["attributes"]
+
+
+class TestSearchEntitiesApiError:
+    """Tests for search_entities with include_state=True where per-entity API fails."""
+
+    def test_search_entities_include_state_api_error(
+        self, mock_mcp, config_path, ha_url, ha_token, sample_states
+    ):
+        """include_state=True with per-entity API returning error: entity still in results."""
+        with patch("tools.states.make_ha_request") as mock_req:
+
+            def mock_request_side_effect(url, token, endpoint, **kwargs):
+                if endpoint == "/api/states":
+                    return {"success": True, "data": sample_states}
+                return {"success": False, "error": "HTTP 503 Service Unavailable"}
+
+            mock_req.side_effect = mock_request_side_effect
+
+            register_state_tools(mock_mcp, ha_url, ha_token, config_path)
+            tool = mock_mcp._tools["search_entities"]
+            result = run_async(tool(search_term="living room", include_state=True))
+            data = json.loads(result)
+
+        assert data["success"] is True
+        assert data["count"] >= 1
+        for entity in data["results"]:
+            assert "entity_id" in entity
+            assert "state" in entity
+            assert "state_data" not in entity
+
+    def test_search_entities_initial_api_error(self, mock_mcp, config_path, ha_url, ha_token):
+        """search_entities when /api/states itself fails: propagates error."""
+        with patch("tools.states.make_ha_request") as mock_req:
+            mock_req.return_value = {"success": False, "error": "Connection refused"}
+            register_state_tools(mock_mcp, ha_url, ha_token, config_path)
+            tool = mock_mcp._tools["search_entities"]
+            result = run_async(tool(search_term="test"))
+            data = json.loads(result)
+
+        assert data["success"] is False
+        assert "Connection refused" in data["error"]
+
+
+class TestGetEntityStateEdgeCases:
+    """Additional edge-case tests for get_entity_state."""
+
+    def test_get_entity_state_no_friendly_name_compact(
+        self, mock_mcp, config_path, ha_url, ha_token
+    ):
+        """compact=True on entity without friendly_name falls back to attrs friendly_name."""
+        state_no_fname = {
+            "entity_id": "sensor.raw_value",
+            "state": "42",
+            "last_changed": "2026-06-01T08:00:00",
+            "last_updated": "2026-06-01T08:00:01",
+            "attributes": {
+                "friendly_name": "Raw Value",
+                "unit_of_measurement": "units",
+            },
+        }
+        with patch("tools.states.make_ha_request") as mock_req:
+            mock_req.return_value = {"success": True, "data": state_no_fname}
+            register_state_tools(mock_mcp, ha_url, ha_token, config_path)
+            tool = mock_mcp._tools["get_entity_state"]
+            result = run_async(tool(entity_id="sensor.raw_value", compact=True))
+            data = json.loads(result)
+
+        assert data["success"] is True
+        entity = data["entity"]
+        assert entity["friendly_name"] == "Raw Value"
+
+    def test_get_entity_state_non_404_api_error(self, mock_mcp, config_path, ha_url, ha_token):
+        """API error that is NOT a 404 propagates the original error."""
+        with patch("tools.states.make_ha_request") as mock_req:
+            mock_req.return_value = {
+                "success": False,
+                "error": "Internal Server Error",
+            }
+            register_state_tools(mock_mcp, ha_url, ha_token, config_path)
+            tool = mock_mcp._tools["get_entity_state"]
+            result = run_async(tool(entity_id="sensor.broken"))
+            data = json.loads(result)
+
+        assert data["success"] is False
+        assert "Internal Server Error" in data["error"]
+
+
+class TestStatesCacheHits:
+    """Tests for cache hit paths in state tools."""
+
+    def test_get_all_states_cache_hit(self, mock_mcp, config_path, ha_url, ha_token, sample_states):
+        """Second call to get_all_states returns cached response."""
+        with patch("tools.states.make_ha_request") as mock_req:
+            mock_req.return_value = {"success": True, "data": sample_states}
+            register_state_tools(mock_mcp, ha_url, ha_token, config_path)
+
+            tool = mock_mcp._tools["get_all_states"]
+            result1 = run_async(tool())
+            result2 = run_async(tool())
+
+        assert result1 == result2
+        assert mock_req.call_count == 1
+
+    def test_get_services_cache_hit(self, mock_mcp, config_path, ha_url, ha_token):
+        """Second call to get_services returns cached response."""
+        services_data = [{"domain": "light", "services": {"turn_on": {}}}]
+        with patch("tools.states.make_ha_request") as mock_req:
+            mock_req.return_value = {"success": True, "data": services_data}
+            register_state_tools(mock_mcp, ha_url, ha_token, config_path)
+
+            tool = mock_mcp._tools["get_services"]
+            result1 = run_async(tool())
+            result2 = run_async(tool())
+
+        assert result1 == result2
+        assert mock_req.call_count == 1
+
+    def test_get_states_grouped_cache_hit(
+        self, mock_mcp, config_path, ha_url, ha_token, sample_states
+    ):
+        """Second call to get_states_grouped returns cached response."""
+        with patch("tools.states.make_ha_request") as mock_req:
+            mock_req.return_value = {"success": True, "data": sample_states}
+            register_state_tools(mock_mcp, ha_url, ha_token, config_path)
+
+            tool = mock_mcp._tools["get_states_grouped"]
+            result1 = run_async(tool())
+            result2 = run_async(tool())
+
+        assert result1 == result2
+        assert mock_req.call_count == 1
+
+    def test_get_system_overview_cache_hit(
+        self, mock_mcp, config_path, ha_url, ha_token, sample_states
+    ):
+        """Second call to get_system_overview returns cached response."""
+        with (
+            patch("tools.states.make_ha_request") as mock_req,
+            patch("tools.states.load_registry") as mock_reg,
+        ):
+            mock_req.return_value = {"success": True, "data": sample_states}
+            mock_reg.return_value = {"data": {"entities": [], "devices": []}}
+            register_state_tools(mock_mcp, ha_url, ha_token, config_path)
+
+            tool = mock_mcp._tools["get_system_overview"]
+            result1 = run_async(tool())
+            result2 = run_async(tool())
+
+        assert result1 == result2
+        assert mock_req.call_count == 1
+
+
+class TestStatesExceptionHandlers:
+    """Tests for exception handler paths in state tool wrappers."""
+
+    def test_get_all_states_exception_handler(self, mock_mcp, config_path, ha_url, ha_token):
+        """get_all_states exception handler: exception → success=False."""
+        with patch("tools.states.make_ha_request", side_effect=RuntimeError("boom")):
+            register_state_tools(mock_mcp, ha_url, ha_token, config_path)
+            data = json.loads(run_async(mock_mcp._tools["get_all_states"]()))
+        assert data["success"] is False
+        assert "boom" in data["error"]
+
+    def test_get_entity_state_batch_exception_handler(
+        self, mock_mcp, config_path, ha_url, ha_token
+    ):
+        """get_entity_state_batch exception handler: exception → success=False."""
+        with patch("tools.states.make_ha_request", side_effect=RuntimeError("batch boom")):
+            register_state_tools(mock_mcp, ha_url, ha_token, config_path)
+            data = json.loads(
+                run_async(mock_mcp._tools["get_entity_state_batch"](entity_ids="sensor.x"))
+            )
+        assert data["success"] is False
+        assert "batch boom" in data["error"]
+
+    def test_get_states_grouped_exception_handler(self, mock_mcp, config_path, ha_url, ha_token):
+        """get_states_grouped exception handler: exception → success=False."""
+        with patch("tools.states.make_ha_request", side_effect=RuntimeError("grouped boom")):
+            register_state_tools(mock_mcp, ha_url, ha_token, config_path)
+            data = json.loads(run_async(mock_mcp._tools["get_states_grouped"]()))
+        assert data["success"] is False
+        assert "grouped boom" in data["error"]
+
+    def test_get_services_exception_handler(self, mock_mcp, config_path, ha_url, ha_token):
+        """get_services exception handler: exception → success=False."""
+        with patch("tools.states.make_ha_request", side_effect=RuntimeError("services boom")):
+            register_state_tools(mock_mcp, ha_url, ha_token, config_path)
+            data = json.loads(run_async(mock_mcp._tools["get_services"]()))
+        assert data["success"] is False
+        assert "services boom" in data["error"]
+
+    def test_search_entities_exception_handler(self, mock_mcp, config_path, ha_url, ha_token):
+        """search_entities exception handler: exception → success=False."""
+        with patch("tools.states.make_ha_request", side_effect=RuntimeError("search boom")):
+            register_state_tools(mock_mcp, ha_url, ha_token, config_path)
+            data = json.loads(run_async(mock_mcp._tools["search_entities"](search_term="test")))
+        assert data["success"] is False
+        assert "search boom" in data["error"]
+
+    def test_get_domains_summary_exception_handler(self, mock_mcp, config_path, ha_url, ha_token):
+        """get_domains_summary exception handler: exception → success=False."""
+        with patch("tools.states.make_ha_request", side_effect=RuntimeError("domains boom")):
+            register_state_tools(mock_mcp, ha_url, ha_token, config_path)
+            data = json.loads(run_async(mock_mcp._tools["get_domains_summary"]()))
+        assert data["success"] is False
+        assert "domains boom" in data["error"]
+
+    def test_get_system_overview_exception_handler(self, mock_mcp, config_path, ha_url, ha_token):
+        """get_system_overview exception handler: exception → success=False."""
+        with patch("tools.states.make_ha_request", side_effect=RuntimeError("overview boom")):
+            register_state_tools(mock_mcp, ha_url, ha_token, config_path)
+            data = json.loads(run_async(mock_mcp._tools["get_system_overview"]()))
+        assert data["success"] is False
+        assert "overview boom" in data["error"]
+
+    def test_get_states_filtered_exception_handler(self, mock_mcp, config_path, ha_url, ha_token):
+        """get_states_filtered exception handler: exception → success=False."""
+        with patch("tools.states.make_ha_request", side_effect=RuntimeError("filtered boom")):
+            register_state_tools(mock_mcp, ha_url, ha_token, config_path)
+            data = json.loads(run_async(mock_mcp._tools["get_states_filtered"]()))
+        assert data["success"] is False
+        assert "filtered boom" in data["error"]
+
+    def test_get_entity_changes_exception_handler(self, mock_mcp, config_path, ha_url, ha_token):
+        """get_entity_changes exception handler: exception → success=False."""
+        with patch("tools.states.make_ha_request", side_effect=RuntimeError("changes boom")):
+            register_state_tools(mock_mcp, ha_url, ha_token, config_path)
+            data = json.loads(run_async(mock_mcp._tools["get_entity_changes"]()))
+        assert data["success"] is False
+        assert "changes boom" in data["error"]
+
+    def test_get_history_batch_exception_handler(self, mock_mcp, config_path, ha_url, ha_token):
+        """get_history_batch exception handler: exception → success=False."""
+        with patch("tools.states.make_ha_request", side_effect=RuntimeError("history boom")):
+            register_state_tools(mock_mcp, ha_url, ha_token, config_path)
+            data = json.loads(
+                run_async(mock_mcp._tools["get_history_batch"](entity_ids="sensor.x"))
+            )
+        assert data["success"] is False
+        assert "history boom" in data["error"]
+
+    def test_verify_recent_implementation_exception_handler(
+        self, mock_mcp, config_path, ha_url, ha_token
+    ):
+        """verify_recent_implementation exception handler: exception → success=False."""
+        with patch("tools.states.make_ha_request", side_effect=RuntimeError("verify boom")):
+            register_state_tools(mock_mcp, ha_url, ha_token, config_path)
+            data = json.loads(run_async(mock_mcp._tools["verify_recent_implementation"]()))
+        assert data["success"] is False
+        assert "verify boom" in data["error"]

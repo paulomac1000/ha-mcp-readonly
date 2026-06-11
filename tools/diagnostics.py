@@ -15,7 +15,7 @@ import re
 import threading
 import time
 from collections import Counter, defaultdict
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -109,7 +109,7 @@ def _get_log_errors_with_patterns(
     api_errors: list[dict] = []  # type: ignore[type-arg]
     slow_entities: list[dict] = []  # type: ignore[type-arg]
 
-    cutoff = datetime.now() - timedelta(hours=hours)
+    cutoff = datetime.now(UTC) - timedelta(hours=hours)
 
     # Regex patterns
     entity_pattern = re.compile(
@@ -141,7 +141,7 @@ def _get_log_errors_with_patterns(
                     ts_match = timestamp_pattern.match(line)
                     if ts_match:
                         ts_str = ts_match.group(1)
-                        ts = datetime.strptime(ts_str, "%Y-%m-%d %H:%M:%S")
+                        ts = datetime.strptime(ts_str, "%Y-%m-%d %H:%M:%S").replace(tzinfo=UTC)
                         if ts < cutoff:
                             continue
                     else:
@@ -855,7 +855,7 @@ def _do_get_notification_history(
 
     recent_notifications = []
     try:
-        end_time = datetime.now()
+        end_time = datetime.now(UTC)
         start_time = end_time - timedelta(hours=24)
 
         logbook_res = make_ha_request(
@@ -916,7 +916,7 @@ def _do_get_energy_dashboard_data(
             except ValueError:
                 pass
 
-    now = datetime.now()
+    now = datetime.now(UTC)
     hour = now.hour
 
     workday_sensor = next(
@@ -1097,16 +1097,28 @@ def _do_diagnose_person_tracking(
         if not zones_list:
             zone_reg = load_registry("zone", config_path)
             for z in zone_reg.get("data", {}).get("items", []):
-                zones_list.append(
-                    {
-                        "entity_id": f"zone.{z.get('id', '')}",
-                        "name": z.get("name", z.get("id", "")),
-                        "latitude": z.get("latitude"),
-                        "longitude": z.get("longitude"),
-                        "radius": z.get("radius"),
-                        "passive": z.get("passive", False),
-                    }
-                )
+                if isinstance(z, str):
+                    zones_list.append(
+                        {
+                            "entity_id": f"zone.{z}",
+                            "name": z,
+                            "latitude": None,
+                            "longitude": None,
+                            "radius": None,
+                            "passive": False,
+                        }
+                    )
+                else:
+                    zones_list.append(
+                        {
+                            "entity_id": f"zone.{z.get('id', '')}",
+                            "name": z.get("name", z.get("id", "")),
+                            "latitude": z.get("latitude"),
+                            "longitude": z.get("longitude"),
+                            "radius": z.get("radius"),
+                            "passive": z.get("passive", False),
+                        }
+                    )
     except Exception:
         pass
 
@@ -1478,7 +1490,7 @@ def _do_diagnose_performance(
     logbook_res = make_ha_request(
         ha_url,
         ha_token,
-        f"/api/logbook/{(datetime.now() - timedelta(hours=24)).isoformat()}",
+        f"/api/logbook/{(datetime.now(UTC) - timedelta(hours=24)).isoformat()}",
     )
     if logbook_res.get("success"):
         trigger_counts: Counter[str] = Counter()

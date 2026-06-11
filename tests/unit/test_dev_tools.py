@@ -223,6 +223,21 @@ class TestTemplateTesting:
         assert data["success"] is True
         assert data["analysis"]["complexity_score"] >= 3
 
+    def test_get_template_performance_invalid_template(
+        self, mock_mcp, ha_url, ha_token, config_path
+    ):
+        """_do_get_template_performance raises -> wrapper exception handler."""
+        with patch(
+            "tools.dev_tools._do_get_template_performance",
+            side_effect=RuntimeError("HA unreachable"),
+        ):
+            register_dev_tools(mock_mcp, ha_url, ha_token, config_path)
+            data = json.loads(
+                mock_mcp._tools["get_template_performance"]("{{ bad }}", iterations=2)
+            )
+        assert data["success"] is False
+        assert "HA unreachable" in data["error"]
+
 
 class TestValidation:
     """Tests for validation tools."""
@@ -1280,6 +1295,138 @@ class TestEvalTemplatesBatch:
             )
             assert data["success"] is False
             assert "batch failed" in data["error"]
+
+
+class TestCompareTemplates:
+    """Tests for compare_templates tool."""
+
+    def test_compare_templates_match(self, mock_mcp, ha_url, ha_token, config_path):
+        with patch("tools.dev_tools.make_ha_request") as mock_req:
+            mock_req.return_value = {"success": True, "data": "42"}
+            register_dev_tools(mock_mcp, ha_url, ha_token, config_path)
+            data = json.loads(
+                mock_mcp._tools["compare_templates"](
+                    template_a="{{ 21+21 }}",
+                    template_b="{{ 6*7 }}",
+                )
+            )
+        assert data["success"] is True
+        assert data["match"] is True
+        assert data["result_a"] == "42"
+        assert data["result_b"] == "42"
+        assert data["warning"] is None
+        assert data["macro_cache_stale"] is False
+
+    def test_compare_templates_mismatch(self, mock_mcp, ha_url, ha_token, config_path):
+        with patch("tools.dev_tools.make_ha_request") as mock_req:
+            mock_req.side_effect = [
+                {"success": True, "data": "10"},
+                {"success": True, "data": "20"},
+            ]
+            register_dev_tools(mock_mcp, ha_url, ha_token, config_path)
+            data = json.loads(
+                mock_mcp._tools["compare_templates"](
+                    template_a="{{ 5+5 }}",
+                    template_b="{{ 10+10 }}",
+                )
+            )
+        assert data["success"] is True
+        assert data["match"] is False
+        assert data["result_a"] == "10"
+        assert data["result_b"] == "20"
+        assert data["macro_cache_stale"] is False
+        assert "different results" in (data["warning"] or "").lower()
+
+    def test_compare_templates_error_a(self, mock_mcp, ha_url, ha_token, config_path):
+        with patch("tools.dev_tools.make_ha_request") as mock_req:
+            mock_req.side_effect = [
+                {"success": False, "error": "TemplateSyntaxError: unexpected '}'"},
+                {"success": True, "data": "hello"},
+            ]
+            register_dev_tools(mock_mcp, ha_url, ha_token, config_path)
+            data = json.loads(
+                mock_mcp._tools["compare_templates"](
+                    template_a="{{ invalid }}",
+                    template_b="{{ 'hello' }}",
+                )
+            )
+        assert data["success"] is True
+        assert data["match"] is False
+        assert "Error:" in data["result_a"]
+        assert "TemplateSyntaxError" in data["result_a"]
+        assert data["result_b"] == "hello"
+        assert data["warning"] is not None
+
+    def test_compare_templates_error_b(self, mock_mcp, ha_url, ha_token, config_path):
+        with patch("tools.dev_tools.make_ha_request") as mock_req:
+            mock_req.side_effect = [
+                {"success": True, "data": "42"},
+                {"success": False, "error": "TemplateSyntaxError"},
+            ]
+            register_dev_tools(mock_mcp, ha_url, ha_token, config_path)
+            data = json.loads(
+                mock_mcp._tools["compare_templates"](
+                    template_a="{{ 42 }}",
+                    template_b="{{ bad }}",
+                )
+            )
+        assert data["success"] is True
+        assert data["match"] is False
+        assert data["result_a"] == "42"
+        assert "Error:" in data["result_b"]
+        assert data["warning"] == "Template B failed to render."
+
+    def test_compare_templates_macro_cache_stale(self, mock_mcp, ha_url, ha_token, config_path):
+        with patch("tools.dev_tools.make_ha_request") as mock_req:
+            mock_req.side_effect = [
+                {"success": True, "data": "5"},
+                {"success": True, "data": "10"},
+            ]
+            register_dev_tools(mock_mcp, ha_url, ha_token, config_path)
+            data = json.loads(
+                mock_mcp._tools["compare_templates"](
+                    template_a="{% from 'macros.jinja' import double %}{{ double(5) }}",
+                    template_b="{% from 'macros.jinja' import double %}{{ double(10) }}",
+                )
+            )
+        assert data["success"] is True
+        assert data["match"] is False
+        assert data["macro_cache_stale"] is True
+        assert "stale" in (data["warning"] or "").lower()
+
+    def test_compare_templates_both_fail(self, mock_mcp, ha_url, ha_token, config_path):
+        """Both templates return errors -> 'Both templates failed to render.' warning."""
+        with patch("tools.dev_tools.make_ha_request") as mock_req:
+            mock_req.side_effect = [
+                {"success": False, "error": "Error A"},
+                {"success": False, "error": "Error B"},
+            ]
+            register_dev_tools(mock_mcp, ha_url, ha_token, config_path)
+            data = json.loads(
+                mock_mcp._tools["compare_templates"](
+                    template_a="{{ bad }}",
+                    template_b="{{ also bad }}",
+                )
+            )
+        assert data["success"] is True
+        assert data["match"] is False
+        assert "Error:" in data["result_a"]
+        assert "Error:" in data["result_b"]
+        assert data["warning"] == "Both templates failed to render."
+        assert data["macro_cache_stale"] is False
+
+    def test_compare_templates_exception_handler(self, mock_mcp, ha_url, ha_token, config_path):
+        register_dev_tools(mock_mcp, ha_url, ha_token, config_path)
+        with patch("tools.dev_tools._do_compare_templates") as mock_do:
+            mock_do.side_effect = RuntimeError("compare crash")
+            data = json.loads(
+                mock_mcp._tools["compare_templates"](
+                    template_a="{{ 1+1 }}",
+                    template_b="{{ 2+2 }}",
+                )
+            )
+        assert data["success"] is False
+        assert "compare crash" in data["error"]
 
     def test_diagnose_energy_g12w_detected(self, mock_mcp, ha_url, ha_token, config_path):  # noqa: F841
         """Tariff entity should be detected."""

@@ -12,13 +12,18 @@ Optimizations:
 import asyncio
 import logging
 import time
-import urllib.parse
 from collections import Counter, defaultdict
 from datetime import UTC, datetime, timedelta
 from fnmatch import fnmatch
 from typing import Any
 
-from tools.utils import _error_response, _success_response, load_registry, make_ha_request
+from tools.utils import (
+    _build_history_url,
+    _error_response,
+    _success_response,
+    load_registry,
+    make_ha_request,
+)
 
 TOOLS_VERSION = "1.0.0"
 _logger = logging.getLogger(__name__)
@@ -153,13 +158,59 @@ def _minify_state(
 def _compact_state(state_obj: dict[str, Any]) -> dict[str, Any]:
     """Strip verbose fields from a state dict for compact/token-efficient output.
 
-    Keeps only: entity_id, state, friendly_name, last_changed, last_updated.
-    Drops: attributes, context, last_reported, and other large fields.
+    Keeps core fields (entity_id, state, friendly_name, last_changed, last_updated)
+    plus domain-specific essential attributes.
+
+    Domain rules:
+    - climate: keeps hvac_modes, hvac_action, current_temperature, temperature
+    - sensor: keeps unit_of_measurement, device_class
+    - light: keeps brightness, color_mode (if present)
+    - cover: keeps current_position (if present)
+    - binary_sensor: keeps device_class (if present)
+    - all others: no attributes kept
     """
-    return {
-        k: state_obj.get(k)
-        for k in ("entity_id", "state", "friendly_name", "last_changed", "last_updated")
+    entity_id = state_obj.get("entity_id", "")
+    domain = entity_id.split(".")[0] if entity_id else ""
+
+    friendly_name = state_obj.get("friendly_name")
+    if friendly_name is None:
+        attrs = state_obj.get("attributes", {}) or {}
+        friendly_name = attrs.get("friendly_name")
+
+    essentials = {
+        "entity_id": entity_id,
+        "state": state_obj.get("state"),
+        "friendly_name": friendly_name,
+        "last_changed": state_obj.get("last_changed"),
+        "last_updated": state_obj.get("last_updated"),
     }
+
+    attrs = state_obj.get("attributes", {}) or {}
+
+    keep_attrs: dict[str, Any] = {}
+    if domain == "climate":
+        for attr in ("hvac_modes", "hvac_action", "current_temperature", "temperature"):
+            if attr in attrs:
+                keep_attrs[attr] = attrs[attr]
+    elif domain == "sensor":
+        for attr in ("unit_of_measurement", "device_class"):
+            if attr in attrs:
+                keep_attrs[attr] = attrs[attr]
+    elif domain == "light":
+        for attr in ("brightness", "color_mode"):
+            if attr in attrs:
+                keep_attrs[attr] = attrs[attr]
+    elif domain == "cover":
+        if "current_position" in attrs:
+            keep_attrs["current_position"] = attrs["current_position"]
+    elif domain == "binary_sensor":
+        if "device_class" in attrs:
+            keep_attrs["device_class"] = attrs["device_class"]
+
+    if keep_attrs:
+        essentials["attributes"] = keep_attrs
+
+    return essentials
 
 
 def _get_entity_platform(entity_id: str, entity_registry: list[dict]) -> str:  # type: ignore[type-arg]
@@ -248,14 +299,11 @@ def _do_get_entity_state(
     entity_data.pop("context", None)
 
     if compact:
-        attrs = entity_data.get("attributes", {})
-        entity_data = {
-            "entity_id": entity_data.get("entity_id"),
-            "state": entity_data.get("state"),
-            "friendly_name": attrs.get("friendly_name"),
-            "last_changed": entity_data.get("last_changed"),
-            "last_updated": entity_data.get("last_updated"),
-        }
+        attrs = entity_data.get("attributes", {}) or {}
+        # Lift friendly_name to top level for _compact_state compatibility
+        if "friendly_name" in attrs and entity_data.get("friendly_name") is None:
+            entity_data["friendly_name"] = attrs["friendly_name"]
+        entity_data = _compact_state(entity_data)
 
     return {"success": True, "entity": entity_data}
 
@@ -401,6 +449,8 @@ def _do_search_entities(
     search_term: str,
     domain: str | None = None,
     max_results: int = 50,
+    include_state: bool = False,
+    compact: bool = False,
 ) -> dict[str, Any]:
     result = make_ha_request(ha_url, ha_token, "/api/states")
     if not result["success"]:
@@ -418,7 +468,15 @@ def _do_search_entities(
             continue
 
         if search_lower in entity_id.lower() or search_lower in friendly_name.lower():
-            results.append(_minify_state(s))
+            if compact:
+                entry = {"entity_id": entity_id, "state": s["state"]}
+            else:
+                entry = _minify_state(s)
+            if include_state:
+                state_result = make_ha_request(ha_url, ha_token, f"/api/states/{entity_id}")
+                if state_result.get("success") and state_result.get("data"):
+                    entry["state_data"] = state_result["data"]
+            results.append(entry)
 
             if len(results) >= max_results:
                 break
@@ -796,7 +854,6 @@ def _do_get_history_batch(
     limit = min(int(limit), 50)
 
     start_time = datetime.now(UTC) - timedelta(hours=hours_back)
-    start_str = start_time.isoformat()
 
     ids_list = [e.strip() for e in entity_ids.split(",") if e.strip()]
     if not ids_list:
@@ -811,7 +868,7 @@ def _do_get_history_batch(
 
     ids_param = ",".join(ids_list)
 
-    url = f"/api/history/period/{urllib.parse.quote(start_str)}?filter_entity_id={urllib.parse.quote(ids_param)}&minimal_response=true"
+    url = _build_history_url(start_time, entity_id=ids_param, minimal=True)
 
     result = make_ha_request(ha_url, ha_token, url)
     if not result["success"]:
@@ -1136,7 +1193,11 @@ def register_state_tools(mcp, ha_url, ha_token, config_path: str | None = None) 
 
     @mcp.tool()
     async def search_entities(
-        search_term: str, domain: str | None = None, max_results: int = 50
+        search_term: str,
+        domain: str | None = None,
+        max_results: int = 50,
+        include_state: bool = False,
+        compact: bool = False,
     ) -> str:
         """[READ] Search entities by name or entity_id.
 
@@ -1144,10 +1205,26 @@ def register_state_tools(mcp, ha_url, ha_token, config_path: str | None = None) 
             search_term: Phrase to search (case-insensitive).
             domain: Optional domain restriction (e.g., 'sensor').
             max_results: Maximum results (default 50).
+            include_state: Whether to fetch full per-entity state via /api/states/{entity_id}
+                and include it as "state_data" in each result (default: False).
+            compact: If True, return only entity_id + state for each result.
+                Default False (returns entity_id, state, friendly_name,
+                last_changed, last_updated, attributes).
+
+        Returns:
+            JSON string with matching entities and their states.
         """
         try:
             data = await asyncio.to_thread(
-                _do_search_entities, ha_url, ha_token, config_path, search_term, domain, max_results
+                _do_search_entities,
+                ha_url,
+                ha_token,
+                config_path,
+                search_term,
+                domain,
+                max_results,
+                include_state,
+                compact,
             )
         except Exception as e:
             _logger.exception("search_entities failed")

@@ -72,3 +72,5 @@ ha-ai-context*.md
 # AI agent artifacts
 .opencode/
 semgrep.sarif
+.omo/
+learnings.md

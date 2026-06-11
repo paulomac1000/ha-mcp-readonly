@@ -3,6 +3,7 @@ Automation Management Tools
 Tools for listing, searching, analyzing, and debugging Home Assistant automations.
 """
 
+import json
 import logging
 import os
 import re
@@ -13,7 +14,13 @@ from typing import Any, cast
 import yaml
 
 from tools.manifests import make_manifest, register_manifest
-from tools.utils import _error_response, _success_response, load_registry, make_ha_request
+from tools.utils import (
+    _build_history_url,
+    _error_response,
+    _success_response,
+    load_registry,
+    make_ha_request,
+)
 from tools.yaml_utils import HomeAssistantLoader
 
 _logger = logging.getLogger(__name__)
@@ -149,22 +156,41 @@ def _do_search_automations(
     uses_blueprint: bool | None = None,
     deep: bool = False,
     category: str | None = None,
+    include_entity_id: bool = False,
     config_path: str | None = None,
 ) -> dict[str, Any]:
     data = _load_automations(config_path)  # type: ignore[arg-type]
     results = []
+
+    # Pre-load entity registry for entity_id resolution if needed
+    entity_map: dict[str, str] = {}
+    if include_entity_id and config_path:
+        entity_entries = load_registry("core.entity_registry", config_path)
+        if entity_entries:
+            entities = entity_entries.get("data", {}).get("entities", [])
+            for ent in entities:
+                ent_eid = ent.get("entity_id", "")
+                if ent_eid.startswith("automation."):
+                    ent_uid = ent.get("unique_id", "")
+                    if ent_uid:
+                        entity_map[ent_uid] = ent_eid
 
     category_id: str | None = None
     if category and config_path:
         cat_registry = load_registry("core.category_registry", config_path)
         cat_entries = cat_registry.get("data", {}).get("categories", [])
         for cat_entry in cat_entries:
-            if cat_entry.get("category_id") == category:
-                category_id = category
-                break
-            if cat_entry.get("name", "").lower() == category.lower():
-                category_id = cat_entry.get("category_id")
-                break
+            if isinstance(cat_entry, str):
+                if cat_entry == category:
+                    category_id = category
+                    break
+            else:
+                if cat_entry.get("category_id") == category:
+                    category_id = category
+                    break
+                if cat_entry.get("name", "").lower() == category.lower():
+                    category_id = cat_entry.get("category_id")
+                    break
         if (
             category_id
             and cat_entries is not None
@@ -242,6 +268,10 @@ def _do_search_automations(
             clean_item.pop("id", None)
             res["code"] = yaml.dump(clean_item, sort_keys=False, allow_unicode=True)
 
+        if include_entity_id:
+            auto_unique_id = str(auto_id) if auto_id else ""
+            res["entity_id"] = entity_map.get(auto_unique_id, None)
+
         results.append(res)
 
     def _sort_key(r):  # type: ignore[no-untyped-def]
@@ -258,33 +288,125 @@ def _do_search_automations(
     }
 
 
-def _do_list_automations(config_path: str) -> dict[str, Any]:
+def _do_list_automations(config_path: str, detail_level: str = "full") -> dict[str, Any]:
     data = _load_automations(config_path)
+    if detail_level not in ("summary", "full"):
+        return {
+            "success": False,
+            "error": f"Invalid detail_level '{detail_level}'. Must be 'summary' or 'full'.",
+        }
     summary = [
         {
             "id": item.get("id"),
             "alias": item.get("alias", "No Name"),
-            "description": item.get("description", ""),
             "mode": item.get("mode", "single"),
             "uses_blueprint": "use_blueprint" in item,
             "blueprint_path": item.get("use_blueprint", {}).get("path")
             if "use_blueprint" in item
             else None,
-            "trigger_count": len(item.get("trigger", []))
-            if isinstance(item.get("trigger"), list)
-            else 1
-            if item.get("trigger")
-            else 0,
-            "action_count": len(item.get("action", []))
-            if isinstance(item.get("action"), list)
-            else 1
-            if item.get("action")
-            else 0,
+            **(
+                {}
+                if detail_level == "summary"
+                else {
+                    "description": item.get("description", ""),
+                    "trigger_count": len(item.get("trigger", []))
+                    if isinstance(item.get("trigger"), list)
+                    else 1
+                    if item.get("trigger")
+                    else 0,
+                    "action_count": len(item.get("action", []))
+                    if isinstance(item.get("action"), list)
+                    else 1
+                    if item.get("action")
+                    else 0,
+                }
+            ),
         }
         for item in data
     ]
 
     return {"success": True, "total_count": len(summary), "automations": summary}
+
+
+def _do_get_automation_entity_id(
+    identifier: str,
+    config_path: str,
+    ha_url: str | None = None,
+    ha_token: str | None = None,
+) -> dict[str, Any]:
+    """Resolve automation alias to entity_id via entity registry.
+
+    Searches the HA entity registry for automation.* entities matching by
+    alias (friendly_name). Finds BOTH YAML and UI-created automations.
+
+    Args:
+        identifier: Automation alias or partial name to search for.
+        config_path: Path to HA config directory.
+        ha_url: Optional HA URL (for future use).
+        ha_token: Optional HA token (for future use).
+
+    Returns:
+        Dict with alias, entity_id, unique_id on match, or error on no match.
+    """
+    if not identifier or not isinstance(identifier, str) or not identifier.strip():
+        return {
+            "success": False,
+            "error": "identifier is required and must be a non-empty string",
+        }
+
+    identifier = identifier.strip()
+
+    entity_entries = load_registry("core.entity_registry", config_path)
+    entities = entity_entries.get("data", {}).get("entities", []) if entity_entries else []
+
+    exact_match: dict[str, Any] | None = None
+    partial_matches: list[dict[str, Any]] = []
+
+    for entity in entities:
+        entity_id: str = entity.get("entity_id", "")
+        if not entity_id.startswith("automation."):
+            continue
+
+        alias: str = entity.get("name") or entity.get("original_name", entity_id)
+        unique_id: str = entity.get("unique_id", "")
+
+        if alias and identifier.lower() == alias.lower():
+            exact_match = {
+                "alias": alias,
+                "entity_id": entity_id,
+                "unique_id": unique_id,
+            }
+            break
+
+        if alias and identifier.lower() in alias.lower():
+            partial_matches.append(
+                {
+                    "alias": alias,
+                    "entity_id": entity_id,
+                    "unique_id": unique_id,
+                }
+            )
+
+    if exact_match:
+        return {
+            "success": True,
+            **exact_match,
+        }
+
+    if partial_matches:
+        first = partial_matches[0]
+        return {
+            "success": True,
+            "alias": first["alias"],
+            "entity_id": first["entity_id"],
+            "unique_id": first["unique_id"],
+            "matches_count": len(partial_matches),
+        }
+
+    return {
+        "success": False,
+        "error": f"No automation found matching '{identifier}'",
+    }
 
 
 def _do_get_automation_code(automation_id: str, config_path: str) -> dict[str, Any]:
@@ -363,6 +485,8 @@ def _do_search_automations_by_entity(entity_id: str, config_path: str) -> dict[s
             usage.append("condition")
         if entity_id in str(item.get("action", [])):
             usage.append("action")
+        if "use_blueprint" in item and entity_id in str(item["use_blueprint"].get("input", {})):
+            usage.append("blueprint_input")
 
         if usage:
             results.append(
@@ -428,6 +552,95 @@ def _do_get_automation_conflicts(entity_id: str, config_path: str) -> dict[str, 
     }
 
 
+def _analyze_choose_branches(actions: list[dict[str, Any]]) -> dict[str, Any]:
+    """Analyze choose blocks in automation actions.
+
+    Extracts structured metadata from each choose branch: condition types,
+    action count, and whether a default branch exists.
+
+    Args:
+        actions: List of action dicts from an automation.
+
+    Returns:
+        Dict with choose_count and branches list.
+    """
+    choose_count = 0
+    branches: list[dict[str, Any]] = []
+    has_default = False
+
+    for action in actions:
+        if not isinstance(action, dict) or "choose" not in action:
+            continue
+
+        act_default = action.get("default")
+        choose_block = action["choose"]
+        if act_default is not None:
+            has_default = True
+
+        if not isinstance(choose_block, list):
+            continue
+
+        for branch_idx, choice in enumerate(choose_block):
+            if not isinstance(choice, dict):
+                continue
+
+            choose_count += 1
+
+            raw_conditions = choice.get("conditions", [])
+            if isinstance(raw_conditions, dict):
+                raw_conditions = [raw_conditions]
+            elif not isinstance(raw_conditions, list):
+                raw_conditions = []
+
+            condition_types: list[str] = []
+            for cond in raw_conditions:
+                if isinstance(cond, str):
+                    condition_types.append(f"alias:{cond}")
+                elif isinstance(cond, dict):
+                    cond_type = cond.get("condition", "unknown")
+                    if cond_type == "trigger":
+                        tid = cond.get("id", "?")
+                        if isinstance(tid, list):
+                            tid = ",".join(tid)
+                        condition_types.append(f"trigger:{tid}")
+                    elif cond_type == "state":
+                        condition_types.append(f"state:{cond.get('entity_id', '?')}")
+                    elif cond_type == "numeric_state":
+                        condition_types.append(f"numeric_state:{cond.get('entity_id', '?')}")
+                    elif cond_type == "time":
+                        condition_types.append(
+                            f"time:{cond.get('after', cond.get('before', cond.get('weekday', '?')))}"
+                        )
+                    elif cond_type == "sun":
+                        condition_types.append(f"sun:{cond.get('after', cond.get('before', '?'))}")
+                    elif cond_type == "template":
+                        vt = cond.get("value_template", "")
+                        condition_types.append(f"template:{vt[:40]}" if vt else "template:?")
+                    elif cond_type == "zone":
+                        condition_types.append(f"zone:{cond.get('entity_id', '?')}")
+                    else:
+                        condition_types.append(cond_type)
+
+            raw_sequence = choice.get("sequence", [])
+            if not isinstance(raw_sequence, list):
+                raw_sequence = [raw_sequence] if raw_sequence else []
+
+            branches.append(
+                {
+                    "index": branch_idx,
+                    "conditions": condition_types,
+                    "actions_count": len(raw_sequence),
+                    "has_default": False,
+                }
+            )
+
+    return {
+        "choose_count": choose_count,
+        "has_default": has_default,
+        "branches": branches,
+    }
+
+
 def _do_diagnose_automation(
     automation_id: str,
     detail_level: str = "summary",
@@ -486,8 +699,17 @@ def _do_diagnose_automation(
     if detail_level == "full" and "use_blueprint" in automation:
         blueprint_path = automation["use_blueprint"].get("path")
         if blueprint_path:
-            blueprint_file = os.path.join(config_path, "blueprints", blueprint_path)  # type: ignore[arg-type]
-            if os.path.exists(blueprint_file):
+            blues_base = os.path.realpath(os.path.join(config_path, "blueprints"))  # type: ignore[arg-type]
+            blueprint_file = os.path.realpath(os.path.join(blues_base, blueprint_path))
+            if not blueprint_file.startswith(blues_base + os.sep):
+                result["issues"].append(  # type: ignore[attr-defined]
+                    {
+                        "severity": "error",
+                        "type": "blueprint_path_traversal",
+                        "message": f"Blueprint path contains directory traversal: {blueprint_path}",
+                    }
+                )
+            elif os.path.exists(blueprint_file):
                 try:
                     with open(blueprint_file, encoding="utf-8") as f:
                         blueprint_data = yaml.load(f, Loader=HomeAssistantLoader)  # nosec B506
@@ -906,6 +1128,11 @@ def _do_diagnose_automation(
                     )
 
             result["action_analysis"].append(analysis)  # type: ignore[attr-defined]
+
+        # Analyze choose blocks (full detail only)
+        choose_analysis = _analyze_choose_branches(actions)
+        if choose_analysis["choose_count"] > 0:
+            result["choose_analysis"] = choose_analysis
     else:
         for idx, action in enumerate(actions):
             if "variables" in action:
@@ -1081,9 +1308,16 @@ def _do_get_automation_usage_stats(
     config_path: str | None = None,
     ha_url: str | None = None,
     ha_token: str | None = None,
+    detail_level: str = "summary",
 ) -> dict[str, Any]:
     if not ha_url or not ha_token:
         return {"success": False, "error": "HA API not configured (ha_url/ha_token missing)"}
+
+    if detail_level not in ("summary", "full"):
+        return {
+            "success": False,
+            "error": f"Invalid detail_level '{detail_level}'. Must be 'summary' or 'full'.",
+        }
 
     data = _load_automations(config_path)  # type: ignore[arg-type]
     automation = _get_automation_by_id_or_alias(data, automation_id)
@@ -1134,11 +1368,12 @@ def _do_get_automation_usage_stats(
                 if eid not in states_dict:
                     missing_entities.append(eid)
 
-    start_time = (datetime.now(UTC) - timedelta(hours=hours_back)).isoformat()
+    start_dt = datetime.now(UTC) - timedelta(hours=hours_back)
+    start_time = start_dt.isoformat()
     history_result = make_ha_request(
         ha_url,
         ha_token,
-        f"/api/history/period/{start_time}?filter_entity_id={entity_id}",
+        _build_history_url(start_dt, entity_id=entity_id, minimal=False),
     )
 
     last_run = None
@@ -1205,7 +1440,7 @@ def _do_get_automation_usage_stats(
 
         is_working = bool(is_enabled and (run_count > 0 or recently_triggered))
 
-    response = {
+    response: dict[str, Any] = {
         "success": True,
         "automation": {
             "alias": automation.get("alias")  # type: ignore[union-attr]
@@ -1225,6 +1460,82 @@ def _do_get_automation_usage_stats(
         },
         "missing_entities": missing_entities,
     }
+
+    if detail_level == "full":
+        try:
+            logbook_result = make_ha_request(
+                ha_url, ha_token, f"/api/logbook/{start_time}?entity={entity_id}"
+            )
+            recent_activity: list[dict[str, Any]] = []
+            if logbook_result.get("success") and isinstance(logbook_result.get("data"), list):
+                for entry in logbook_result["data"][-10:]:
+                    recent_activity.append(
+                        {
+                            "when": entry.get("when"),
+                            "message": entry.get("message"),
+                            "context_id": entry.get("context_id"),
+                            "domain": entry.get("domain"),
+                        }
+                    )
+            response["recent_activity"] = recent_activity
+
+            state_changes: list[dict[str, Any]] = []
+            entity_candidates = set(entities)
+            if not entity_candidates and not from_api:
+                deps_result = _do_get_automation_dependencies(automation_id, config_path)  # type: ignore[arg-type]
+                if deps_result.get("success"):
+                    for ent in deps_result.get("dependencies", {}).get("entities", []):
+                        if isinstance(ent, str) and not ent.startswith("script."):
+                            entity_candidates.add(ent)
+
+            sample_entities = sorted(entity_candidates)[:5]
+            if sample_entities:
+                history_filter = ",".join(sample_entities)
+                entity_hist_result = make_ha_request(
+                    ha_url,
+                    ha_token,
+                    _build_history_url(start_dt, entity_id=history_filter, minimal=False),
+                )
+                if entity_hist_result.get("success") and isinstance(
+                    entity_hist_result.get("data"), list
+                ):
+                    for series in entity_hist_result["data"]:
+                        if not isinstance(series, list) or len(series) < 2:
+                            continue
+                        eid = series[0].get("entity_id", "unknown") if series else "unknown"
+                        for point in series[-5:]:
+                            idx = series.index(point)
+                            prev_point = series[idx - 1] if idx > 0 else None
+                            state_changes.append(
+                                {
+                                    "entity_id": eid,
+                                    "from": prev_point.get("state") if prev_point else None,
+                                    "to": point.get("state"),
+                                    "when": point.get("last_changed") or point.get("last_updated"),
+                                }
+                            )
+            response["state_changes"] = state_changes
+
+            context_chain: list[dict[str, Any]] = []
+            if logbook_result.get("success") and isinstance(logbook_result.get("data"), list):
+                context_ids_seen: dict[str, dict[str, Any]] = {}
+                for entry in logbook_result["data"]:
+                    ctx_id = entry.get("context_id")
+                    if ctx_id and ctx_id not in context_ids_seen:
+                        context_ids_seen[ctx_id] = {
+                            "context_id": ctx_id,
+                            "parent_id": entry.get("context_parent_id"),
+                            "entries_count": 1,
+                        }
+                    elif ctx_id:
+                        context_ids_seen[ctx_id]["entries_count"] += 1
+                context_chain = list(context_ids_seen.values())
+            response["context_chain"] = context_chain
+
+        except Exception:
+            response.setdefault("recent_activity", [])
+            response.setdefault("state_changes", [])
+            response.setdefault("context_chain", [])
 
     return response
 
@@ -1890,12 +2201,17 @@ def _do_validate_automation_names(
         cat_entries = cat_registry.get("data", {}).get("categories", [])
         target_category_id: str | None = None
         for cat_entry in cat_entries:
-            if cat_entry.get("category_id") == category_filter:
-                target_category_id = category_filter
-                break
-            if cat_entry.get("name", "").lower() == category_filter.lower():
-                target_category_id = cat_entry.get("category_id")
-                break
+            if isinstance(cat_entry, str):
+                if cat_entry == category_filter:
+                    target_category_id = category_filter
+                    break
+            else:
+                if cat_entry.get("category_id") == category_filter:
+                    target_category_id = category_filter
+                    break
+                if cat_entry.get("name", "").lower() == category_filter.lower():
+                    target_category_id = cat_entry.get("category_id")
+                    break
 
     for item in automations:
         alias = str(item.get("alias") or "")
@@ -2043,6 +2359,154 @@ def _do_validate_automation_names(
     }
 
 
+def _deep_substitute_inputs(obj: Any, user_inputs: dict[str, Any]) -> Any:
+    """Recursively substitute ``!input <var>`` strings with user-provided values.
+
+    Blueprint YAML templates use ``!input <variable_name>`` tags that the
+    ``HomeAssistantLoader`` converts to plain strings (e.g. ``"!input motion_sensor"``).
+    This function walks the parsed dict/list structure and replaces those placeholder
+    strings with the concrete values from ``user_inputs``.
+
+    Args:
+        obj: Parsed blueprint template (dict, list, or scalar).
+        user_inputs: Dictionary mapping input variable names to their values.
+
+    Returns:
+        The same structure with ``!input <var>`` strings replaced by concrete values.
+    """
+    if isinstance(obj, dict):
+        return {key: _deep_substitute_inputs(value, user_inputs) for key, value in obj.items()}
+    if isinstance(obj, list):
+        return [_deep_substitute_inputs(item, user_inputs) for item in obj]
+    if isinstance(obj, str) and obj.startswith("!input ") and len(obj) > 7:
+        var_name = obj[7:].strip()
+        if var_name in user_inputs:
+            return user_inputs[var_name]
+    return obj
+
+
+def _do_resolve_blueprint_automation(
+    automation_id: str,
+    config_path: str,
+) -> dict[str, Any]:
+    """Resolve a blueprint automation to its concrete configuration.
+
+    If the automation uses a blueprint (``use_blueprint`` key present), loads the
+    blueprint YAML, substitutes the user-provided input values into the blueprint
+    template, and returns the resolved automation as if it were a regular
+    (non-blueprint) automation.  The stored YAML is never modified — resolution is
+    computed, not persisted.
+
+    If the automation does NOT use a blueprint, returns it unchanged (same shape as
+    ``_do_get_automation_code``).
+
+    Args:
+        automation_id: Automation alias or id (from ``automations.yaml``).
+        config_path: Path to the Home Assistant config directory.
+
+    Returns:
+        Dict with ``success``, ``alias``, ``automation_id``, ``is_blueprint``,
+        ``resolved_yaml``, and optionally ``blueprint_path`` and ``user_inputs``.
+    """
+    if not automation_id or not isinstance(automation_id, str) or not automation_id.strip():
+        return {
+            "success": False,
+            "error": "automation_id is required and must be a non-empty string",
+        }
+
+    data = _load_automations(config_path)
+    item = _get_automation_by_id_or_alias(data, automation_id)
+
+    if not item:
+        return {"success": False, "error": f"Automation '{automation_id}' not found"}
+
+    automation_id_value = item.get("id")
+    use_blueprint = item.get("use_blueprint")
+
+    if not use_blueprint:
+        clean_item = item.copy()
+        clean_item.pop("id", None)
+        return {
+            "success": True,
+            "alias": item.get("alias"),
+            "automation_id": automation_id_value,
+            "is_blueprint": False,
+            "resolved_yaml": clean_item,
+        }
+
+    # Blueprint automation — resolve
+    blueprint_path = use_blueprint.get("path")
+    user_inputs = use_blueprint.get("input", {})
+
+    if not blueprint_path:
+        return {
+            "success": False,
+            "error": "Automation uses a blueprint but no path specified",
+        }
+
+    # Validate and load the blueprint YAML file
+    import os as _os
+
+    blues_base = _os.path.realpath(_os.path.join(config_path, "blueprints"))
+    blueprint_file = _os.path.realpath(_os.path.join(blues_base, blueprint_path))
+    if not blueprint_file.startswith(blues_base + _os.sep):
+        return {
+            "success": False,
+            "error": "Invalid blueprint path: path is outside the blueprints directory",
+        }
+    if not _os.path.isfile(blueprint_file):
+        # Fallback: some blueprint references omit the "automation/" domain prefix.
+        # Try again with it prepended (HA resolves blueprints under <domain>/<path>).
+        fallback_file = _os.path.realpath(_os.path.join(blues_base, "automation", blueprint_path))
+        if not fallback_file.startswith(blues_base + _os.sep) or not _os.path.isfile(fallback_file):
+            return {
+                "success": False,
+                "error": f"Blueprint file not found: {blueprint_path}",
+            }
+        blueprint_file = fallback_file
+
+    try:
+        with open(blueprint_file, encoding="utf-8") as f:
+            blueprint_data = yaml.load(f, Loader=HomeAssistantLoader)  # nosec B506
+    except Exception as e:
+        return {
+            "success": False,
+            "error": f"Failed to load blueprint '{blueprint_path}': {str(e)}",
+        }
+
+    if not isinstance(blueprint_data, dict):
+        return {
+            "success": False,
+            "error": f"Blueprint '{blueprint_path}' is not a valid mapping",
+        }
+
+    # Build the resolved automation from the blueprint template.
+    # The blueprint contains a `blueprint:` metadata key and the template sections
+    # (trigger, condition, action, mode, max, max_exceeded, variables).
+    # We take everything EXCEPT the `blueprint:` key and substitute inputs.
+    template_keys = {k for k in blueprint_data if k != "blueprint"}
+
+    resolved: dict[str, Any] = {}
+    for key in template_keys:
+        resolved[key] = _deep_substitute_inputs(blueprint_data[key], user_inputs)
+
+    # Merge automation-level fields from the blueprint instance
+    # (alias, description, mode, max, max_exceeded) that may override template values.
+    for override_key in ("alias", "description", "mode", "max", "max_exceeded"):
+        if override_key in item:
+            resolved[override_key] = item[override_key]
+
+    return {
+        "success": True,
+        "alias": item.get("alias"),
+        "automation_id": automation_id_value,
+        "is_blueprint": True,
+        "blueprint_path": blueprint_path,
+        "user_inputs": user_inputs,
+        "resolved_yaml": resolved,
+    }
+
+
 def _do_diagnose_category_alias_mismatch(
     config_path: str | None = None,
 ) -> dict[str, Any]:
@@ -2056,9 +2520,12 @@ def _do_diagnose_category_alias_mismatch(
     cat_entries = cat_registry.get("data", {}).get("categories", [])
     cat_id_to_name: dict[str, str] = {}
     for cat in cat_entries:
-        cid = cat.get("category_id", "")
-        if cid:
-            cat_id_to_name[cid] = cat.get("name", cid)
+        if isinstance(cat, str):
+            cat_id_to_name[cat] = cat
+        else:
+            cid = cat.get("category_id", "")
+            if cid:
+                cat_id_to_name[cid] = cat.get("name", cid)
 
     for item in automations:
         alias = str(item.get("alias") or "")
@@ -2126,11 +2593,12 @@ def register_automation_tools(mcp, config_path, ha_url=None, ha_token=None) -> N
         uses_blueprint: bool | None = None,
         deep: bool = False,
         category: str | None = None,
+        include_entity_id: bool = False,
     ) -> str:
         """[READ] Search automations by alias, description, mode, or blueprint usage. ~95% token savings vs listing all.
 
         ~95% token savings when searching for a specific automation.
-        Instead of: list_automations() (111 items) → search (1-5 items)
+        Instead of: list_automations() (111 items) -> search (1-5 items)
 
         Args:
             search_term: Searches in id, alias, description (case-insensitive)
@@ -2139,6 +2607,7 @@ def register_automation_tools(mcp, config_path, ha_url=None, ha_token=None) -> N
             uses_blueprint: True = only blueprint, False = only native, None = all
             deep: Recursively search nested fields (variables, choose branches, sequences) (default: False)
             category: Filter by category_id or category_name (default: None)
+            include_entity_id: Whether to include resolved entity_id from entity registry (default: False)
 
         Returns:
             JSON with matching automations, optional full code, and match_paths when deep=True
@@ -2158,6 +2627,7 @@ def register_automation_tools(mcp, config_path, ha_url=None, ha_token=None) -> N
                 uses_blueprint=uses_blueprint,
                 deep=deep,
                 category=category,
+                include_entity_id=include_entity_id,
                 config_path=config_path,
             )
             return (
@@ -2170,13 +2640,20 @@ def register_automation_tools(mcp, config_path, ha_url=None, ha_token=None) -> N
             return _error_response(str(exc))
 
     @mcp.tool()
-    def list_automations() -> str:
+    def list_automations(detail_level: str = "full") -> str:
         """[READ] Fetches list of names and ids of all automations.
 
         Warning: returns all 111 automations - use search_automations() if looking for a specific one.
+
+        Args:
+            detail_level: "summary" (alias+mode only) or "full" (all metadata including
+                description, trigger_count, action_count). Default: "full".
+
+        Returns:
+            JSON with success, total_count, and automations list.
         """
         try:
-            result = _do_list_automations(config_path)
+            result = _do_list_automations(config_path, detail_level=detail_level)
             return (
                 _success_response(result)
                 if result.get("success")
@@ -2206,14 +2683,13 @@ def register_automation_tools(mcp, config_path, ha_url=None, ha_token=None) -> N
 
     @mcp.tool()
     def get_automation_dependencies(automation_id: str) -> str:
-        """[READ] Analyze automation dependencies: lists used entities, scripts, services, and blueprints.
-        Lists used entities, scripts, services, and blueprints.
+        """[READ] Analyze automation dependencies: lists used entities, scripts, scenes, and blueprints.
 
         Args:
             automation_id: Automation id or alias.
 
         Returns:
-            JSON with lists: entities, scripts, services, blueprints.
+            JSON with lists: entities, scripts, and scenes.
         """
         try:
             result = _do_get_automation_dependencies(automation_id, config_path)
@@ -2311,22 +2787,23 @@ def register_automation_tools(mcp, config_path, ha_url=None, ha_token=None) -> N
             return _error_response(str(exc))
 
     @mcp.tool()
-    def get_automation_usage_stats(automation_id: str, hours_back: int = 24) -> str:
+    def get_automation_usage_stats(
+        automation_id: str, hours_back: int = 24, detail_level: str = "summary"
+    ) -> str:
         """[READ] Get automation usage statistics: run count, last triggered time, recent activity from history.
 
         Target: Automation usage statistics.
 
-        returns:
-            - last_run: Last run (based on history + last_triggered)
-            - run_count: Run count from logs (history)
-            - is_working: Whether automation actually works (active state + recent triggers)
-            - missing_entities: Entities used in automation that no longer exist in HA
-
-        Useful for debugging "does the automation even trigger".
-
         Args:
-            automation_id: Alias or id from automations.yaml (prefer alias)
-            hours_back: How many hours back to check history (default: 24)
+            automation_id: Alias or id from automations.yaml (prefer alias).
+            hours_back: How many hours back to check history (default: 24).
+            detail_level: 'summary' (default, backward compatible) or 'full'. 'full' adds
+                recent_activity (logbook entries), state_changes (dependency entity state
+                transitions), and context_chain (context_id relationships).
+
+        Returns:
+            JSON with success, automation metadata, stats, and optionally recent_activity,
+            state_changes, and context_chain when detail_level='full'.
         """
         try:
             result = _do_get_automation_usage_stats(
@@ -2335,6 +2812,7 @@ def register_automation_tools(mcp, config_path, ha_url=None, ha_token=None) -> N
                 config_path=config_path,
                 ha_url=ha_url,
                 ha_token=ha_token,
+                detail_level=detail_level,
             )
             return (
                 _success_response(result)
@@ -2527,6 +3005,53 @@ def register_automation_tools(mcp, config_path, ha_url=None, ha_token=None) -> N
             return _error_response(str(exc))
 
     @mcp.tool()
+    async def get_automation_entity_id(identifier: str) -> str:
+        """[READ] Resolve automation alias to entity_id. Searches HA entity registry for automation.* entities matching by friendly_name (alias).
+
+        Args:
+            identifier: Automation alias or partial name to search for (e.g., "Morning Routine").
+
+        Returns:
+            JSON with alias, entity_id, unique_id, and optionally matches_count for partial matches.
+        """
+        try:
+            result = _do_get_automation_entity_id(identifier, config_path, ha_url, ha_token)
+            return _success_response(result) if result.get("entity_id") else json.dumps(result)
+        except Exception as exc:
+            _logger.exception("get_automation_entity_id failed")
+            return _error_response(str(exc))
+
+    @mcp.tool()
+    def resolve_blueprint_automation(automation_id: str) -> str:
+        """[READ] Resolves a blueprint automation to its concrete configuration.
+
+        If the automation uses a blueprint (``use_blueprint`` key), loads the
+        blueprint YAML, substitutes user-provided input values into the template,
+        and returns the resolved automation as if it were a regular (non-blueprint)
+        automation.  Regular automations are returned unchanged.
+
+        Resolution is computed, not persisted — the stored YAML is never modified.
+
+        Args:
+            automation_id: Automation alias or id (from automations.yaml).
+
+        Returns:
+            JSON with ``resolved_yaml`` containing the concrete triggers, conditions,
+            and actions with all ``!input`` tags substituted.  Includes ``is_blueprint``
+            flag and, for blueprint automations, ``blueprint_path`` and ``user_inputs``.
+        """
+        try:
+            result = _do_resolve_blueprint_automation(automation_id, config_path)
+            return (
+                _success_response(result)
+                if result.get("success")
+                else _error_response(result.get("error", "Unknown error"))
+            )
+        except Exception as exc:
+            _logger.exception("resolve_blueprint_automation failed")
+            return _error_response(str(exc))
+
+    @mcp.tool()
     def diagnose_category_alias_mismatch() -> str:
         """Detect mismatches between automation alias prefixes and assigned categories.
 
@@ -2551,6 +3076,9 @@ def register_automation_tools(mcp, config_path, ha_url=None, ha_token=None) -> N
             return _error_response(str(exc))
 
     register_manifest(
+        "get_automation_entity_id", make_manifest("get_automation_entity_id", latency="fast")
+    )
+    register_manifest(
         "search_inside_automations", make_manifest("search_inside_automations", latency="fast")
     )
     register_manifest(
@@ -2563,4 +3091,8 @@ def register_automation_tools(mcp, config_path, ha_url=None, ha_token=None) -> N
     register_manifest(
         "diagnose_category_alias_mismatch",
         make_manifest("diagnose_category_alias_mismatch", latency="fast"),
+    )
+    register_manifest(
+        "resolve_blueprint_automation",
+        make_manifest("resolve_blueprint_automation", latency="fast"),
     )

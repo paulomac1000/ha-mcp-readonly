@@ -10,7 +10,7 @@ health_port: 9091
 rest_port: 9100
 use_docker: true
 is_mcp: true
-expected_tools: 122
+expected_tools: 145
 use_codecov: true
 use_semgrep: true
 use_dependabot: true

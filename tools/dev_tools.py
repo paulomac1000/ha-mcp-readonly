@@ -53,6 +53,65 @@ def _do_test_template(template, timeout, report_errors, ha_url, ha_token):  # ty
     }
 
 
+def _do_compare_templates(template_a, template_b, timeout, ha_url, ha_token):  # type: ignore[no-untyped-def]
+    result_a = make_ha_request(
+        ha_url,
+        ha_token,
+        "/api/template",
+        method="POST",
+        data={"template": template_a},
+        timeout=timeout,
+    )
+
+    result_b = make_ha_request(
+        ha_url,
+        ha_token,
+        "/api/template",
+        method="POST",
+        data={"template": template_b},
+        timeout=timeout,
+    )
+
+    result_a_str = result_a["data"] if result_a["success"] else f"Error: {result_a['error']}"
+    result_b_str = result_b["data"] if result_b["success"] else f"Error: {result_b['error']}"
+
+    match = False
+    warning = None
+    macro_cache_stale = False
+
+    if result_a["success"] and result_b["success"]:
+        if result_a["data"] == result_b["data"]:
+            match = True
+        else:
+            match = False
+            uses_macro_a = "{% from" in template_a
+            uses_macro_b = "{% from" in template_b
+            if uses_macro_a and uses_macro_b:
+                macro_cache_stale = True
+                warning = (
+                    "Templates produce different results. "
+                    "If both use the same macro file, the macro cache may be stale."
+                )
+            elif uses_macro_a or uses_macro_b:
+                warning = "Templates produce different results. One uses a macro import."
+            else:
+                warning = "Templates produce different results."
+    elif result_a["success"]:
+        warning = "Template B failed to render."
+    elif result_b["success"]:
+        warning = "Template A failed to render."
+    else:
+        warning = "Both templates failed to render."
+
+    return {
+        "match": match,
+        "result_a": result_a_str,
+        "result_b": result_b_str,
+        "warning": warning,
+        "macro_cache_stale": macro_cache_stale,
+    }
+
+
 def _do_test_templates_batch(templates, ha_url, ha_token):  # type: ignore[no-untyped-def]
     try:
         templates_data = json.loads(templates)
@@ -1288,6 +1347,7 @@ def register_dev_tools(mcp, ha_url: str, ha_token: str, config_path: str | None 
 
     # Explicit manifests for dev tools — all make real HA API calls.
     for _name in (
+        "compare_templates",
         "test_template",
         "test_templates_batch",
         "eval_templates_batch",
@@ -1302,6 +1362,26 @@ def register_dev_tools(mcp, ha_url: str, ha_token: str, config_path: str | None 
         "diagnose_energy_setup",
     ):
         register_manifest(_name, make_manifest(_name, latency="moderate"))
+
+    @mcp.tool()
+    def compare_templates(template_a: str, template_b: str, timeout: int = 5) -> str:
+        """[READ] Compare two Jinja2 template evaluations. Useful for detecting stale macro cache when templates using macros produce different results than inline equivalents.
+
+        Args:
+            template_a: First Jinja2 template to compare.
+            template_b: Second Jinja2 template to compare.
+            timeout: Maximum evaluation time in seconds per template (default: 5).
+
+        Returns:
+            JSON with match (bool), result_a (str), result_b (str), warning (str or None),
+            and macro_cache_stale (bool).
+        """
+        try:
+            result = _do_compare_templates(template_a, template_b, timeout, ha_url, ha_token)  # type: ignore[no-untyped-call]
+            return _success_response(result)
+        except Exception as exc:
+            _logger.exception("compare_templates failed")
+            return _error_response(str(exc))
 
     @mcp.tool()
     def test_template(template: str) -> str:

@@ -1327,3 +1327,296 @@ class TestBatchExceptionHandlers:
             )
         assert data["success"] is False
         assert "boom" in data["error"]
+
+
+class TestGetEntityDetailsBatch:
+    """Batch support for get_entity_details via comma-separated string."""
+
+    @pytest.mark.asyncio
+    async def test_batch_of_two(self, mock_mcp, config_path, mock_registry_data):
+        """Batch of 2 entities returns results dict with both."""
+        with (
+            patch("tools.storage.load_registry") as mock_load,
+            patch("tools.storage.make_ha_request") as mock_req,
+        ):
+            mock_load.side_effect = lambda name, path, use_cache=True: mock_registry_data.get(
+                name, {}
+            )
+            mock_req.return_value = {
+                "success": True,
+                "data": {"state": "20", "attributes": {}},
+            }
+            register_storage_tools(mock_mcp, config_path, "http://ha", "token")
+            data = json.loads(await mock_mcp._tools["get_entity_details"]("sensor.temp,light.room"))
+        assert data["success"] is True
+        assert "results" in data
+        assert "sensor.temp" in data["results"]
+        assert "light.room" in data["results"]
+        assert data["not_found"] == []
+
+    @pytest.mark.asyncio
+    async def test_batch_one_missing(self, mock_mcp, config_path, mock_registry_data):
+        """Batch with one missing entity adds it to not_found."""
+        with (
+            patch("tools.storage.load_registry") as mock_load,
+            patch("tools.storage.make_ha_request") as mock_req,
+        ):
+            mock_load.side_effect = lambda name, path, use_cache=True: mock_registry_data.get(
+                name, {}
+            )
+            mock_req.return_value = {
+                "success": True,
+                "data": {"state": "20", "attributes": {}},
+            }
+            register_storage_tools(mock_mcp, config_path, "http://ha", "token")
+            data = json.loads(
+                await mock_mcp._tools["get_entity_details"]("sensor.temp,sensor.missing")
+            )
+        assert data["success"] is True
+        assert "results" in data
+        assert "sensor.temp" in data["results"]
+        assert "sensor.missing" in data["not_found"]
+
+    @pytest.mark.asyncio
+    async def test_empty_string(self, mock_mcp, config_path):
+        """Empty entity_id string returns error."""
+        register_storage_tools(mock_mcp, config_path)
+        data = json.loads(await mock_mcp._tools["get_entity_details"](""))
+        assert data["success"] is False
+
+    @pytest.mark.asyncio
+    async def test_too_many_entities(self, mock_mcp, config_path):
+        """101+ entities returns error with max limit message."""
+        many_ids = ",".join([f"sensor.test_{i}" for i in range(101)])
+        register_storage_tools(mock_mcp, config_path)
+        data = json.loads(await mock_mcp._tools["get_entity_details"](many_ids))
+        assert data["success"] is False
+        assert "100" in data.get("error", "") or "limit" in data.get("error", "").lower()
+
+    @pytest.mark.asyncio
+    async def test_exception_handler(self, mock_mcp, config_path):
+        """Internal exception returns success: False with error message."""
+        register_storage_tools(mock_mcp, config_path)
+        with patch(
+            "tools.storage._do_get_entity_details",
+            side_effect=RuntimeError("entity details fail"),
+        ):
+            data = json.loads(await mock_mcp._tools["get_entity_details"]("sensor.temp"))
+        assert data["success"] is False
+        assert "entity details fail" in data["error"]
+
+
+class TestGetEntityDetailsCompact:
+    @pytest.mark.asyncio
+    async def test_compact_mode_single(self, mock_mcp, config_path, mock_registry_data):
+        with (
+            patch("tools.storage.load_registry") as mock_load,
+            patch("tools.storage.make_ha_request") as mock_req,
+        ):
+            mock_load.side_effect = lambda name, path, use_cache=True: mock_registry_data.get(
+                name, {}
+            )
+            mock_req.return_value = {
+                "success": True,
+                "data": {"state": "20", "attributes": {}},
+            }
+            register_storage_tools(mock_mcp, config_path, "http://ha", "token")
+            data = json.loads(
+                await mock_mcp._tools["get_entity_details"]("sensor.temp", compact=True)
+            )
+        assert data["success"] is True
+        assert data["entity_id"] == "sensor.temp"
+        assert data["name"] == "Temp"
+        assert data["platform"] == "mqtt"
+        assert data["device_id"] == "dev1"
+        assert "device_info" not in data
+        assert "area_info" not in data
+        assert "current_state" not in data
+        assert "entity_info" not in data
+        assert "related_entities" not in data
+
+    @pytest.mark.asyncio
+    async def test_compact_mode_batch(self, mock_mcp, config_path, mock_registry_data):
+        with (
+            patch("tools.storage.load_registry") as mock_load,
+            patch("tools.storage.make_ha_request") as mock_req,
+        ):
+            mock_load.side_effect = lambda name, path, use_cache=True: mock_registry_data.get(
+                name, {}
+            )
+            mock_req.return_value = {
+                "success": True,
+                "data": {"state": "20", "attributes": {}},
+            }
+            register_storage_tools(mock_mcp, config_path, "http://ha", "token")
+            data = json.loads(
+                await mock_mcp._tools["get_entity_details"]("sensor.temp,light.room", compact=True)
+            )
+        assert data["success"] is True
+        assert "results" in data
+        temp = data["results"]["sensor.temp"]
+        assert temp["entity_id"] == "sensor.temp"
+        assert temp["name"] == "Temp"
+        assert temp["platform"] == "mqtt"
+        assert "device_info" not in temp
+        assert "area_info" not in temp
+        room = data["results"]["light.room"]
+        assert room["entity_id"] == "light.room"
+        assert room["name"] == "Room Light"
+        assert "device_info" not in room
+
+    @pytest.mark.asyncio
+    async def test_compact_null_values_no_crash(self, mock_mcp, config_path):
+        registry_data_minimal = {
+            "core.entity_registry": {
+                "data": {
+                    "entities": [
+                        {
+                            "entity_id": "sensor.bare",
+                            "name": None,
+                            "platform": None,
+                            "device_id": None,
+                        }
+                    ]
+                }
+            },
+            "core.device_registry": {"data": {"devices": []}},
+            "core.area_registry": {"data": {"areas": []}},
+            "core.config_entries": {"data": {"entries": []}},
+        }
+        with (
+            patch("tools.storage.load_registry") as mock_load,
+            patch("tools.storage.make_ha_request") as mock_req,
+        ):
+            mock_load.side_effect = lambda name, path, use_cache=True: registry_data_minimal.get(
+                name, {}
+            )
+            mock_req.return_value = {
+                "success": True,
+                "data": {"state": "unknown", "attributes": {}},
+            }
+            register_storage_tools(mock_mcp, config_path, "http://ha", "token")
+            data = json.loads(
+                await mock_mcp._tools["get_entity_details"]("sensor.bare", compact=True)
+            )
+        assert data["success"] is True
+        assert data["entity_id"] == "sensor.bare"
+        assert "name" in data
+        assert "platform" in data
+
+    @pytest.mark.asyncio
+    async def test_compact_false_backward_compat(self, mock_mcp, config_path, mock_registry_data):
+        with (
+            patch("tools.storage.load_registry") as mock_load,
+            patch("tools.storage.make_ha_request") as mock_req,
+        ):
+            mock_load.side_effect = lambda name, path, use_cache=True: mock_registry_data.get(
+                name, {}
+            )
+            mock_req.return_value = {
+                "success": True,
+                "data": {"state": "20", "attributes": {}},
+            }
+            register_storage_tools(mock_mcp, config_path, "http://ha", "token")
+            data = json.loads(await mock_mcp._tools["get_entity_details"]("sensor.temp"))
+        assert data["success"] is True
+        assert data["entity_id"] == "sensor.temp"
+        assert "entity_info" in data
+        assert "device_info" in data
+        assert "area_info" in data
+        assert "current_state" in data
+        assert data["entity_info"]["name"] == "Temp"
+
+    @pytest.mark.asyncio
+    async def test_exception_handler(self, mock_mcp, config_path):
+        register_storage_tools(mock_mcp, config_path)
+        with patch(
+            "tools.storage._do_get_entity_details",
+            side_effect=RuntimeError("compact fail"),
+        ):
+            data = json.loads(
+                await mock_mcp._tools["get_entity_details"]("sensor.temp", compact=True)
+            )
+        assert data["success"] is False
+        assert "compact fail" in data["error"]
+
+
+class TestGetCacheStats:
+    """Tests for the get_cache_stats tool."""
+
+    @pytest.mark.asyncio
+    async def test_returns_cache_stats(self, mock_mcp, config_path):
+        """get_cache_stats returns hits/misses/blocked/hit_rate_percent/cached_keys."""
+        register_storage_tools(mock_mcp, config_path)
+        data = json.loads(await mock_mcp._tools["get_cache_stats"]())
+        assert data["success"] is True
+        assert "hits" in data
+        assert "misses" in data
+        assert "blocked" in data
+        assert "total" in data
+        assert "hit_rate_percent" in data
+        assert "cached_keys" in data
+        assert isinstance(data["hits"], int)
+        assert isinstance(data["misses"], int)
+        assert isinstance(data["blocked"], int)
+
+    @pytest.mark.asyncio
+    async def test_exception_handler(self, mock_mcp, config_path):
+        """get_cache_stats exception is caught and returned as error."""
+        register_storage_tools(mock_mcp, config_path)
+        with patch(
+            "tools.storage.get_registry_cache_stats",
+            side_effect=RuntimeError("stats fail"),
+        ):
+            data = json.loads(await mock_mcp._tools["get_cache_stats"]())
+        assert data["success"] is False
+        assert "stats fail" in data["error"]
+
+
+class TestForceReloadInvalidatesEntityRegistry:
+    """Tests for entity_registry cache invalidation on force_reload=True."""
+
+    @pytest.mark.asyncio
+    async def test_force_reload_invalidates_entity_registry(self, mock_mcp, config_path):
+        """When force_reload=True, both core.config_entries AND core.entity_registry are invalidated."""
+        with (
+            patch("tools.storage.load_registry") as mock_load,
+            patch("tools.utils.invalidate_registry_cache") as mock_invalidate,
+        ):
+            mock_load.return_value = {"data": {"entries": [], "entities": []}}
+            register_storage_tools(mock_mcp, config_path)
+            await mock_mcp._tools["get_template_entity_code"](
+                entity_id="sensor.test", force_reload=True
+            )
+            # Verify invalidate_registry_cache was called for both registries
+            calls = [call[0] for call in mock_invalidate.call_args_list]
+            assert ("core.config_entries", config_path) in calls
+            assert ("core.entity_registry", config_path) in calls
+
+    @pytest.mark.asyncio
+    async def test_no_force_reload_leaves_cache_intact(self, mock_mcp, config_path):
+        """When force_reload=False (default), no invalidation occurs."""
+        with (
+            patch("tools.storage.load_registry") as mock_load,
+            patch("tools.utils.invalidate_registry_cache") as mock_invalidate,
+        ):
+            mock_load.return_value = {"data": {"entries": [], "entities": []}}
+            register_storage_tools(mock_mcp, config_path)
+            await mock_mcp._tools["get_template_entity_code"](entity_id="sensor.test")
+            mock_invalidate.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_force_reload_invalidates_both_registries_exact_count(
+        self, mock_mcp, config_path
+    ):
+        """force_reload=True triggers exactly 2 invalidate calls (config_entries + entity_registry)."""
+        with (
+            patch("tools.storage.load_registry") as mock_load,
+            patch("tools.utils.invalidate_registry_cache") as mock_invalidate,
+        ):
+            mock_load.return_value = {"data": {"entries": [], "entities": []}}
+            register_storage_tools(mock_mcp, config_path)
+            await mock_mcp._tools["get_template_entity_code"](
+                entity_id="sensor.test", force_reload=True
+            )
+            assert mock_invalidate.call_count == 2

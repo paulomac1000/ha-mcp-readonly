@@ -429,6 +429,7 @@ async def _do_get_template_dependencies(
             if template_content:
                 break
         except Exception:
+            _logger.debug("Could not parse template file %s, skipping", str(template_file))
             continue
 
     # Fallback: UI-created template helpers are in .storage/core.config_entries,
