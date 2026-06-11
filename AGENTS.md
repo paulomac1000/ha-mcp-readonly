@@ -80,6 +80,47 @@ Before writing any tool that calls the HA REST API:
 
 **Lesson:** Mock-based unit tests are insufficient for API tools. Always verify with curl.
 
+## HA API Authentication
+
+### Critical: LLAT vs Frontend Auth
+
+Home Assistant has **two separate authentication scopes** for its REST API:
+
+| Auth Method | Scope | Use Case |
+|-------------|-------|----------|
+| `Authorization: Bearer <LLAT>` | Public REST API endpoints | Entity states, services, config check, templates, history, logbook |
+| Frontend session cookie | Internal/frontend endpoints | Trace context, some config flows, UI-only endpoints |
+
+### The LLAT vs Frontend Trap
+
+**Long-Lived Access Tokens (LLATs)** do NOT have access to every endpoint that the frontend uses. Some endpoints (like `/api/trace/context/`) require a frontend session cookie and will return `404` or `401` when accessed with an LLAT.
+
+### Before Implementing Any New HA API Tool
+
+1. **Verify the endpoint in official docs** first:
+   - [HA REST API docs](https://developers.home-assistant.io/docs/api/rest/)
+   - If the endpoint is NOT listed there, it is **not a public REST API endpoint**
+
+2. **Test the endpoint with curl BEFORE writing any code:**
+   ```bash
+   curl -s -H "Authorization: Bearer $HA_TOKEN" "http://HA_IP:8123/the/endpoint"
+   ```
+   If it returns `404` or `401`, the endpoint is not accessible via LLAT.
+
+3. **Never assume** an endpoint exists only because you saw it in:
+   - WebSocket API docs (different transport)
+   - Frontend network tab (uses cookie auth)
+   - Other Home Assistant API wrappers (may use different auth)
+
+### Preventing Recurrence
+
+After implementing any new HA API tool:
+
+- [ ] Endpoint verified in [official HA REST API docs](https://developers.home-assistant.io/docs/api/rest/)
+- [ ] Endpoint tested with `curl` + LLAT on a real HA instance
+- [ ] At least one test uses a recorded VCR cassette (not only a mock)
+- [ ] CI smoke test confirms the tool count is correct
+
 ---
 
 ## File Organization
