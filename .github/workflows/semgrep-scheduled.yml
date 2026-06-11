@@ -9,12 +9,11 @@ concurrency:
   group: semgrep-full
   cancel-in-progress: true
 
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-
 jobs:
   semgrep-full:
     runs-on: ubuntu-latest
+    container:
+      image: semgrep/semgrep
     permissions:
       contents: read
       security-events: write
@@ -27,15 +26,11 @@ jobs:
           fetch-depth: 0
 
       - name: Semgrep Full Scan
-        uses: semgrep/semgrep-action@713efdd345f3035192eaa63f56867b88e63e4e5d  # v1
+        run: |
+          semgrep ci --sarif --output=semgrep.sarif \
+            --config=auto --config=secrets --config=owasp-top-ten
         env:
-          SEMGREP_RULES: p/auto p/secrets p/owasp-top-ten
-        with:
-          config: >-
-            p/auto
-            p/secrets
-            p/owasp-top-ten
-          publishToken: ${{ secrets.SEMGREP_APP_TOKEN || '' }}
+          SEMGREP_APP_TOKEN: ${{ secrets.SEMGREP_APP_TOKEN }}
 
       - name: Upload SARIF to GitHub Security
         id: upload-sarif

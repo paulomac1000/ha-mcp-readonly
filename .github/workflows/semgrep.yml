@@ -11,12 +11,13 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-  SEMGREP_BASELINE_REF: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || '' }}
+  SEMGREP_RULES: p/auto p/secrets p/owasp-top-ten
 
 jobs:
   semgrep:
     runs-on: ubuntu-latest
+    container:
+      image: semgrep/semgrep
     permissions:
       contents: read
       security-events: write
@@ -31,15 +32,15 @@ jobs:
 
       - name: Semgrep Scan
         id: semgrep
-        uses: semgrep/semgrep-action@713efdd345f3035192eaa63f56867b88e63e4e5d  # v1
+        run: |
+          args="ci --sarif --output=semgrep.sarif"
+          args="$args --config=auto --config=secrets --config=owasp-top-ten"
+          if [ -n "${{ github.event.pull_request.base.sha }}" ]; then
+            args="$args --baseline-ref=${{ github.event.pull_request.base.sha }}"
+          fi
+          semgrep $args || echo "SEMGREP_EXIT_CODE=$?" >> $GITHUB_ENV
         env:
-          SEMGREP_RULES: p/auto p/secrets p/owasp-top-ten
-        with:
-          config: >-
-            p/auto
-            p/secrets
-            p/owasp-top-ten
-          publishToken: ${{ secrets.SEMGREP_APP_TOKEN || '' }}
+          SEMGREP_APP_TOKEN: ${{ secrets.SEMGREP_APP_TOKEN }}
 
       - name: Upload SARIF to GitHub Security
         id: upload-sarif
@@ -58,17 +59,17 @@ jobs:
         if: always() && github.event_name == 'pull_request'
         uses: actions/github-script@373c709c69115d41ff229c7e5df9f8788daa9553  # v9
         env:
-          SEMGREP_OUTCOME: ${{ steps.semgrep.outcome }}
+          SEMGREP_EXIT_CODE: ${{ env.SEMGREP_EXIT_CODE }}
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             const marker = '<!-- semgrep-bot -->';
-            const exitCode = process.env.SEMGREP_OUTCOME;
+            const exitCode = process.env.SEMGREP_EXIT_CODE || '0';
             const prNumber = context.issue.number;
 
-            const body = exitCode === 'success'
-              ? `${marker}\n## ✅ Semgrep Security Scan — Passed\n\nNo security issues or dangerous patterns found.\n\n*Ran: p/auto + p/secrets + p/owasp-top-ten*`
-              : `${marker}\n## ❌ Semgrep Security Scan — Failed\n\n**Semgrep found security issues or dangerous patterns.**\n\nSee the **Security** tab or PR diff for annotations.\n\n*Ran: p/auto + p/secrets + p/owasp-top-ten*\n\n**This is a blocking check — fix before merging.**`;
+            const body = exitCode === '0'
+              ? `${marker}\n## ✅ Semgrep Security Scan — Passed\n\nNo security issues or dangerous patterns found.\n\n*Ran: ${process.env.SEMGREP_RULES}*`
+              : `${marker}\n## ❌ Semgrep Security Scan — Failed\n\n**Semgrep found security issues or dangerous patterns.**\n\nSee the **Security** tab or PR diff for annotations.\n\n*Ran: ${process.env.SEMGREP_RULES}*\n\n**This is a blocking check — fix before merging.**`;
 
             const comments = await github.rest.issues.listComments({
               owner: context.repo.owner,
