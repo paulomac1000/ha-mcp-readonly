@@ -13,7 +13,7 @@ jobs:
   semgrep-full:
     runs-on: ubuntu-latest
     container:
-      image: semgrep/semgrep
+      image: semgrep/semgrep@sha256:f4791a54c891eabe1188248135574e6e03dfc31dfd3f3b747c7bec7079bfed1b
     permissions:
       contents: read
       security-events: write

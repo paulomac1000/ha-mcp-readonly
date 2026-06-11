@@ -17,7 +17,7 @@ jobs:
   semgrep:
     runs-on: ubuntu-latest
     container:
-      image: semgrep/semgrep
+      image: semgrep/semgrep@sha256:f4791a54c891eabe1188248135574e6e03dfc31dfd3f3b747c7bec7079bfed1b
     permissions:
       contents: read
       security-events: write
@@ -38,7 +38,10 @@ jobs:
           if [ -n "${{ github.event.pull_request.base.sha }}" ]; then
             args="$args --baseline-ref=${{ github.event.pull_request.base.sha }}"
           fi
-          semgrep $args || echo "SEMGREP_EXIT_CODE=$?" >> $GITHUB_ENV
+          semgrep $args
+          exit_code=$?
+          echo "SEMGREP_EXIT_CODE=$exit_code" >> $GITHUB_ENV
+          exit $exit_code
         env:
           SEMGREP_APP_TOKEN: ${{ secrets.SEMGREP_APP_TOKEN }}
 
