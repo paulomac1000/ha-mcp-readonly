@@ -7,6 +7,12 @@ from unittest.mock import patch
 
 import pytest
 
+from tests.fixtures import (
+    ENTITY_ID_LIGHT,
+    ENTITY_ID_SWITCH_KITCHEN,
+    ENTITY_ID_SWITCH_LIVING_ROOM,
+    ENTITY_ID_TEMPERATURE_SENSOR,
+)
 from tools.entity_dependencies import register_entity_dependency_tools
 
 
@@ -690,11 +696,16 @@ class TestEmptyConfig:
 
             # Simulate no config files at all
             with patch("os.path.exists", return_value=False):
-                register_entity_dependency_tools(
-                    self.mock_mcp, self.config_path, "http://test", "token"
-                )
+                with patch("tools.entity_dependencies.make_ha_request") as mock_req:
+                    mock_req.return_value = {"success": False, "error": "not found"}
 
-                result = await self.mock_mcp._tools["get_entity_dependencies"]("sensor.nonexistent")
+                    register_entity_dependency_tools(
+                        self.mock_mcp, self.config_path, "http://test", "token"
+                    )
+
+                    result = await self.mock_mcp._tools["get_entity_dependencies"](
+                        "sensor.nonexistent"
+                    )
 
         data = json.loads(result)
         assert data["success"] is True
@@ -751,7 +762,7 @@ class TestPackagesWithFullDetail:
         packages_dir = config_dir / "packages"
         packages_dir.mkdir(parents=True, exist_ok=True)
         package_file = packages_dir / "sensors.yaml"
-        package_file.write_text("entity_id: sensor.temperature_living_room\n")
+        package_file.write_text(f"entity_id: {ENTITY_ID_TEMPERATURE_SENSOR}\n")
 
         main_config = config_dir / "configuration.yaml"
         main_config.write_text(f"homeassistant: !include {package_file}\n")
@@ -783,7 +794,7 @@ class TestPackagesWithFullDetail:
                         )
 
                         result = await self.mock_mcp._tools["get_entity_dependencies"](
-                            "sensor.temperature_living_room",
+                            ENTITY_ID_TEMPERATURE_SENSOR,
                             "full",
                             True,
                         )
@@ -843,13 +854,13 @@ class TestNonDictAutomationEntries:
     @pytest.mark.asyncio
     async def test_automation_not_a_dict_skipped(self):
         """Automations.yaml containing non-dict entries (e.g. bare strings) are skipped."""
-        non_dict_yaml = """
+        non_dict_yaml = f"""
 - id: 'valid_one'
   alias: Valid Auto
   trigger: []
   action:
   - service: light.turn_on
-    entity_id: light.test
+    entity_id: {ENTITY_ID_LIGHT}
 - just_a_string_not_a_dict
 """
         with patch("tools.entity_dependencies.load_registry") as mock_load:
@@ -873,7 +884,9 @@ class TestNonDictAutomationEntries:
                             self.mock_mcp, self.config_path, "http://test", "token"
                         )
 
-                        result = await self.mock_mcp._tools["get_entity_dependencies"]("light.test")
+                        result = await self.mock_mcp._tools["get_entity_dependencies"](
+                            ENTITY_ID_LIGHT
+                        )
 
         data = json.loads(result)
         assert data["success"] is True
@@ -894,12 +907,12 @@ class TestScriptsFullDetail:
         """Scripts.yaml in dict format with detail_level=full adds file_path and line."""
         from pathlib import Path
 
-        scripts_yaml = """
+        scripts_yaml = f"""
 turn_off_all:
   alias: Turn Off All
   sequence:
   - service: switch.turn_off
-    entity_id: switch.kitchen
+    entity_id: {ENTITY_ID_SWITCH_KITCHEN}
 """
         scripts_path = Path(self.config_path) / "scripts.yaml"
         scripts_path.write_text(scripts_yaml, encoding="utf-8")
@@ -928,7 +941,7 @@ turn_off_all:
                         )
 
                         result = await self.mock_mcp._tools["get_entity_dependencies"](
-                            "switch.kitchen", "full"
+                            ENTITY_ID_SWITCH_KITCHEN, "full"
                         )
 
         data = json.loads(result)
@@ -943,12 +956,12 @@ turn_off_all:
         """Scripts.yaml in list format with detail_level=full adds file_path and line."""
         from pathlib import Path
 
-        scripts_list_yaml = """
+        scripts_list_yaml = f"""
 - id: script_001
   alias: List Script
   sequence:
   - service: switch.turn_off
-    entity_id: switch.living_room
+    entity_id: {ENTITY_ID_SWITCH_LIVING_ROOM}
 """
         scripts_path = Path(self.config_path) / "scripts.yaml"
         scripts_path.write_text(scripts_list_yaml, encoding="utf-8")
@@ -977,7 +990,7 @@ turn_off_all:
                         )
 
                         result = await self.mock_mcp._tools["get_entity_dependencies"](
-                            "switch.living_room", "full"
+                            ENTITY_ID_SWITCH_LIVING_ROOM, "full"
                         )
 
         data = json.loads(result)

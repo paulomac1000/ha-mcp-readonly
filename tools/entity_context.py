@@ -83,9 +83,7 @@ def _do_entity_get_context_tree(
                         "name": entry.get("name"),
                         "message": entry.get("message"),
                         "domain": entry.get("domain"),
-                        "context_id": entry.get("context", {}).get("id")
-                        if entry.get("context")
-                        else None,
+                        "context_id": entry.get("context_id"),
                     }
                 )
 
@@ -306,7 +304,7 @@ def register_entity_context_tools(mcp, config_path: str, ha_url: str, ha_token: 
         depth: int = 3,
         include_timestamps: bool = True,
     ) -> str:
-        """[READ] Trace the context parent_id chain for entity state changes.
+        """Trace the context parent_id chain for entity state changes.
 
         Follows context.parent_id links from logbook entries to reconstruct
         the chain of events that led to a state change (e.g. automation →

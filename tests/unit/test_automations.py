@@ -7,7 +7,9 @@ import os
 from unittest.mock import patch
 
 import pytest
+import yaml
 
+from tests.fixtures import ENTITY_ID_BINARY_SENSOR, ENTITY_ID_LIGHT
 from tools.automations import register_automation_tools
 
 AUTOMATIONS_YAML = """
@@ -577,8 +579,6 @@ class TestDiagnoseAutomation:
         self, mock_mcp, config_path, ha_url, ha_token
     ):
         """Verify choose_analysis is NOT present in summary mode."""
-        from tools.automations import register_automation_tools
-
         with patch("tools.automations.make_ha_request", return_value={"success": True, "data": []}):
             register_automation_tools(mock_mcp, config_path, ha_url, ha_token)
             tool = mock_mcp._tools["diagnose_automation"]
@@ -2298,35 +2298,35 @@ class TestGetAutomationEntityIdEdgeCase:
         assert "non-empty" in data.get("error", "").lower()
 
 
-CHOOSE_BRANCHES_YAML = """
+CHOOSE_BRANCHES_YAML = f"""
 - id: "cb001"
   alias: "Choose Branch Automation"
   description: "Automation using choose action with multiple branches"
   mode: "single"
   trigger:
     - platform: state
-      entity_id: "binary_sensor.motion"
+      entity_id: "{ENTITY_ID_BINARY_SENSOR}"
       to: "on"
   condition: []
   action:
     - choose:
         - conditions:
             - condition: state
-              entity_id: "light.living_room"
+              entity_id: "{ENTITY_ID_LIGHT}"
               state: "on"
           sequence:
             - service: "light.turn_off"
               target:
-                entity_id: "light.living_room"
+                entity_id: "{ENTITY_ID_LIGHT}"
             - delay: 5
         - conditions:
             - condition: state
-              entity_id: "light.living_room"
+              entity_id: "{ENTITY_ID_LIGHT}"
               state: "off"
           sequence:
             - service: "light.turn_on"
               target:
-                entity_id: "light.living_room"
+                entity_id: "{ENTITY_ID_LIGHT}"
             - delay: 5
       default:
         - service: "notify.mobile"
@@ -2335,7 +2335,7 @@ CHOOSE_BRANCHES_YAML = """
 """
 
 
-EMPTY_TRIGGERS_YAML = """
+EMPTY_TRIGGERS_YAML = f"""
 - id: "et001"
   alias: "Empty Triggers Automation"
   description: "Automation with no triggers"
@@ -2345,7 +2345,7 @@ EMPTY_TRIGGERS_YAML = """
   action:
     - service: "light.turn_on"
       target:
-        entity_id: "light.room"
+        entity_id: "{ENTITY_ID_LIGHT}"
 """
 
 
@@ -2361,20 +2361,18 @@ class TestChooseBranchesAndEdgeCases:
 
     def test_automation_with_choose_branches(self):
         """Diagnose automation with choose action and multiple branches."""
-        path = os.path.join(self.config_path, "automations.yaml")
-        with open(path, "w", encoding="utf-8") as f:
-            f.write(CHOOSE_BRANCHES_YAML)
+        choose_data = yaml.safe_load(CHOOSE_BRANCHES_YAML)
 
         sample_states = [
             {
-                "entity_id": "binary_sensor.motion",
+                "entity_id": ENTITY_ID_BINARY_SENSOR,
                 "state": "off",
                 "attributes": {},
             },
             {
-                "entity_id": "light.living_room",
+                "entity_id": ENTITY_ID_LIGHT,
                 "state": "on",
-                "attributes": {"friendly_name": "Living Room"},
+                "attributes": {"friendly_name": "Living Room Light"},
             },
         ]
 
@@ -2385,7 +2383,10 @@ class TestChooseBranchesAndEdgeCases:
                 return {"success": True, "data": "OK"}
             return {"success": False, "error": "Unexpected endpoint"}
 
-        with patch("tools.automations.make_ha_request", side_effect=make_ha_side_effect):
+        with (
+            patch("tools.automations._load_automations", return_value=choose_data),
+            patch("tools.automations.make_ha_request", side_effect=make_ha_side_effect),
+        ):
             register_automation_tools(self.mock_mcp, self.config_path, self.ha_url, self.ha_token)
             tool = self.mock_mcp._tools["diagnose_automation"]
             data = json.loads(tool("Choose Branch Automation", detail_level="full"))
@@ -2399,15 +2400,13 @@ class TestChooseBranchesAndEdgeCases:
 
     def test_automation_with_empty_triggers(self):
         """Automation with empty trigger list still works correctly."""
-        path = os.path.join(self.config_path, "automations.yaml")
-        with open(path, "w", encoding="utf-8") as f:
-            f.write(EMPTY_TRIGGERS_YAML)
+        empty_data = yaml.safe_load(EMPTY_TRIGGERS_YAML)
 
         sample_states = [
             {
-                "entity_id": "light.room",
+                "entity_id": ENTITY_ID_LIGHT,
                 "state": "on",
-                "attributes": {"friendly_name": "Room Light"},
+                "attributes": {"friendly_name": "Living Room Light"},
             },
         ]
 
@@ -2418,7 +2417,10 @@ class TestChooseBranchesAndEdgeCases:
                 return {"success": True, "data": "OK"}
             return {"success": False, "error": "Unexpected endpoint"}
 
-        with patch("tools.automations.make_ha_request", side_effect=make_ha_side_effect):
+        with (
+            patch("tools.automations._load_automations", return_value=empty_data),
+            patch("tools.automations.make_ha_request", side_effect=make_ha_side_effect),
+        ):
             register_automation_tools(self.mock_mcp, self.config_path, self.ha_url, self.ha_token)
             tool = self.mock_mcp._tools["diagnose_automation"]
             data = json.loads(tool("Empty Triggers Automation", detail_level="full"))
@@ -2432,13 +2434,12 @@ class TestChooseBranchesAndEdgeCases:
 
     def test_search_automations_deep_inside_choose(self):
         """Deep search finds terms within choose branches."""
-        path = os.path.join(self.config_path, "automations.yaml")
-        with open(path, "w", encoding="utf-8") as f:
-            f.write(CHOOSE_BRANCHES_YAML)
+        choose_data = yaml.safe_load(CHOOSE_BRANCHES_YAML)
 
-        register_automation_tools(self.mock_mcp, self.config_path)
-        tool = self.mock_mcp._tools["search_automations"]
-        data = json.loads(tool(search_term="notify.mobile", deep=True))
+        with patch("tools.automations._load_automations", return_value=choose_data):
+            register_automation_tools(self.mock_mcp, self.config_path)
+            tool = self.mock_mcp._tools["search_automations"]
+            data = json.loads(tool(search_term="notify.mobile", deep=True))
 
         assert data["success"] is True
         assert data["matched_count"] == 1
@@ -2447,32 +2448,30 @@ class TestChooseBranchesAndEdgeCases:
 
     def test_search_automations_shallow_miss_choose(self):
         """Shallow search misses terms only in choose branches."""
-        path = os.path.join(self.config_path, "automations.yaml")
-        with open(path, "w", encoding="utf-8") as f:
-            f.write(CHOOSE_BRANCHES_YAML)
+        choose_data = yaml.safe_load(CHOOSE_BRANCHES_YAML)
 
-        register_automation_tools(self.mock_mcp, self.config_path)
-        tool = self.mock_mcp._tools["search_automations"]
-        data = json.loads(tool(search_term="notify.mobile", deep=False))
+        with patch("tools.automations._load_automations", return_value=choose_data):
+            register_automation_tools(self.mock_mcp, self.config_path)
+            tool = self.mock_mcp._tools["search_automations"]
+            data = json.loads(tool(search_term="notify.mobile", deep=False))
 
         assert data["success"] is True
         assert data["matched_count"] == 0
 
     def test_automation_dependencies_choose_branches(self):
         """Dependencies are extracted from choose branches recursively."""
-        path = os.path.join(self.config_path, "automations.yaml")
-        with open(path, "w", encoding="utf-8") as f:
-            f.write(CHOOSE_BRANCHES_YAML)
+        choose_data = yaml.safe_load(CHOOSE_BRANCHES_YAML)
 
-        register_automation_tools(self.mock_mcp, self.config_path)
-        tool = self.mock_mcp._tools["get_automation_dependencies"]
-        data = json.loads(tool("Choose Branch Automation"))
+        with patch("tools.automations._load_automations", return_value=choose_data):
+            register_automation_tools(self.mock_mcp, self.config_path)
+            tool = self.mock_mcp._tools["get_automation_dependencies"]
+            data = json.loads(tool("Choose Branch Automation"))
 
         assert data["success"] is True
         deps = data["dependencies"]
         entities = deps["entities"]
-        assert "light.living_room" in entities
-        assert "binary_sensor.motion" in entities
+        assert ENTITY_ID_LIGHT in entities
+        assert ENTITY_ID_BINARY_SENSOR in entities
 
 
 # ============================================================

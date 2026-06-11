@@ -1487,12 +1487,10 @@ class TestAuditConfigOrphans:
                 "action": [],
             }
         ]
-        with open(os.path.join(self.config_path, "automations.yaml"), "w") as f:
-            yaml.dump(automations, f)
-
         with (
             patch("tools.composite.load_registry") as mock_load,
             patch("tools.composite.make_ha_request") as mock_req,
+            patch("tools.composite._load_automations", return_value=(automations, None)),
         ):
             mock_load.side_effect = lambda name, path: self.mock_registry_data.get(name, {})
             mock_req.return_value = {
@@ -1520,12 +1518,10 @@ class TestAuditConfigOrphans:
                 "action": [],
             }
         ]
-        with open(os.path.join(self.config_path, "automations.yaml"), "w") as f:
-            yaml.dump(automations, f)
-
         with (
             patch("tools.composite.load_registry") as mock_load,
             patch("tools.composite.make_ha_request") as mock_req,
+            patch("tools.composite._load_automations", return_value=(automations, None)),
         ):
             mock_load.side_effect = lambda name, path: self.mock_registry_data.get(name, {})
             mock_req.return_value = {

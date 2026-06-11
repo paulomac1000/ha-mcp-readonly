@@ -7,6 +7,8 @@ from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 
+from tests.fixtures import ENTITY_ID_LIGHT
+
 
 class TestMakeHaRequest:
     """Tests for make_ha_request function."""
@@ -576,10 +578,10 @@ class TestBuildHistoryUrl:
         from tools.utils import _build_history_url
 
         dt = datetime(2025, 6, 10, 12, 30, 0, tzinfo=UTC)
-        url = _build_history_url(dt, entity_id="light.living_room")
+        url = _build_history_url(dt, entity_id=ENTITY_ID_LIGHT)
         assert url == (
             "/api/history/period/2025-06-10T12:30:00+00:00"
-            "?filter_entity_id=light.living_room"
+            f"?filter_entity_id={ENTITY_ID_LIGHT}"
             "&minimal_response=true"
         )
         # No URL-encoding artifacts from urllib.parse.quote

@@ -699,8 +699,17 @@ def _do_diagnose_automation(
     if detail_level == "full" and "use_blueprint" in automation:
         blueprint_path = automation["use_blueprint"].get("path")
         if blueprint_path:
-            blueprint_file = os.path.join(config_path, "blueprints", blueprint_path)  # type: ignore[arg-type]
-            if os.path.exists(blueprint_file):
+            blues_base = os.path.realpath(os.path.join(config_path, "blueprints"))  # type: ignore[arg-type]
+            blueprint_file = os.path.realpath(os.path.join(blues_base, blueprint_path))
+            if not blueprint_file.startswith(blues_base + os.sep):
+                result["issues"].append(  # type: ignore[attr-defined]
+                    {
+                        "severity": "error",
+                        "type": "blueprint_path_traversal",
+                        "message": f"Blueprint path contains directory traversal: {blueprint_path}",
+                    }
+                )
+            elif os.path.exists(blueprint_file):
                 try:
                     with open(blueprint_file, encoding="utf-8") as f:
                         blueprint_data = yaml.load(f, Loader=HomeAssistantLoader)  # nosec B506
@@ -2435,19 +2444,26 @@ def _do_resolve_blueprint_automation(
             "error": "Automation uses a blueprint but no path specified",
         }
 
-    # Load the blueprint YAML file
+    # Validate and load the blueprint YAML file
     import os as _os
 
-    blueprint_file = _os.path.join(config_path, "blueprints", blueprint_path)
+    blues_base = _os.path.realpath(_os.path.join(config_path, "blueprints"))
+    blueprint_file = _os.path.realpath(_os.path.join(blues_base, blueprint_path))
+    if not blueprint_file.startswith(blues_base + _os.sep):
+        return {
+            "success": False,
+            "error": "Invalid blueprint path: path is outside the blueprints directory",
+        }
     if not _os.path.isfile(blueprint_file):
         # Fallback: some blueprint references omit the "automation/" domain prefix.
         # Try again with it prepended (HA resolves blueprints under <domain>/<path>).
-        blueprint_file = _os.path.join(config_path, "blueprints", "automation", blueprint_path)
-        if not _os.path.isfile(blueprint_file):
+        fallback_file = _os.path.realpath(_os.path.join(blues_base, "automation", blueprint_path))
+        if not fallback_file.startswith(blues_base + _os.sep) or not _os.path.isfile(fallback_file):
             return {
                 "success": False,
                 "error": f"Blueprint file not found: {blueprint_path}",
             }
+        blueprint_file = fallback_file
 
     try:
         with open(blueprint_file, encoding="utf-8") as f:
@@ -2668,7 +2684,6 @@ def register_automation_tools(mcp, config_path, ha_url=None, ha_token=None) -> N
     @mcp.tool()
     def get_automation_dependencies(automation_id: str) -> str:
         """[READ] Analyze automation dependencies: lists used entities, scripts, scenes, and blueprints.
-        Lists used entities, scripts, scenes, and blueprints.
 
         Args:
             automation_id: Automation id or alias.

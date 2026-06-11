@@ -377,7 +377,7 @@ class TestEntityContextSourceBreakdown:
                 "name": "Test Entity turned on",
                 "message": "turned on by automation Test Automation",
                 "domain": "light",
-                "context": {"id": "ctx1"},
+                "context_id": "ctx1",
             },
             {
                 "entity_id": "light.test_entity",
@@ -385,7 +385,7 @@ class TestEntityContextSourceBreakdown:
                 "name": "Test Entity turned off",
                 "message": "turned off triggered by automation",
                 "domain": "automation",
-                "context": {"id": "ctx2"},
+                "context_id": "ctx2",
             },
         ]
 
@@ -451,7 +451,7 @@ class TestEntityContextSourceBreakdown:
                 "name": "Automation triggered",
                 "message": "turned on by automation Test Automation",
                 "domain": "light",
-                "context": {"id": "ctx1"},
+                "context_id": "ctx1",
             },
             {
                 "entity_id": "light.test_entity",
@@ -459,7 +459,7 @@ class TestEntityContextSourceBreakdown:
                 "name": "Script executed",
                 "message": "executed script morning_routine",
                 "domain": "script",
-                "context": {"id": "ctx2"},
+                "context_id": "ctx2",
             },
             {
                 "entity_id": "light.test_entity",
@@ -467,7 +467,7 @@ class TestEntityContextSourceBreakdown:
                 "name": "User action",
                 "message": "turned off",
                 "domain": "light",
-                "context": {"id": "ctx3"},
+                "context_id": "ctx3",
             },
             {
                 "entity_id": "light.test_entity",
@@ -475,7 +475,7 @@ class TestEntityContextSourceBreakdown:
                 "name": "Device update",
                 "message": "state changed",
                 "domain": "sensor",
-                "context": {"id": "ctx4"},
+                "context_id": "ctx4",
             },
             {
                 "entity_id": "light.test_entity",
@@ -483,7 +483,7 @@ class TestEntityContextSourceBreakdown:
                 "name": "Unknown event",
                 "message": "battery low",
                 "domain": "sensor",
-                "context": {"id": "ctx5"},
+                "context_id": "ctx5",
             },
         ]
 

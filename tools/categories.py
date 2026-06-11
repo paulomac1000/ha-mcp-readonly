@@ -71,7 +71,7 @@ def _do_list_automation_categories(
             if cat["entity_count"] == 0:  # type: ignore[comparison-overlap]
                 empty_categories.append(cid)
 
-    categories.sort(key=lambda x: (x.get("scope", ""), x.get("name", "")))
+    categories.sort(key=lambda x: (x.get("scope") or "", x.get("name") or ""))
     return {
         "success": True,
         "categories": categories,

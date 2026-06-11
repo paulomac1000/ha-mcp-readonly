@@ -573,6 +573,13 @@ MOCK_LOGBOOK_ENTRIES = [
     },
 ]
 
+# Commonly used entity IDs — canonical values shared across tests
+ENTITY_ID_LIGHT = "light.living_room_light"
+ENTITY_ID_BINARY_SENSOR = "binary_sensor.sonoff_button_action"
+ENTITY_ID_TEMPERATURE_SENSOR = "sensor.temperature_living_room"
+ENTITY_ID_SWITCH_KITCHEN = "switch.kitchen"
+ENTITY_ID_SWITCH_LIVING_ROOM = "switch.living_room"
+
 # Mock automation alias to entity_id mappings
 MOCK_AUTOMATION_ENTITY_MAP = {
     "Morning Routine": "automation.morning_routine",

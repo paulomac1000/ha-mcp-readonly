@@ -226,9 +226,10 @@ class TestTemplateTesting:
     def test_get_template_performance_invalid_template(
         self, mock_mcp, ha_url, ha_token, config_path
     ):
-        """Template that causes make_ha_request to raise -> wrapper exception handler."""
+        """_do_get_template_performance raises -> wrapper exception handler."""
         with patch(
-            "tools.dev_tools.make_ha_request", side_effect=ConnectionError("HA unreachable")
+            "tools.dev_tools._do_get_template_performance",
+            side_effect=RuntimeError("HA unreachable"),
         ):
             register_dev_tools(mock_mcp, ha_url, ha_token, config_path)
             data = json.loads(

@@ -554,6 +554,12 @@ def _do_get_lovelace_entity_usage(entity_id: str, config_path: str) -> dict[str,
                 "error": "Could not load lovelace_dashboards registry",
                 "_meta": {"registry_path": ".storage/lovelace_dashboards"},
             }
+        # File exists but registry load failed (e.g., corrupt JSON)
+        return {
+            "success": False,
+            "error": "Failed to load dashboards registry",
+            "_meta": {"registry_path": ".storage/lovelace_dashboards"},
+        }
     dashboards_data = dashboards_registry.get("data", {}).get("items", [])
     dashboard_ids = [d.get("url_path", "lovelace") for d in dashboards_data]
     if "lovelace" not in dashboard_ids:

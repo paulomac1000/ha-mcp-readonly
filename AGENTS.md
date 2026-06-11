@@ -261,7 +261,7 @@ pre-commit run --all-files
 | Version sync | pre-commit | Detect version.py vs pyproject.toml drift |
 | Semgrep | pre-commit | Security patterns (p/auto+p/secrets+p/owasp-top-ten) |
 | CAFDS docs | pre-commit | Documentation quality (AFDS validation) |
-| Unit tests | pre-commit | Test failures (`pytest tests/unit/ -q`)
+| Unit tests | pre-commit | Test failures (`pytest tests/unit/ -q`) |
 
 ### Agent Workflow
 
