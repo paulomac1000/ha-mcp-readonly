@@ -43,7 +43,15 @@ def invalidate_registry_cache():
 
 
 def get_cache_stats() -> dict[str, int | float | list[str]]:
-    """Returns cache statistics with calculated fields."""
+    """
+    Returns cache statistics with calculated fields.
+
+    Args:
+        None
+
+    Returns:
+        dict with keys: hits, misses, blocked, total, hit_rate_percent, cached_keys
+    """
     with _CACHE_LOCK:
         stats = dict(_CACHE_STATS)
         stats["hit_rate_percent"] = round(
@@ -60,7 +68,8 @@ def load_registry(name: str, use_cache: bool = True) -> dict:
     """
     global _registry_cache, _registry_cache_timestamps
 
-    _CACHE_STATS["total"] += 1
+    with _CACHE_LOCK:
+        _CACHE_STATS["total"] += 1
 
     if name in BLOCKED_REGISTRIES or any(name.startswith(prefix) for prefix in ("auth_provider.",)):
         with _CACHE_LOCK:
