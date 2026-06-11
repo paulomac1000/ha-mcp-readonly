@@ -124,9 +124,9 @@ curl -X POST http://localhost:9093/api/context/generate \
   -d '{"mode": "hybrid"}'
 ```
 
-## Available Tools (139 with dev tools, 127 without)
+## Available Tools (158 with dev tools, 145 without)
 
-Tools are organized by category (56 shown in table below). All are **read-only** — no state changes, no service calls, no modifications.
+Tools are organized by category (75 shown in table below). All are **read-only** — no state changes, no service calls, no modifications.
 
 | Category | Key tools |
 |----------|-----------|
@@ -137,7 +137,7 @@ Tools are organized by category (56 shown in table below). All are **read-only**
 | **Devices & Areas** | `get_device_details`, `search_devices`, `get_devices_by_area`, `get_area_devices_summary` |
 | **Config entries** | `get_config_entry_details`, `search_config_entries`, `diagnose_config_entry`, `list_config_entry_domains` |
 | **Integrations** | `get_integration_entities`, `get_integration_summary` |
-| **Diagnostics** | `diagnose_system_health`, `get_unavailable_entities_grouped`, `get_integration_health` |
+| **Diagnostics** | `diagnose_system_health`, `get_unavailable_entities_grouped`, `get_integration_health`, `diagnose_person_tracking` |
 | **Logs** | `get_log_insights`, `analyze_log_errors`, `get_startup_errors`, `get_log_timeline`, `search_logs` |
 | **History** | `get_entity_state_history_summary`, `get_recent_state_changes` |
 | **Context** | `entity_get_context_tree`, `get_entity_dependencies`, `get_entity_consumers`, `get_context_chain` |
@@ -145,14 +145,17 @@ Tools are organized by category (56 shown in table below). All are **read-only**
 | **Storage** | `search_registries_batch`, `get_entity_registry`, `get_device_registry`, `get_area_registry`, `get_template_entity_code`, `get_cache_stats` |
 | **Lovelace** | `get_lovelace_dashboards`, `get_lovelace_config`, `get_lovelace_resources`, `search_lovelace_config`, `get_lovelace_config_summary`, `diagnose_lovelace_setup` |
 | **Batch** | `bulk_search_entities`, `compare_entities_state`, `validate_yaml_batch`, `get_automation_codes_batch` |
-| **Composite** | `investigate_entity`, `get_area_diagnostic`, `get_entity_with_automations`, `diagnose_person_tracking` |
+| **Composite** | `investigate_entity`, `get_area_diagnostic`, `get_entity_with_automations`, `audit_config_orphans` |
+| **Graph** | `graph_build_index`, `graph_find_references`, `graph_entity_impact`, `graph_get_neighbors`, `graph_detect_ghost_references`, `graph_detect_orphans`, `graph_export_mermaid` |
 | **Dev tools** | `test_template`, `compare_templates`, `diagnose_entity`, `check_entity_exists`, `validate_automation_trigger`, `diagnose_template` |
+
+> Full tool catalog with schemas available at GET /api/tools
 
 ## What's New in v1.6.0
 
 - **5 new tools**: `get_context_chain` (Context), `resolve_blueprint_automation` (Blueprints), `get_cache_stats` (Storage), `compare_templates` (Dev tools), `get_automation_entity_id` (Automations)
 - **`choose_analysis` in `diagnose_automation`**: When `detail_level="full"`, returns conditional branch analysis for automations using `choose` actions
-- **Registry pagination**: `limit` and `offset` parameters added to `get_entity_registry`, `get_device_registry`, `get_area_registry`, and `search_registries_batch` for efficient scanning of large registries
+- **Registry pagination**: `limit` and `offset` parameters added to `get_entity_registry`, `get_device_registry`, `get_area_registry`, and `get_config_entries` for efficient scanning of large registries
 - **`data_quality` field**: Composite diagnostic tools (`investigate_entity`, `get_area_diagnostic`, `get_entity_with_automations`) now include a `data_quality` assessment flagging stale sensors, missing entities, and unavailable devices
 - **New pre-commit hooks**: `mypy strict`, `Bandit`, `Semgrep`, and AFDS documentation validation added to the pre-commit pipeline
 - **Test infrastructure**: 67 integration tests and 158 E2E tests for expanded real-HA and end-to-end coverage
@@ -285,38 +288,43 @@ context_generator/
 ├── constants.py           # ENTITY_PATTERN, HA URLs, ignorable domains, YAML loader
 └── utils.py               # Registry cache, HA API client, YAML helpers
 
+ha_graph/
+└── graph_builder.py       # HA Semantic Graph: build, query, and export
+
 tools/
-├── automations.py         # Automation analysis (10 tools)
-├── batch_operations.py    # Bulk entity operations
+├── automations.py         # Automation analysis (17 tools)
+├── batch_operations.py    # Bulk entity operations (5 tools)
 ├── blueprints.py          # Blueprint management (4 tools)
-├── capabilities.py        # Zero-I/O MCP introspection tool catalog
-├── categories.py          # Category management (automation, script, scene, helpers)
-├── composite.py           # Composite diagnostic tools
-├── config.py              # Configuration file tools
+├── capabilities.py        # Zero-I/O MCP introspection tool catalog (1 tool)
+├── categories.py          # Category management (automation, script, scene, helpers) (1 tool)
+├── composite.py           # Composite diagnostic tools (4 tools)
+├── config.py              # Configuration file tools (10 tools)
 ├── config_entries.py      # Config entry diagnostics (4 tools)
-├── devices.py, areas.py   # Device and area tools (5+1 tools)
-├── dev_tools.py           # Template testing, validation
-├── diagnostics.py         # System health, energy dashboard
-├── entity_context.py      # Entity context tree
-├── entity_dependencies.py # Entity dependency graph
-├── filesystem_explorer.py # Secured filesystem browsing
-├── health_reporter.py     # Health score and metrics
-├── helpers_health.py      # Helper entity health diagnostics
-├── history.py             # State history and recent changes
+├── devices.py, areas.py   # Device and area tools (6+1 tools)
+├── dev_tools.py           # Template testing, validation (13 tools)
+├── diagnostics.py         # System health, energy dashboard (18 tools)
+├── entity_context.py      # Entity context tree (2 tools)
+├── entity_dependencies.py # Entity dependency graph (2 tools)
+├── filesystem_explorer.py # Secured filesystem browsing (3 tools)
+├── graph_tools.py           # HA entity graph tools (7 tools)
+├── health_reporter.py     # Health score and metrics (1 tool)
+├── helpers_health.py      # Helper entity health diagnostics (1 tool)
+├── history.py             # State history and recent changes (2 tools)
 ├── integrations.py        # Integration entity analysis (2 tools)
-├── logs.py                # Log analysis and insights
+├── logs.py                # Log analysis and insights (8 tools)
 ├── manifests.py           # TOOL_MANIFESTS, risk prefix injection
 ├── observability.py       # request_id, invocation counters
 ├── scripts.py, scenes.py  # Script and scene inspection (2+2 tools)
 ├── states.py              # Entity state queries (12 tools)
-├── storage.py             # Registry dump and search tools
+├── storage.py             # Registry dump and search tools (30 tools)
 ├── utils.py               # Shared: HA API client, registry loader, log sanitizer
-├── validators.py          # Input validation and schema checks
 └── yaml_utils.py          # HomeAssistantLoader for HA-specific YAML tags
 
 tests/
-├── unit/                  # 26 test files, 1142 tests, fully mocked
-└── integration/           # Real HA tests (requires HA_URL + HA_TOKEN)
+├── unit/                  # 39 test files, 1181 tests, fully mocked
+├── integration/           # Real HA tests (requires HA_URL + HA_TOKEN)
+├── smoke/                 # REST API smoke tests (requires local server)
+└── e2e/                   # End-to-end pipeline tests (requires real HA)
 ```
 
 ## Security
