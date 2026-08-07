@@ -1487,11 +1487,15 @@ def _do_diagnose_performance(
             for a in automation_states[:10]
         ]
 
-    logbook_res = make_ha_request(
-        ha_url,
-        ha_token,
-        f"/api/logbook/{(datetime.now(UTC) - timedelta(hours=24)).isoformat()}",
-    )
+    logbook_window_hours = 24
+    logbook_res: dict[str, Any] = {"success": False, "data": []}
+    for logbook_window_hours in (24, 6, 1):
+        start = (datetime.now(UTC) - timedelta(hours=logbook_window_hours)).isoformat()
+        logbook_res = make_ha_request(
+            ha_url, ha_token, f"/api/logbook/{start}", timeout=60, retries=1
+        )
+        if logbook_res.get("success"):
+            break
     if logbook_res.get("success"):
         trigger_counts: Counter[str] = Counter()
         for entry in logbook_res.get("data", []):
@@ -1502,6 +1506,7 @@ def _do_diagnose_performance(
         result["most_triggered"] = [
             {"entity_id": eid, "trigger_count": count} for eid, count in most_common
         ]
+    result["logbook_window_hours"] = logbook_window_hours
 
     if config_path:
         auto_path = Path(config_path) / "automations.yaml"

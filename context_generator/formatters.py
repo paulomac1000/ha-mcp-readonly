@@ -3,13 +3,18 @@
 from __future__ import annotations
 
 import json
+import os
+import tempfile
 from collections import Counter, defaultdict
 from datetime import datetime
+from pathlib import Path
 
 # Type-only imports to avoid circular dependency issues at runtime
 from typing import TYPE_CHECKING
 
 from . import constants
+from .config import GenerationConfig
+from .provenance import ProvenanceTracker
 from .utils import is_ignorable_entity
 
 if TYPE_CHECKING:
@@ -34,6 +39,9 @@ class ReportGenerator:
         services=None,
         hacs=None,
         cache=None,
+        generation_config: GenerationConfig | None = None,
+        provenance: ProvenanceTracker | None = None,
+        comprehensive_snapshot: dict | None = None,
     ):
         self.registry = registry
         self.automation = automation
@@ -48,32 +56,56 @@ class ReportGenerator:
         self.services = services
         self.hacs = hacs
         self.cache = cache
+        self.generation_config = generation_config
+        self.provenance = provenance
+        self.comprehensive_snapshot = comprehensive_snapshot or {}
 
     def generate(self, output_file: str):
-        """Generates MD file."""
+        """Generate the report atomically and enforce the configured size bound."""
         print(f"\nGenerating {output_file}...")
-
-        with open(output_file, "w", encoding="utf-8") as f:
-            self._write_header(f)
-            self._write_executive_summary(f)
-            self._write_cache_health(f)
-            self._write_system_health(f)
-            self._write_integration_status(f)
-            self._write_topology(f)
-            self._write_automation_logic(f)
-            self._write_entity_dependency_graph(f)
-            self._write_conflict_analysis(f)
-            self._write_template_entities(f)
-            self._write_persons_and_tracking(f)
-            self._write_zones_and_geofencing(f)
-            self._write_energy_dashboard(f)
-            self._write_helper_inventory(f)
-            self._write_services_catalog(f)
-            self._write_hacs_and_components(f)
-            self._write_dashboard_usage(f)
-            self._write_log_analysis(f)
-            self._write_recent_changes(f)
-            self._write_quick_reference(f)
+        destination = Path(output_file)
+        destination.parent.mkdir(mode=0o750, parents=True, exist_ok=True)
+        fd, temporary_name = tempfile.mkstemp(
+            prefix=f".{destination.stem}.", suffix=destination.suffix, dir=destination.parent
+        )
+        temporary = Path(temporary_name)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                self._write_header(f)
+                self._write_executive_summary(f)
+                self._write_source_provenance(f)
+                self._write_cache_health(f)
+                self._write_system_health(f)
+                self._write_integration_status(f)
+                self._write_topology(f)
+                self._write_automation_logic(f)
+                self._write_entity_dependency_graph(f)
+                self._write_conflict_analysis(f)
+                self._write_template_entities(f)
+                self._write_persons_and_tracking(f)
+                self._write_zones_and_geofencing(f)
+                self._write_energy_dashboard(f)
+                self._write_helper_inventory(f)
+                self._write_services_catalog(f)
+                self._write_hacs_and_components(f)
+                self._write_dashboard_usage(f)
+                self._write_log_analysis(f)
+                self._write_recent_changes(f)
+                self._write_comprehensive_snapshot(f)
+                self._write_quick_reference(f)
+                f.flush()
+                os.fsync(f.fileno())
+            maximum = (
+                self.generation_config.max_output_bytes
+                if self.generation_config is not None
+                else 32 * 1024 * 1024
+            )
+            if temporary.stat().st_size > maximum:
+                raise ValueError("Generated context exceeds configured output limit")
+            temporary.chmod(0o640)
+            os.replace(temporary, destination)
+        finally:
+            temporary.unlink(missing_ok=True)
 
         print(f"Success. File {output_file} ready.")
 
@@ -81,9 +113,16 @@ class ReportGenerator:
         """Document header."""
         f.write("# Home Assistant Context for AI (v1.0)\n\n")
         f.write(f"> **Generated:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-        f.write(f"> **HA Instance:** {constants.HA_URL}\n")
-        f.write(f"> **Config Path:** {constants.HA_CONFIG_PATH}\n")
-        f.write("> **Generator Version:** 1.0\n\n")
+        f.write(
+            f"> **HA Instance:** {self.generation_config.ha_url if self.generation_config else constants.HA_URL}\n"
+        )
+        f.write(
+            f"> **Config Path:** {self.generation_config.config_path if self.generation_config else constants.HA_CONFIG_PATH}\n"
+        )
+        f.write("> **Generator Version:** 1.1\n")
+        if self.generation_config is not None:
+            f.write(f"> **Mode:** {self.generation_config.mode}\n")
+        f.write("\n")
         f.write("---\n\n")
 
     def _write_executive_summary(self, f):
@@ -189,6 +228,41 @@ class ReportGenerator:
                     f.write(f">   - {source}: {status}\n")
         f.write("\n")
 
+        f.write("---\n\n")
+
+    def _write_source_provenance(self, f):
+        """Write the complete source matrix so omissions are never silent."""
+        f.write("## Source Provenance and Completeness\n\n")
+        if self.provenance is None:
+            f.write("> Provenance tracking was not available for this run.\n\n---\n\n")
+            return
+        summary = self.provenance.summary()
+        f.write(f"> **Artifact completeness:** {summary['completeness']}\n\n")
+        f.write("| Source | Method | Status | Records | Bytes | Redactions | Reason |\n")
+        f.write("|---|---|---:|---:|---:|---:|---|\n")
+        for name, item in summary["sources"].items():
+            reason = str(item.get("reason") or "").replace("|", "\\|")
+            f.write(
+                f"| `{name}` | {item['method']} | {item['status']} | "
+                f"{item['records']} | {item['bytes']} | {item['redacted_fields']} | {reason} |\n"
+            )
+        f.write("\n```json\n")
+        f.write(json.dumps(summary, ensure_ascii=False, indent=2, default=str))
+        f.write("\n```\n\n---\n\n")
+
+    def _write_comprehensive_snapshot(self, f):
+        """Write the full safe snapshot collected from supported HA sources."""
+        f.write("## Comprehensive Safe Data Snapshot\n\n")
+        f.write(
+            "> This section contains all supported data available to this run after "
+            "credential redaction and configured size limits. Time-series sources use "
+            "the bounded windows recorded in provenance.\n\n"
+        )
+        for group, payload in sorted(self.comprehensive_snapshot.items()):
+            f.write(f"### {group.replace('_', ' ').title()}\n\n")
+            f.write("```json\n")
+            f.write(json.dumps(payload, ensure_ascii=False, indent=2, default=str))
+            f.write("\n```\n\n")
         f.write("---\n\n")
 
     def _write_cache_health(self, f):
@@ -1185,7 +1259,9 @@ class ReportGenerator:
         """Log analysis with recommendations per component."""
         f.write("## 📋 9. Log Analysis\n\n")
 
-        f.write(f"*Analysis from the last {constants.LOG_HOURS_BACK} hours*\n\n")
+        f.write(
+            f"*Analysis from the last {self.generation_config.log_hours if self.generation_config else constants.LOG_HOURS_BACK} hours*\n\n"
+        )
 
         # Summary
         f.write("### Summary\n\n")

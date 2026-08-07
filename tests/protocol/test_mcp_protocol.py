@@ -1,0 +1,39 @@
+"""Protocol-level tests through the supported FastMCP client API."""
+
+import asyncio
+import json
+from fastmcp import Client
+from fastmcp.exceptions import ToolError
+
+import server
+
+
+def test_handshake_list_and_call() -> None:
+    async def verify() -> None:
+        expected = server.get_tool_count()
+        async with Client(server.get_mcp_server()) as client:
+            tools = await client.list_tools()
+            assert len(tools) == expected
+            names = {tool.name for tool in tools}
+            assert "describe_ha_capabilities" in names
+            result = await client.call_tool("describe_ha_capabilities", {})
+            assert result.is_error is False
+            payload = json.loads(result.content[0].text)
+            assert payload["success"] is True
+            assert payload["tool_count"] == expected
+            assert payload["transports"] == ["stdio", "streamable-http"]
+
+    asyncio.run(verify())
+
+
+def test_protocol_native_input_error() -> None:
+    async def verify() -> None:
+        async with Client(server.get_mcp_server()) as client:
+            try:
+                await client.call_tool("get_entity_state", {"wrong_parameter": "x"})
+            except ToolError as exc:
+                assert "Input validation error" in str(exc)
+            else:
+                raise AssertionError("invalid input must fail at the protocol boundary")
+
+    asyncio.run(verify())

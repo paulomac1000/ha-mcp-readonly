@@ -14,10 +14,13 @@ _HA_CONFIG_PATH = os.getenv("HA_CONFIG_PATH") or "/var/apps/hassio/data/hassio"
 
 REST_API_PORT = int(os.getenv("REST_API_PORT", "9093"))
 REST_API_URL = f"http://localhost:{REST_API_PORT}"
+REST_API_TOKEN = os.getenv("REST_API_TOKEN") or os.getenv("MCP_AUTH_TOKEN", "")
+REST_HEADERS = {"Authorization": f"Bearer {REST_API_TOKEN}"}
 
 pytestmark = pytest.mark.skipif(
     not _server_running()
     or not _HA_TOKEN
+    or not REST_API_TOKEN
     or _HA_TOKEN in ("", "your_long_lived_access_token_here"),
     reason="MCP server not running or HA_TOKEN not configured",
 )
@@ -60,14 +63,14 @@ class TestMCPServerHealth:
 
     def test_health_endpoint_returns_healthy(self):
         """MCP server health endpoint should return healthy status."""
-        resp = requests.get(f"{REST_API_URL}/health", timeout=5)
+        resp = requests.get(f"{REST_API_URL}/health", headers=REST_HEADERS, timeout=5)
         assert resp.status_code == 200
         data = resp.json()
-        assert data.get("status") == "healthy"
+        assert data.get("status") == "ready"
 
     def test_tools_list_returns_tools(self):
         """Tools endpoint should list registered tools."""
-        resp = requests.get(f"{REST_API_URL}/api/tools", timeout=10)
+        resp = requests.get(f"{REST_API_URL}/api/tools", headers=REST_HEADERS, timeout=10)
         assert resp.status_code == 200
         data = resp.json()
         assert data.get("success") is True
@@ -75,10 +78,10 @@ class TestMCPServerHealth:
 
     def test_openapi_schema(self):
         """OpenAPI schema should be valid JSON."""
-        resp = requests.get(f"{REST_API_URL}/api/openapi.json", timeout=10)
+        resp = requests.get(f"{REST_API_URL}/api/openapi.json", headers=REST_HEADERS, timeout=10)
         assert resp.status_code == 200
         data = resp.json()
-        assert data.get("openapi") == "3.0.0"
+        assert data.get("openapi", "").startswith("3.")
         assert "paths" in data
 
 
@@ -106,13 +109,13 @@ class TestAuthAndPorts:
         health_port = int(os.getenv("HEALTH_CHECK_PORT", "9091"))
         resp = requests.get(f"http://localhost:{health_port}/health", timeout=5)
         assert resp.status_code == 200
-        assert resp.json().get("status") == "healthy"
+        assert resp.json().get("status") in {"ready", "live"}
 
-    def test_mcp_sse_port_9092_listening(self):
-        """MCP SSE port 9092 should accept connections."""
+    def test_mcp_http_port_9092_listening(self):
+        """MCP Streamable HTTP port 9092 should accept connections."""
         import socket
 
-        mcp_port = int(os.getenv("MCP_SSE_PORT", "9092"))
+        mcp_port = int(os.getenv("MCP_PORT", "9092"))
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.settimeout(3)
         result = sock.connect_ex(("localhost", mcp_port))

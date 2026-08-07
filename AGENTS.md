@@ -1,3 +1,13 @@
+---
+description: Mandatory engineering and testing instructions for agents contributing to HA-MCP-Readonly.
+doc_id: reference.ha-mcp-agent-instructions
+type: reference
+status: active
+rigor: normative
+owners: [repository-maintainers]
+verification: Run the complete local quality, unit, protocol, package, and runtime gates documented in this file.
+---
+
 # Agent Instructions — HA-MCP-Readonly
 
 > **Read before writing any tool, test, or documentation.**
@@ -172,11 +182,15 @@ tools/
 └── composite.py             # Composite diagnostic tools
 
 context_generator/
-├── constants.py             # Configuration, patterns, YAML loader
-├── analyzers.py             # Data collectors (RegistryCollector, AutomationAnalyzer, and others)
-├── formatters.py            # ReportGenerator — markdown output
-├── core.py                  # main() and generate_context_file() entry points
-└── utils.py                 # Registry cache, HA API client, YAML helpers
+├── config.py                # Immutable per-run generation configuration
+├── runtime.py               # Context-local runtime and provenance binding
+├── provenance.py            # Completeness matrix and recursive redaction
+├── snapshot.py              # Safe filesystem, REST, and WebSocket snapshot collector
+├── constants.py             # Legacy patterns and YAML loader
+├── analyzers.py             # Domain analyzers
+├── formatters.py            # Atomic bounded Markdown report writer
+├── core.py                  # Isolated generation entry points
+└── utils.py                 # Runtime-aware registry and Home Assistant adapters
 ```
 
 ---
@@ -244,16 +258,17 @@ context_generator/
 
 The context generator produces a comprehensive Markdown snapshot of the HA instance.
 
-- **Analyzers:** 12 total (6 original + 6 new in v1.0)
-- **Output sections:** 18 (entities, automations, scripts, scenes, templates, dashboards, logs, history, dependencies, conflicts, persons, zones, energy, helpers, services, HACS, blueprint usage, quick reference)
-- **Modes:** `offline` (filesystem only), `online` (API only), `hybrid` (both, default)
-- **Env vars:** `HA_URL`, `HA_TOKEN`, `HA_CONFIG_PATH` — MUST be set before import or explicitly via `generate_context_file()` params
+- **Modes:** `offline` (filesystem only and network-disabled), `online` (API required), `hybrid` (local plus available API sources)
+- **Completeness contract:** every supported source is recorded as complete, partial, unavailable, skipped, or policy-excluded.
+- **Safe snapshot:** discovers local storage/configuration plus supported REST and WebSocket sources, including calendar events, to-do items, and advertised weather forecasts.
+- **Isolation:** configuration is immutable per run and passed through a context-local runtime; do not mutate module globals or `os.environ` during generation.
+- **Limits:** preserve source, output, history, logbook, calendar, process-deadline, redaction, and atomic-publication bounds.
 
 ---
 
 ## Common Pitfalls
 
-1. **Module-level imports bind early:** `from .constants import HA_URL` binds the value at import time. Changing `constants.HA_URL` later does NOT affect already-imported modules. Set env vars BEFORE importing context_generator.
+1. **Generation configuration is per-run:** create `GenerationConfig` in the composition root and use `generation_scope()`. Do not update `constants`, mutate `os.environ`, or reuse credentials between tasks.
 
 2. **`_get_automation_by_id_or_alias` needs strings:** Pass `None` → crash. Always validate `automation_id` before calling internal helpers.
 

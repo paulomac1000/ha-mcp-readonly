@@ -21,6 +21,8 @@ _logger = logging.getLogger(__name__)
 
 TOOLS_VERSION = "1.0.0"
 
+_SEARCH_MAX_FILES = 3000
+
 
 # ========================================
 # INTERNAL HELPERS
@@ -33,6 +35,20 @@ def _load_yaml_file_internal(file_path: str, config_path: str) -> Any | None:
     if not full_path.exists():
         return None
     return load_yaml_file(str(full_path))
+
+
+def _file_mentions_any(file_path: str, terms: list[str]) -> bool:
+    """Cheap raw-text pre-filter before a full YAML parse.
+
+    A file that does not contain any search term as raw text cannot contain a
+    dictionary match for that term, so the expensive parse can be skipped.
+    """
+    try:
+        with open(file_path, encoding="utf-8", errors="ignore") as handle:
+            text = handle.read(4 * 1024 * 1024)
+    except OSError:
+        return True
+    return any(term in text for term in terms)
 
 
 def _sanitize_config(obj: Any) -> Any:
@@ -393,7 +409,6 @@ def _do_search_config_by_params(
 ) -> dict[str, Any]:
     if not any([entity_id, service, platform, device_class]):
         return {"success": False, "error": "At least one search parameter required"}
-    results = []
     search_files = []
     for root, dirs, files in os.walk(config_path):  # type: ignore[type-var]
         dirs[:] = [d for d in dirs if not d.startswith(".") and d != "__pycache__"]  # type: ignore[union-attr]
@@ -404,8 +419,13 @@ def _do_search_config_by_params(
                 if file_pattern and not fnmatch(relative_path, file_pattern):
                     continue
                 search_files.append((file_path, relative_path))
-    for file_path, relative_path in search_files:
+    bounded_files = search_files[:_SEARCH_MAX_FILES]
+    terms = [term for term in (entity_id, service, platform, device_class) if term]
+    results: list[dict[str, Any]] = []
+    for file_path, relative_path in bounded_files:
         try:
+            if terms and not _file_mentions_any(file_path, terms):
+                continue
             data = _load_yaml_file_internal(relative_path, config_path)  # type: ignore[arg-type]
             if not data:
                 continue

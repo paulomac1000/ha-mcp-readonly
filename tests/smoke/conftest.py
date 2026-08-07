@@ -28,6 +28,10 @@ REST_API_URL = f"http://localhost:{REST_API_PORT}"
 
 HA_TOKEN = os.getenv("HA_TOKEN", "")
 
+# The REST compatibility adapter requires a bearer token when enabled.
+REST_API_TOKEN = os.getenv("REST_API_TOKEN") or os.getenv("MCP_AUTH_TOKEN", "")
+REST_HEADERS = {"Authorization": f"Bearer {REST_API_TOKEN}"}
+
 
 def _server_running():
     """Check if MCP server is reachable on the REST API port."""

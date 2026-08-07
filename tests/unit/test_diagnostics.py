@@ -1659,7 +1659,7 @@ class TestDiagnosePerformance:
 
         with patch("tools.diagnostics.make_ha_request") as mock_req:
 
-            def _side_effect(url, token, path):
+            def _side_effect(url, token, path, **kwargs):
                 if path == "/api/states":
                     return {"success": True, "data": states}
                 return {"success": True, "data": logbook_data}
@@ -1679,6 +1679,36 @@ class TestDiagnosePerformance:
         assert "most_triggered" in result
         assert result["most_triggered"][0]["entity_id"] == "automation.morning_routine"
         assert result["most_triggered"][0]["trigger_count"] == 3
+        assert result["logbook_window_hours"] == 24
+
+    def test_logbook_window_fallback(self, mock_mcp, config_path, ha_url, ha_token):
+        """24h logbook failure falls back to a shorter window instead of failing."""
+        states = [{"entity_id": "automation.a", "state": "on", "attributes": {}}]
+        logbook_data = [{"entity_id": "automation.a", "when": "2024-01-01T08:00:00+00:00"}]
+
+        with patch("tools.diagnostics.make_ha_request") as mock_req:
+            logbook_calls = []
+
+            def _side_effect(url, token, path, **kwargs):
+                if path == "/api/states":
+                    return {"success": True, "data": states}
+                if "logbook" in path:
+                    logbook_calls.append(path)
+                    if len(logbook_calls) == 1:
+                        return {"success": False, "error": "timeout"}
+                    return {"success": True, "data": logbook_data}
+                return {"success": False, "error": "unhandled"}
+
+            mock_req.side_effect = _side_effect
+
+            register_diagnostics_tools(mock_mcp, ha_url, ha_token, config_path)
+            tool = mock_mcp._tools["diagnose_performance"]
+            result = json.loads(tool())
+
+        assert result["success"] is True
+        assert result["logbook_window_hours"] == 6
+        assert result["most_triggered"][0]["entity_id"] == "automation.a"
+        assert len(logbook_calls) == 2  # 24h attempt failed, 6h succeeded
 
     def test_empty_response(self, mock_mcp, config_path, ha_url, ha_token):
         with patch("tools.diagnostics.make_ha_request") as mock_req:

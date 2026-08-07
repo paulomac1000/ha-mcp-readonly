@@ -1,248 +1,144 @@
-"""
-Tests for context_generator/core.py
-"""
+"""Tests for context_generator/core.py and helper functions."""
 
 import json
+import os
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from context_generator import constants
-from context_generator.core import generate_context_file, main
+from context_generator.config import GenerationConfig
+from context_generator.core import GenerationError, generate_context_file, main
 
 
 class TestGenerateContextFile:
-    """Tests for generate_context_file()."""
+    """Explicit generation configuration must be isolated per call."""
 
-    def test_overrides_paths_and_credentials(self, tmp_path):
-        """Test that generate_context_file overrides constants."""
+    def test_builds_immutable_per_call_configuration(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("HA_URL", "http://env-ha:8123")
+        monkeypatch.setenv("HA_TOKEN", "env-token")
+        monkeypatch.setenv("OUTPUT_PATH", str(tmp_path / "env.md"))
+        captured = {}
+
+        def fake_run(config: GenerationConfig):
+            captured["config"] = config
+            return {
+                "output_file": str(config.output_path),
+                "config_path": str(config.config_path),
+                "mode": config.mode,
+            }
+
+        with patch("context_generator.core.run_generation", side_effect=fake_run):
+            result = generate_context_file(
+                config_path=str(tmp_path / "config"),
+                output_path=str(tmp_path / "explicit.md"),
+                ha_url="http://explicit-ha:8123",
+                ha_token="explicit-token",
+                mode="offline",
+            )
+
+        config = captured["config"]
+        assert config.mode == "offline"
+        assert config.ha_url == "http://explicit-ha:8123"
+        assert config.ha_token == "explicit-token"
+        assert config.output_path == tmp_path / "explicit.md"
+        assert result["output_file"] == str(tmp_path / "explicit.md")
+        # No environment or module-global mutation is used to pass per-run data.
+        assert Path(os.environ["OUTPUT_PATH"]) == tmp_path / "env.md"
+
+    def test_empty_credentials_clear_stale_environment(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("HA_URL", "http://stale-ha:8123")
+        monkeypatch.setenv("HA_TOKEN", "stale-token")
+        captured = {}
+
+        def fake_run(config: GenerationConfig):
+            captured["config"] = config
+            return {
+                "output_file": str(config.output_path),
+                "config_path": str(config.config_path),
+                "mode": config.mode,
+            }
+
+        with patch("context_generator.core.run_generation", side_effect=fake_run):
+            generate_context_file(
+                config_path=str(tmp_path),
+                output_path=str(tmp_path / "offline.md"),
+                ha_url="",
+                ha_token="",
+                mode="offline",
+            )
+
+        assert captured["config"].ha_url == ""
+        assert captured["config"].ha_token == ""
+        assert captured["config"].network_enabled is False
+
+    def test_offline_generation_never_touches_network_and_reports_sources(self, tmp_path):
         config_dir = tmp_path / "config"
-        config_dir.mkdir()
-        output_file = tmp_path / "output" / "context.md"
-        output_file.parent.mkdir()
-
-        # Create minimal mock registry files
-        storage_dir = config_dir / ".storage"
-        storage_dir.mkdir()
-        (storage_dir / "core.entity_registry").write_text(
-            json.dumps({"data": {"entities": []}}), encoding="utf-8"
-        )
-        (storage_dir / "core.device_registry").write_text(
-            json.dumps({"data": {"devices": []}}), encoding="utf-8"
-        )
-        (storage_dir / "core.area_registry").write_text(
-            json.dumps({"data": {"areas": []}}), encoding="utf-8"
-        )
-        (storage_dir / "core.config_entries").write_text(
-            json.dumps({"data": {"entries": []}}), encoding="utf-8"
-        )
-
-        # Create empty automations.yaml so the analyzer doesn't crash
+        storage = config_dir / ".storage"
+        storage.mkdir(parents=True)
+        registries = {
+            "core.entity_registry": {"data": {"entities": []}},
+            "core.device_registry": {"data": {"devices": []}},
+            "core.area_registry": {"data": {"areas": []}},
+            "core.config_entries": {
+                "data": {"entries": [{"entry_id": "x", "data": {"access_token": "hide-me"}}]}
+            },
+        }
+        for name, payload in registries.items():
+            (storage / name).write_text(json.dumps(payload), encoding="utf-8")
         (config_dir / "automations.yaml").write_text("[]", encoding="utf-8")
         (config_dir / "scripts.yaml").write_text("{}", encoding="utf-8")
         (config_dir / "scenes.yaml").write_text("[]", encoding="utf-8")
         (config_dir / "configuration.yaml").write_text("homeassistant:\n", encoding="utf-8")
+        (config_dir / "secrets.yaml").write_text("password: leak-me\n", encoding="utf-8")
+        output = tmp_path / "nested" / "context.md"
 
-        with patch("context_generator.core.RegistryCollector") as MockReg:
-            reg = MagicMock()
-            reg.states = []
-            reg.entities = []
-            reg.devices = []
-            reg.areas = []
-            reg.config_entries = []
-            MockReg.return_value = reg
-
-            with patch("context_generator.core.AutomationAnalyzer") as MockAuto:
-                auto = MagicMock()
-                auto.automation_analysis = []
-                auto.script_analysis = []
-                auto.scene_analysis = []
-                auto.ghost_entities = []
-                auto.conflicting_entities = []
-                MockAuto.return_value = auto
-
-                with patch("context_generator.core.DashboardAnalyzer") as MockDash:
-                    dash = MagicMock()
-                    dash.entity_in_dashboards = []
-                    MockDash.return_value = dash
-
-                    with patch("context_generator.core.LogAnalyzer") as MockLog:
-                        log = MagicMock()
-                        log.errors = []
-                        MockLog.return_value = log
-
-                        with patch("context_generator.core.TemplateEntityCollector") as MockTpl:
-                            tpl = MagicMock()
-                            tpl.template_entities = []
-                            MockTpl.return_value = tpl
-
-                            with patch("context_generator.core.HistoryAnalyzer") as MockHist:
-                                hist = MagicMock()
-                                MockHist.return_value = hist
-
-                                with patch("context_generator.core.ReportGenerator") as MockReport:
-                                    MockReport.return_value = MagicMock()
-
-                                    # Mock make_ha_request for states
-                                    with patch(
-                                        "context_generator.analyzers.make_ha_request",
-                                        return_value={"success": True, "data": []},
-                                    ):
-                                        with patch(
-                                            "context_generator.utils.make_ha_request",
-                                            return_value={"success": True, "data": []},
-                                        ):
-                                            result = generate_context_file(
-                                                config_path=str(config_dir),
-                                                output_path=str(output_file),
-                                                ha_url="http://test-ha:8123",
-                                                ha_token="test-token",
-                                                mode="offline",
-                                            )
-
-        assert result["output_file"] == str(output_file)
-        assert result["config_path"] == str(config_dir)
-        assert result["mode"] == "offline"
-        assert constants.HA_CONFIG_PATH == str(config_dir)
-        assert constants.OUTPUT_FILE == str(output_file)
-        assert constants.HA_URL == "http://test-ha:8123"
-        assert constants.HA_TOKEN == "test-token"
-
-    def test_creates_output_directory(self, tmp_path):
-        """Test that generate_context_file creates output directory if missing."""
-        config_dir = tmp_path / "config"
-        config_dir.mkdir()
-        output_file = tmp_path / "deep" / "nested" / "context.md"
-
-        storage_dir = config_dir / ".storage"
-        storage_dir.mkdir()
-        for fname in (
-            "core.entity_registry",
-            "core.device_registry",
-            "core.area_registry",
-            "core.config_entries",
+        with (
+            patch("requests.get", side_effect=AssertionError("offline network access")),
+            patch("requests.post", side_effect=AssertionError("offline network access")),
         ):
-            (storage_dir / fname).write_text(json.dumps({"data": {}}), encoding="utf-8")
-        (config_dir / "automations.yaml").write_text("[]", encoding="utf-8")
-        (config_dir / "scripts.yaml").write_text("{}", encoding="utf-8")
-        (config_dir / "scenes.yaml").write_text("[]", encoding="utf-8")
-        (config_dir / "configuration.yaml").write_text("homeassistant:\n", encoding="utf-8")
+            result = generate_context_file(
+                config_path=str(config_dir),
+                output_path=str(output),
+                ha_url="http://stale-ha:8123",
+                ha_token="stale-token",
+                mode="offline",
+            )
 
-        with patch("context_generator.core.RegistryCollector") as MockReg:
-            reg = MagicMock()
-            reg.states = []
-            MockReg.return_value = reg
-
-            with patch("context_generator.core.AutomationAnalyzer") as MockAuto:
-                auto = MagicMock()
-                auto.automation_analysis = []
-                auto.script_analysis = []
-                auto.scene_analysis = []
-                auto.ghost_entities = []
-                auto.conflicting_entities = []
-                MockAuto.return_value = auto
-
-                with patch("context_generator.core.DashboardAnalyzer") as MockDash:
-                    dash = MagicMock()
-                    dash.entity_in_dashboards = []
-                    MockDash.return_value = dash
-
-                    with patch("context_generator.core.LogAnalyzer") as MockLog:
-                        log = MagicMock()
-                        log.errors = []
-                        MockLog.return_value = log
-
-                        with patch("context_generator.core.TemplateEntityCollector") as MockTpl:
-                            tpl = MagicMock()
-                            tpl.template_entities = []
-                            MockTpl.return_value = tpl
-
-                            with patch("context_generator.core.HistoryAnalyzer") as MockHist:
-                                hist = MagicMock()
-                                MockHist.return_value = hist
-
-                                with patch("context_generator.core.ReportGenerator") as MockReport:
-                                    MockReport.return_value = MagicMock()
-
-                                    with patch(
-                                        "context_generator.analyzers.make_ha_request",
-                                        return_value={"success": True, "data": []},
-                                    ):
-                                        with patch(
-                                            "context_generator.utils.make_ha_request",
-                                            return_value={"success": True, "data": []},
-                                        ):
-                                            generate_context_file(
-                                                config_path=str(config_dir),
-                                                output_path=str(output_file),
-                                            )
-
-        assert output_file.parent.exists()
+        text = output.read_text(encoding="utf-8")
+        assert result["mode"] == "offline"
+        assert result["completeness"] == "partial"
+        assert "Source Provenance and Completeness" in text
+        assert "Comprehensive Safe Data Snapshot" in text
+        assert "hide-me" not in text
+        assert "leak-me" not in text
+        assert "[REDACTED]" in text
 
 
 class TestMain:
-    """Tests for main()."""
-
-    def test_main_exits_on_registry_failure(self, tmp_path, monkeypatch):
-        """main() should exit(1) when registry collection fails."""
-        monkeypatch.setattr(constants, "HA_CONFIG_PATH", str(tmp_path))
-        monkeypatch.setattr(constants, "OUTPUT_FILE", str(tmp_path / "out.md"))
-
-        with patch("context_generator.core.RegistryCollector") as MockReg:
-            reg = MagicMock()
-            reg.collect.return_value = False
-            MockReg.return_value = reg
-
-            with pytest.raises(SystemExit) as exc_info:
+    def test_main_raises_controlled_error_on_required_source_failure(self, monkeypatch):
+        config = GenerationConfig.from_env()
+        with (
+            patch("context_generator.core.GenerationConfig.from_env", return_value=config),
+            patch("context_generator.core.run_generation", side_effect=GenerationError("failed")),
+        ):
+            with pytest.raises(GenerationError):
                 main()
-            assert exc_info.value.code == 1
 
-    def test_main_success_flow(self, tmp_path, monkeypatch):
-        """main() should succeed when all collectors work."""
-        monkeypatch.setattr(constants, "HA_CONFIG_PATH", str(tmp_path))
-        monkeypatch.setattr(constants, "OUTPUT_FILE", str(tmp_path / "out.md"))
-
-        with patch("context_generator.core.RegistryCollector") as MockReg:
-            reg = MagicMock()
-            reg.collect.return_value = True
-            reg.states = []
-            MockReg.return_value = reg
-
-            with patch("context_generator.core.AutomationAnalyzer") as MockAuto:
-                auto = MagicMock()
-                auto.automation_analysis = []
-                auto.script_analysis = []
-                auto.scene_analysis = []
-                auto.ghost_entities = []
-                auto.conflicting_entities = []
-                MockAuto.return_value = auto
-
-                with patch("context_generator.core.DashboardAnalyzer") as MockDash:
-                    dash = MagicMock()
-                    dash.entity_in_dashboards = []
-                    MockDash.return_value = dash
-
-                    with patch("context_generator.core.LogAnalyzer") as MockLog:
-                        log = MagicMock()
-                        log.errors = []
-                        MockLog.return_value = log
-
-                        with patch("context_generator.core.TemplateEntityCollector") as MockTpl:
-                            tpl = MagicMock()
-                            tpl.template_entities = []
-                            MockTpl.return_value = tpl
-
-                            with patch("context_generator.core.HistoryAnalyzer") as MockHist:
-                                hist = MagicMock()
-                                MockHist.return_value = hist
-
-                                with patch("context_generator.core.ReportGenerator") as MockReport:
-                                    MockReport.return_value = MagicMock()
-
-                                    # Should not raise
-                                    main()
-
-                                    MockReport.assert_called_once()
+    def test_main_uses_environment_configuration(self, monkeypatch, tmp_path):
+        config = GenerationConfig(
+            config_path=tmp_path,
+            output_path=tmp_path / "out.md",
+            ha_url="",
+            ha_token="",
+            mode="offline",
+        )
+        with (
+            patch("context_generator.core.GenerationConfig.from_env", return_value=config),
+            patch("context_generator.core.run_generation", return_value={}) as run,
+        ):
+            main()
+        run.assert_called_once_with(config)
 
 
 class TestContextGeneratorUtils:
@@ -1033,3 +929,289 @@ class TestContextGeneratorV10:
             assert rc.state_distribution["on"] == 1
             assert rc.state_distribution["off"] == 1
             assert rc.state_distribution["unavailable"] == 1
+
+
+class TestProvenanceAndComprehensiveSnapshot:
+    def test_policy_exclusions_do_not_hide_missing_runtime_sources(self):
+        from context_generator.provenance import ProvenanceTracker
+
+        tracker = ProvenanceTracker()
+        tracker.record(
+            "storage:auth",
+            method="storage",
+            status="skipped",
+            reason="policy: credential-bearing source blocked",
+        )
+        assert tracker.summary()["completeness"] == "complete"
+        tracker.record(
+            "states_api",
+            method="rest",
+            status="skipped",
+            reason="offline mode",
+        )
+        assert tracker.summary()["completeness"] == "partial"
+
+    def test_calendar_events_are_collected_for_every_calendar(self, tmp_path):
+        from context_generator.provenance import ProvenanceTracker
+        from context_generator.snapshot import ComprehensiveSnapshotCollector
+
+        config = GenerationConfig(
+            config_path=tmp_path,
+            output_path=tmp_path / "out.md",
+            ha_url="http://ha:8123",
+            ha_token="token",
+            mode="online",
+            calendar_days=14,
+        )
+        provenance = ProvenanceTracker()
+
+        def fake_request(endpoint: str, **kwargs):
+            del kwargs
+            if endpoint == "/api/calendars":
+                return {
+                    "success": True,
+                    "data": [
+                        {"entity_id": "calendar.family", "name": "Family"},
+                        {"entity_id": "calendar.work", "name": "Work"},
+                    ],
+                }
+            if endpoint.startswith("/api/calendars/calendar."):
+                return {
+                    "success": True,
+                    "data": [{"summary": "Meeting", "description": "Bearer secret-token"}],
+                }
+            return {"success": True, "data": []}
+
+        collector = ComprehensiveSnapshotCollector(config, provenance)
+        with patch("context_generator.snapshot.make_ha_request", side_effect=fake_request):
+            collector._collect_rest()
+
+        events = collector.data["rest"]["calendar_events"]
+        assert set(events) == {"calendar.family", "calendar.work"}
+        assert events["calendar.family"][0]["description"] == "Bearer [REDACTED]"
+        assert provenance.as_dict()["calendar_events:calendar.family"]["records"] == 1
+
+    def test_todo_items_are_discovered_from_states(self, tmp_path):
+        from context_generator.provenance import ProvenanceTracker
+        from context_generator.snapshot import ComprehensiveSnapshotCollector
+
+        class FakeWebSocket:
+            def __init__(self):
+                self.sent = []
+                self.responses = []
+
+            def send(self, value):
+                request = json.loads(value)
+                self.sent.append(request)
+                self.responses.append(
+                    json.dumps(
+                        {
+                            "id": request["id"],
+                            "type": "result",
+                            "success": True,
+                            "result": {"items": [{"summary": "Buy milk", "uid": "1"}]},
+                        }
+                    )
+                )
+
+            def recv(self, timeout):
+                del timeout
+                return self.responses.pop(0)
+
+        config = GenerationConfig(
+            config_path=tmp_path,
+            output_path=tmp_path / "out.md",
+            ha_url="http://ha:8123",
+            ha_token="token",
+            mode="online",
+        )
+        provenance = ProvenanceTracker()
+        collector = ComprehensiveSnapshotCollector(config, provenance)
+        collector.data["rest"]["states_api"] = [
+            {"entity_id": "todo.shopping", "state": "1"},
+            {"entity_id": "sensor.temperature", "state": "20"},
+        ]
+        ws = FakeWebSocket()
+
+        next_id = collector._collect_todo_items(ws, 9)
+
+        assert next_id == 10
+        assert ws.sent == [{"id": 9, "type": "todo/item/list", "entity_id": "todo.shopping"}]
+        assert (
+            collector.data["websocket"]["todo_items"]["todo.shopping"]["items"][0]["summary"]
+            == "Buy milk"
+        )
+        assert provenance.as_dict()["todo_items:todo.shopping"]["records"] == 1
+        assert provenance.as_dict()["todo_items"]["records"] == 1
+
+    def test_weather_forecasts_collect_every_advertised_type(self, tmp_path):
+        from context_generator.provenance import ProvenanceTracker
+        from context_generator.snapshot import ComprehensiveSnapshotCollector
+
+        class FakeWebSocket:
+            def __init__(self):
+                self.sent = []
+                self.responses = []
+
+            def send(self, value):
+                request = json.loads(value)
+                self.sent.append(request)
+                self.responses.extend(
+                    [
+                        json.dumps(
+                            {
+                                "id": request["id"],
+                                "type": "result",
+                                "success": True,
+                                "result": None,
+                            }
+                        ),
+                        json.dumps(
+                            {
+                                "id": request["id"],
+                                "type": "event",
+                                "event": {
+                                    "type": request["forecast_type"],
+                                    "forecast": [
+                                        {
+                                            "datetime": "2026-08-07T12:00:00+00:00",
+                                            "condition": "sunny",
+                                        }
+                                    ],
+                                },
+                            }
+                        ),
+                    ]
+                )
+
+            def recv(self, timeout):
+                del timeout
+                return self.responses.pop(0)
+
+        config = GenerationConfig(
+            config_path=tmp_path,
+            output_path=tmp_path / "out.md",
+            ha_url="http://ha:8123",
+            ha_token="token",
+            mode="online",
+        )
+        provenance = ProvenanceTracker()
+        collector = ComprehensiveSnapshotCollector(config, provenance)
+        collector.data["rest"]["states_api"] = [
+            {
+                "entity_id": "weather.home",
+                "state": "sunny",
+                "attributes": {"supported_features": 3},
+            },
+            {"entity_id": "sensor.temperature", "state": "20", "attributes": {}},
+        ]
+        ws = FakeWebSocket()
+
+        next_id = collector._collect_weather_forecasts(ws, 20)
+
+        assert next_id == 22
+        assert [item["forecast_type"] for item in ws.sent] == ["daily", "hourly"]
+        forecasts = collector.data["websocket"]["weather_forecasts"]["weather.home"]
+        assert set(forecasts) == {"daily", "hourly"}
+        assert forecasts["daily"][0]["condition"] == "sunny"
+        assert provenance.as_dict()["weather_forecast:weather.home:daily"]["records"] == 1
+        assert provenance.as_dict()["weather_forecasts"]["records"] == 2
+
+    def test_websocket_collection_covers_static_and_dynamic_sources(self, tmp_path):
+        from context_generator.provenance import ProvenanceTracker
+        from context_generator.snapshot import ComprehensiveSnapshotCollector
+
+        class FakeWebSocket:
+            def __init__(self):
+                self.responses = [json.dumps({"type": "auth_required"})]
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, traceback):
+                del exc_type, exc, traceback
+                return False
+
+            def send(self, value):
+                request = json.loads(value)
+                if request.get("type") == "auth":
+                    self.responses.append(json.dumps({"type": "auth_ok"}))
+                    return
+                if request["type"] == "todo/item/list":
+                    result = {"items": [{"summary": "Review context", "uid": "1"}]}
+                    self.responses.append(
+                        json.dumps(
+                            {
+                                "id": request["id"],
+                                "type": "result",
+                                "success": True,
+                                "result": result,
+                            }
+                        )
+                    )
+                    return
+                if request["type"] == "weather/subscribe_forecast":
+                    self.responses.extend(
+                        [
+                            json.dumps(
+                                {
+                                    "id": request["id"],
+                                    "type": "result",
+                                    "success": True,
+                                    "result": None,
+                                }
+                            ),
+                            json.dumps(
+                                {
+                                    "id": request["id"],
+                                    "type": "event",
+                                    "event": {
+                                        "type": request["forecast_type"],
+                                        "forecast": [{"condition": "sunny"}],
+                                    },
+                                }
+                            ),
+                        ]
+                    )
+                    return
+                self.responses.append(
+                    json.dumps(
+                        {
+                            "id": request["id"],
+                            "type": "result",
+                            "success": True,
+                            "result": [{"source": request["type"]}],
+                        }
+                    )
+                )
+
+            def recv(self, timeout):
+                del timeout
+                return self.responses.pop(0)
+
+        config = GenerationConfig(
+            config_path=tmp_path,
+            output_path=tmp_path / "out.md",
+            ha_url="http://ha:8123",
+            ha_token="token",
+            mode="online",
+        )
+        provenance = ProvenanceTracker()
+        collector = ComprehensiveSnapshotCollector(config, provenance)
+        collector.data["rest"]["states_api"] = [
+            {"entity_id": "todo.tasks", "state": "1", "attributes": {}},
+            {
+                "entity_id": "weather.home",
+                "state": "sunny",
+                "attributes": {"supported_features": 1},
+            },
+        ]
+
+        with patch("websockets.sync.client.connect", return_value=FakeWebSocket()):
+            collector._collect_websocket()
+
+        websocket = collector.data["websocket"]
+        assert websocket["areas_ws"][0]["source"] == "config/area_registry/list"
+        assert websocket["todo_items"]["todo.tasks"]["items"][0]["uid"] == "1"
+        assert websocket["weather_forecasts"]["weather.home"]["daily"][0]["condition"] == "sunny"
+        assert provenance.as_dict()["system_health_ws"]["status"] == "complete"

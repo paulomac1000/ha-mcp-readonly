@@ -1,932 +1,957 @@
 #!/usr/bin/env python3
-"""
-Home Assistant MCP Server
-Model Context Protocol server for AI-assisted Home Assistant management.
+"""Home Assistant read-only MCP server composition root."""
 
-Architecture:
-- Port 9091: Health check (lightweight HTTP server)
-- Port 9092: MCP SSE transport (for LibreChat) - /sse, /messages
-- Port 9093: REST API (Starlette) - /api/*
-"""
+from __future__ import annotations
 
+import asyncio
 import inspect
 import json
 import logging
-import os
+import multiprocessing
+import socket
 import subprocess
 import sys
 import threading
 import time
+import uuid
+from collections.abc import AsyncIterator
+from concurrent.futures import Future, ThreadPoolExecutor
+from contextlib import asynccontextmanager
+from dataclasses import dataclass, field
 from fastmcp import FastMCP
-from http.server import BaseHTTPRequestHandler, HTTPServer
-from typing import Any
+from fastmcp.server.middleware import Middleware
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from multiprocessing.connection import Connection
+from pathlib import Path
+from typing import Any, cast, get_type_hints
 
-from tools.areas import register_area_tools  # noqa: E402
-from tools.automations import register_automation_tools  # noqa: E402
-from tools.batch_operations import register_batch_operations_tools  # noqa: E402
-from tools.blueprints import register_blueprint_tools  # noqa: E402
-from tools.capabilities import register_capability_tools  # noqa: E402
-from tools.categories import register_categories_tools  # noqa: E402
-from tools.composite import register_composite_tools  # noqa: E402
-from tools.config import register_config_tools  # noqa: E402
-from tools.config_entries import register_config_entry_tools  # noqa: E402
-
-# Configuration (from tools.constants — single source of truth)
-from tools.constants import (
-    CORS_ALLOWED_ORIGINS,
-    DEV_TOOLS_ENABLED,
-    HA_CONFIG_PATH,
-    HA_TOKEN,
-    HA_URL,
-    HEALTH_CHECK_PORT,
-    LOG_LEVEL,
-    MCP_BIND_HOST,
-    MCP_SSE_PORT,
-    OUTPUT_PATH,
-    REST_API_PORT,
-    RUN_TESTS_ON_STARTUP,
+from tools.invocation import (
+    InvocationError,
+    Principal,
+    current_principal,
+    principal_scope,
+    set_process_principal,
 )
-from tools.dev_tools import register_dev_tools  # noqa: E402
-from tools.devices import register_device_tools  # noqa: E402
-from tools.diagnostics import register_diagnostics_tools  # noqa: E402
-from tools.entity_context import register_entity_context_tools  # noqa: E402
-from tools.entity_dependencies import register_entity_dependency_tools  # noqa: E402
-from tools.filesystem_explorer import register_filesystem_tools  # noqa: E402
-from tools.graph_tools import register_graph_tools  # noqa: E402
-from tools.health_reporter import register_health_reporter_tools  # noqa: E402
-from tools.helpers_health import register_helpers_health_tools  # noqa: E402
-from tools.history import register_history_tools  # noqa: E402
-from tools.integrations import register_integration_tools  # noqa: E402
-from tools.logs import register_log_tools  # noqa: E402
-from tools.manifests import (  # noqa: E402
+from tools.manifests import (
     _inject_meta_envelope,
     _inject_risk_prefixes,
     auto_register_all_read_tools,
+    get_manifest,
 )
-from tools.observability import RequestIdFilter, get_invocation_counts  # noqa: E402
-from tools.scenes import register_scene_tools  # noqa: E402
-from tools.scripts import register_script_tools  # noqa: E402
+from tools.observability import RequestIdFilter
+from tools.security import (
+    PathPolicy,
+    SecurityBoundaryError,
+    bearer_token_is_valid,
+    resolve_output_path,
+)
+from tools.settings import SETTINGS
+from version import __version__
 
-# Tool imports (placed at top; registration happens after config)
-from tools.states import register_state_tools  # noqa: E402
-from tools.storage import register_storage_tools  # noqa: E402
-from version import __version__  # noqa: E402
+CONTEXT_OUTPUT_ROOT = SETTINGS.context_output_root
+CORS_ALLOWED_ORIGINS = list(SETTINGS.cors_allowed_origins)
+DEV_TOOLS_ENABLED = SETTINGS.dev_tools_enabled
+HA_CONFIG_PATH = SETTINGS.ha_config_path
+HA_TOKEN = SETTINGS.ha_token
+HA_URL = SETTINGS.ha_url
+HEALTH_CHECK_PORT = SETTINGS.health_check_port
+HEALTH_SERVER_ENABLED = SETTINGS.health_server_enabled
+LOG_LEVEL = SETTINGS.log_level
+MCP_AUTH_TOKEN = SETTINGS.mcp_auth_token
+MCP_BIND_HOST = SETTINGS.mcp_bind_host
+MCP_PORT = SETTINGS.mcp_port
+MCP_TRANSPORT = SETTINGS.mcp_transport
+OUTPUT_PATH = SETTINGS.output_path
+REST_API_ENABLED = SETTINGS.rest_api_enabled
+REST_API_PORT = SETTINGS.rest_api_port
+REST_API_TOKEN = SETTINGS.rest_api_token
+RUN_TESTS_ON_STARTUP = SETTINGS.run_tests_on_startup
 
-# Logging: MUST target stderr (stdout corrupts MCP stdio transport)
 logging.basicConfig(
     level=getattr(logging, LOG_LEVEL.upper(), logging.INFO),
     format="%(asctime)s [%(levelname)s] [%(request_id)s] %(name)s: %(message)s",
     stream=sys.stderr,
 )
-# Inject the request_id context into every log record (Observability-9/10).
 for _handler in logging.getLogger().handlers:
     _handler.addFilter(RequestIdFilter())
 _logger = logging.getLogger("ha-mcp")
 
-# =============================================================================
-# HEALTH CHECK SERVER (port 9091)
-# =============================================================================
+_MCP_SERVER: FastMCP | None = None
+_TOOL_CATALOG: dict[str, Any] = {}
+_SERVER_LOCK = threading.Lock()
+HEALTH_STATE: dict[str, Any] = {
+    "status": "starting",
+    "ready": False,
+    "started_at": time.time(),
+    "components": {
+        "catalog": "starting",
+        "transport": "starting",
+        "filesystem": "unknown",
+        "backend": "unknown",
+        "rest": "disabled" if not REST_API_ENABLED else "starting",
+    },
+}
+_HEALTH_LOCK = threading.Lock()
 
-HEALTH_STATE = {"status": "starting", "last_heartbeat": time.time()}
+
+def _set_health_component(name: str, status: str, **details: Any) -> None:
+    with _HEALTH_LOCK:
+        components = HEALTH_STATE.setdefault("components", {})
+        components[name] = status
+        if details:
+            HEALTH_STATE.setdefault("component_details", {})[name] = details
+        required = ["catalog", "transport", "filesystem"]
+        if SETTINGS.backend_required_for_ready:
+            required.append("backend")
+        if REST_API_ENABLED:
+            required.append("rest")
+        ready = all(components.get(item) == "ready" for item in required)
+        HEALTH_STATE["ready"] = bool(ready)
+        HEALTH_STATE["status"] = "ready" if HEALTH_STATE["ready"] else "not_ready"
 
 
-class HealthHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        if self.path == "/health":
-            payload = {
-                **HEALTH_STATE,
-                "invocations": get_invocation_counts(),
-                "tool_count": get_tool_count(),
-                "tools_version": __version__,
-            }
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.end_headers()
-            self.wfile.write(json.dumps(payload).encode())
-        else:
-            self.send_response(404)
-            self.end_headers()
+def _initialize_runtime_health() -> None:
+    config_root = Path(HA_CONFIG_PATH)
+    filesystem_status = "ready" if config_root.is_dir() else "failed"
+    _set_health_component(
+        "filesystem", filesystem_status, path=str(config_root), readable=config_root.is_dir()
+    )
 
-    def log_message(self, format, *args):
+    if not HA_TOKEN:
+        _set_health_component("backend", "degraded", configured=False, reachable=False)
+        HEALTH_STATE["capability_degradation"] = {
+            "ha.read": "Home Assistant token is not configured"
+        }
+        return
+    try:
+        import requests
+
+        response = requests.get(
+            f"{HA_URL.rstrip('/')}/api/",
+            headers={"Authorization": f"Bearer {HA_TOKEN}"},
+            timeout=2,
+        )
+        response.raise_for_status()
+    except Exception as exc:
+        _set_health_component(
+            "backend",
+            "degraded",
+            configured=True,
+            reachable=False,
+            reason=type(exc).__name__,
+        )
+        HEALTH_STATE["capability_degradation"] = {
+            "ha.read": "Home Assistant backend is unavailable"
+        }
+    else:
+        _set_health_component("backend", "ready", configured=True, reachable=True)
+        HEALTH_STATE.pop("capability_degradation", None)
+
+
+def _network_auth_provider() -> Any | None:
+    if MCP_TRANSPORT != "http":
+        return None
+    if not MCP_AUTH_TOKEN:
+        return None
+    from tools.auth import ConfiguredBearerTokenVerifier
+
+    return ConfiguredBearerTokenVerifier(MCP_AUTH_TOKEN)
+
+
+def _extract_fastmcp_catalog(server: FastMCP) -> dict[str, Any]:
+    """Isolate SDK-private discovery behind one compatibility adapter."""
+    try:
+        components = server._local_provider._components
+        return {
+            key.removeprefix("tool:").removesuffix("@"): value
+            for key, value in components.items()
+            if key.startswith("tool:")
+        }
+    except AttributeError:
         pass
+    try:
+        return dict(server._tool_manager._tools)  # type: ignore[attr-defined]
+    except AttributeError as exc:
+        raise RuntimeError("Unsupported FastMCP tool catalog API") from exc
 
 
-def start_health_server(port=9091):
-    """Start lightweight HTTP server for health checks."""
-    server = HTTPServer((MCP_BIND_HOST, port), HealthHandler)
-    threading.Thread(target=server.serve_forever, daemon=True, name="HealthServer").start()
-    _logger.info("Health endpoint started on %s:%d", MCP_BIND_HOST, port)
+class RequestPrincipalMiddleware(Middleware):
+    """Bind kernel authorization to the access token of each MCP request."""
+
+    async def __call__(self, context: Any, call_next: Any) -> Any:
+        if getattr(context, "method", None) != "tools/call":
+            return await call_next(context)
+        from fastmcp.server.dependencies import get_access_token
+
+        access_token = get_access_token()
+        if access_token is None:
+            principal = (
+                Principal(
+                    subject="local-mcp-client",
+                    transport="stdio",
+                    capabilities=frozenset({"ha.read", "filesystem.read", "artifact.read"}),
+                )
+                if MCP_TRANSPORT == "stdio"
+                else Principal(
+                    subject="unauthenticated-network-client",
+                    transport=MCP_TRANSPORT,
+                    capabilities=frozenset(),
+                )
+            )
+        else:
+            principal = Principal(
+                subject=str(
+                    access_token.subject or access_token.client_id or "authenticated-client"
+                ),
+                transport=MCP_TRANSPORT,
+                capabilities=frozenset(access_token.scopes or []),
+            )
+        with principal_scope(principal):
+            return await call_next(context)
+
+
+def create_mcp_server() -> FastMCP:
+    """Build a fully registered server without network or filesystem startup side effects."""
+    server = FastMCP(
+        "HA-Observer",
+        version=__version__,
+        auth=_network_auth_provider(),
+        middleware=[RequestPrincipalMiddleware()],
+        mask_error_details=True,
+        strict_input_validation=True,
+    )
+
+    from tools.areas import register_area_tools
+    from tools.automations import register_automation_tools
+    from tools.batch_operations import register_batch_operations_tools
+    from tools.blueprints import register_blueprint_tools
+    from tools.capabilities import register_capability_tools
+    from tools.categories import register_categories_tools
+    from tools.composite import register_composite_tools
+    from tools.config import register_config_tools
+    from tools.config_entries import register_config_entry_tools
+    from tools.dev_tools import register_dev_tools
+    from tools.devices import register_device_tools
+    from tools.diagnostics import register_diagnostics_tools
+    from tools.entity_context import register_entity_context_tools
+    from tools.entity_dependencies import register_entity_dependency_tools
+    from tools.filesystem_explorer import register_filesystem_tools
+    from tools.graph_tools import register_graph_tools
+    from tools.health_reporter import register_health_reporter_tools
+    from tools.helpers_health import register_helpers_health_tools
+    from tools.history import register_history_tools
+    from tools.integrations import register_integration_tools
+    from tools.logs import register_log_tools
+    from tools.scenes import register_scene_tools
+    from tools.scripts import register_script_tools
+    from tools.states import register_state_tools
+    from tools.storage import register_storage_tools
+
+    register_state_tools(server, HA_URL, HA_TOKEN, HA_CONFIG_PATH)
+    register_automation_tools(server, HA_CONFIG_PATH, HA_URL, HA_TOKEN)
+    register_script_tools(server, HA_CONFIG_PATH)
+    register_scene_tools(server, HA_CONFIG_PATH)
+    register_blueprint_tools(server, HA_CONFIG_PATH)
+    register_config_tools(server, HA_CONFIG_PATH, HA_URL, HA_TOKEN)
+    register_log_tools(server, HA_CONFIG_PATH, HA_URL, HA_TOKEN)
+    register_storage_tools(server, HA_CONFIG_PATH, HA_URL, HA_TOKEN)
+    register_diagnostics_tools(server, HA_URL, HA_TOKEN, HA_CONFIG_PATH)
+    register_health_reporter_tools(server, HA_URL, HA_TOKEN, HA_CONFIG_PATH)
+    register_filesystem_tools(server, HA_CONFIG_PATH)
+    register_graph_tools(server, HA_CONFIG_PATH, HA_URL, HA_TOKEN)
+    register_composite_tools(server, HA_CONFIG_PATH, HA_URL, HA_TOKEN)
+    if DEV_TOOLS_ENABLED:
+        register_dev_tools(server, HA_URL, HA_TOKEN, HA_CONFIG_PATH)
+    register_config_entry_tools(server, HA_CONFIG_PATH, HA_URL, HA_TOKEN)
+    register_device_tools(server, HA_CONFIG_PATH, HA_URL, HA_TOKEN)
+    register_entity_dependency_tools(server, HA_CONFIG_PATH, HA_URL, HA_TOKEN)
+    register_entity_context_tools(server, HA_CONFIG_PATH, HA_URL, HA_TOKEN)
+    register_history_tools(server, HA_URL, HA_TOKEN)
+    register_area_tools(server, HA_CONFIG_PATH, HA_URL, HA_TOKEN)
+    register_integration_tools(server, HA_CONFIG_PATH, HA_URL, HA_TOKEN)
+    register_batch_operations_tools(server, HA_CONFIG_PATH, HA_URL, HA_TOKEN)
+    register_categories_tools(server, HA_CONFIG_PATH)
+    register_helpers_health_tools(server, HA_URL, HA_TOKEN)
+    register_capability_tools(server)
+
+    catalog = _extract_fastmcp_catalog(server)
+    auto_register_all_read_tools(set(catalog))
+    _inject_risk_prefixes(catalog)
+    _inject_meta_envelope(catalog)
     return server
 
 
-# =============================================================================
-# CONFIGURATION (imported from tools.constants above)
-# =============================================================================
-
-if not HA_TOKEN:
-    _logger.warning("HA_TOKEN not set — some features will be disabled")
-
-# =============================================================================
-# INITIALIZE MCP SERVER
-# =============================================================================
-
-mcp = FastMCP("HA-Observer")
-
-# =============================================================================
-# REGISTER ALL TOOLS
-# =============================================================================
-
-register_state_tools(mcp, HA_URL, HA_TOKEN, HA_CONFIG_PATH)
-
-register_automation_tools(mcp, HA_CONFIG_PATH, HA_URL, HA_TOKEN)
-
-register_script_tools(mcp, HA_CONFIG_PATH)
-
-register_scene_tools(mcp, HA_CONFIG_PATH)
-
-register_blueprint_tools(mcp, HA_CONFIG_PATH)
-
-register_config_tools(mcp, HA_CONFIG_PATH, HA_URL, HA_TOKEN)
-
-register_log_tools(mcp, HA_CONFIG_PATH, HA_URL, HA_TOKEN)
-
-register_storage_tools(mcp, HA_CONFIG_PATH, HA_URL, HA_TOKEN)
-
-register_diagnostics_tools(mcp, HA_URL, HA_TOKEN, HA_CONFIG_PATH)
-
-register_health_reporter_tools(mcp, HA_URL, HA_TOKEN, HA_CONFIG_PATH)
-
-register_filesystem_tools(mcp)
-
-register_graph_tools(mcp, HA_CONFIG_PATH, HA_URL, HA_TOKEN)
-
-register_composite_tools(mcp, HA_CONFIG_PATH, HA_URL, HA_TOKEN)
-
-if DEV_TOOLS_ENABLED:
-    register_dev_tools(mcp, HA_URL, HA_TOKEN, HA_CONFIG_PATH)
-    _logger.info("Dev tools: ENABLED")
-else:
-    _logger.info("Dev tools: DISABLED")
-
-register_config_entry_tools(mcp, HA_CONFIG_PATH, HA_URL, HA_TOKEN)
-
-register_device_tools(mcp, HA_CONFIG_PATH, HA_URL, HA_TOKEN)
-
-register_entity_dependency_tools(mcp, HA_CONFIG_PATH, HA_URL, HA_TOKEN)
-
-register_entity_context_tools(mcp, HA_CONFIG_PATH, HA_URL, HA_TOKEN)
-
-register_history_tools(mcp, HA_URL, HA_TOKEN)
-
-register_area_tools(mcp, HA_CONFIG_PATH, HA_URL, HA_TOKEN)
-
-register_integration_tools(mcp, HA_CONFIG_PATH, HA_URL, HA_TOKEN)
-
-register_batch_operations_tools(mcp, HA_CONFIG_PATH, HA_URL, HA_TOKEN)
-
-register_categories_tools(mcp, HA_CONFIG_PATH)
-
-register_helpers_health_tools(mcp, HA_URL, HA_TOKEN)
-
-register_capability_tools(mcp)
-
-
-# =============================================================================
-# TOOL HELPERS
-# =============================================================================
+def get_mcp_server() -> FastMCP:
+    global _MCP_SERVER, _TOOL_CATALOG
+    if _MCP_SERVER is None:
+        with _SERVER_LOCK:
+            if _MCP_SERVER is None:
+                built = create_mcp_server()
+                _TOOL_CATALOG = _extract_fastmcp_catalog(built)
+                _MCP_SERVER = built
+                HEALTH_STATE["tool_count"] = len(_TOOL_CATALOG)
+                _set_health_component("catalog", "ready", tool_count=len(_TOOL_CATALOG))
+    return _MCP_SERVER
 
 
 def get_all_tools() -> dict[str, Any]:
-    """Return a dictionary of all registered tools keyed by tool name."""
-    try:
-        raw = mcp._local_provider._components
-        return {k.removeprefix("tool:").removesuffix("@"): v for k, v in raw.items()}
-    except AttributeError:
-        pass
-    try:
-        return mcp._tool_manager._tools
-    except AttributeError:
-        pass
-    return {}
+    get_mcp_server()
+    return dict(_TOOL_CATALOG)
 
 
 def get_tool(name: str) -> Any | None:
-    """Return tool by name if available."""
     return get_all_tools().get(name)
 
 
 def get_tool_count() -> int:
-    """Return the number of registered tools."""
     return len(get_all_tools())
 
 
-# =============================================================================
-# AUTO-REGISTER TOOL MANIFESTS + INJECT RISK PREFIXES
-# =============================================================================
-
-_all_tool_names = set(get_all_tools().keys())
-auto_register_all_read_tools(_all_tool_names)
-_inject_risk_prefixes(get_all_tools())
-_inject_meta_envelope(get_all_tools())
-_logger.info(
-    "Injected risk prefixes + _meta envelope from manifests for %d tools",
-    len(_all_tool_names),
-)
-
-tool_count = get_tool_count()
-
-# Populate the lightweight health payload now that registration is complete.
-HEALTH_STATE["tool_count"] = tool_count
-HEALTH_STATE["tools_version"] = __version__
+def _extract_fn(tool: Any) -> Any | None:
+    for attr in ("fn", "func", "_func", "function"):
+        function = getattr(tool, attr, None)
+        if callable(function):
+            return function
+    return tool if callable(tool) else None
 
 
-# =============================================================================
-# CONTEXT GENERATOR INTEGRATION
-# =============================================================================
-
-_generation_state = {
-    "status": "idle",
-    "started_at": None,
-    "completed_at": None,
-    "output_path": None,
-    "error": None,
-    "stats": {},
-}
-_generation_lock = threading.Lock()
-_GENERATION_TIMEOUT = 300  # seconds
+def _extract_desc(tool: Any) -> str:
+    description = getattr(tool, "description", None)
+    if description:
+        return str(description)
+    function = _extract_fn(tool)
+    return (function.__doc__ or "").strip().split("\n", maxsplit=1)[0] if function else ""
 
 
-def _run_context_generation(config_path: str, output_path: str, mode: str):
-    """Run context generation in background thread."""
-    global _generation_state
+def _signature_to_json_schema(function: Any) -> dict[str, Any]:
+    signature = inspect.signature(function)
+    try:
+        type_hints = get_type_hints(function)
+    except (NameError, TypeError):
+        type_hints = {}
+    properties: dict[str, Any] = {}
+    required: list[str] = []
+    json_types = {
+        str: "string",
+        int: "integer",
+        float: "number",
+        bool: "boolean",
+        dict: "object",
+        list: "array",
+    }
+    for name, parameter in signature.parameters.items():
+        if name == "self":
+            continue
+        annotation = type_hints.get(name, parameter.annotation)
+        json_type = json_types.get(annotation, "string")
+        property_schema: dict[str, Any] = {"type": json_type}
+        if parameter.default is inspect.Parameter.empty:
+            required.append(name)
+        else:
+            property_schema["default"] = parameter.default
+        properties[name] = property_schema
+    schema: dict[str, Any] = {
+        "type": "object",
+        "properties": properties,
+        "additionalProperties": False,
+    }
+    if required:
+        schema["required"] = required
+    return schema
+
+
+class HealthHandler(BaseHTTPRequestHandler):
+    def do_GET(self) -> None:  # noqa: N802
+        if self.path not in {"/health", "/live", "/ready"}:
+            self.send_response(404)
+            self.end_headers()
+            return
+        ready = bool(HEALTH_STATE.get("ready"))
+        payload: dict[str, Any]
+        if self.path == "/live":
+            payload = {"status": "live", "version": __version__}
+            status = 200
+        elif self.path == "/ready":
+            payload = {"status": "ready" if ready else "not_ready", "version": __version__}
+            status = 200 if ready else 503
+        else:
+            payload = {
+                **HEALTH_STATE,
+                "version": __version__,
+            }
+            status = 200 if ready else 503
+        body = json.dumps(payload).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, format: str, *args: Any) -> None:
+        return
+
+
+def start_health_server(port: int = HEALTH_CHECK_PORT) -> ThreadingHTTPServer:
+    server = ThreadingHTTPServer((MCP_BIND_HOST, port), HealthHandler)
+    threading.Thread(target=server.serve_forever, daemon=True, name="health-server").start()
+    return server
+
+
+def _context_generation_worker(
+    connection: Connection,
+    config_path: str,
+    output_path: str,
+    ha_url: str,
+    ha_token: str,
+    mode: str,
+) -> None:
+    """Run generation in a killable child process and return a sanitized result."""
     try:
         from context_generator import generate_context_file
 
-        stats = generate_context_file(
+        result = generate_context_file(
             config_path=config_path,
             output_path=output_path,
-            ha_url=HA_URL if mode in ("online", "hybrid") else None,
-            ha_token=HA_TOKEN if mode in ("online", "hybrid") else None,
-            mode=mode,
+            ha_url=ha_url,
+            ha_token=ha_token,
+            mode=cast(Any, mode),
         )
-        with _generation_lock:
-            _generation_state["status"] = "completed"
-            _generation_state["completed_at"] = time.time()
-            _generation_state["stats"] = stats
-        _logger.info("Context generation completed: %s", output_path)
-    except Exception as exc:
-        with _generation_lock:
-            _generation_state["status"] = "error"
-            _generation_state["error"] = str(exc)
-            _generation_state["completed_at"] = time.time()
-        _logger.error("Context generation failed: %s", exc)
+        connection.send(("ok", result))
+    except BaseException as exc:
+        connection.send(("error", type(exc).__name__))
+    finally:
+        connection.close()
 
 
-# =============================================================================
-# STARTUP SELF-TEST
-# =============================================================================
+@dataclass
+class GenerationTask:
+    task_id: str
+    owner: str
+    output_path: Path
+    started_at: float
+    future: Future[dict[str, Any]]
+    mode: str
 
 
-def run_startup_tests():
-    """Run all tests on startup."""
-    _logger.info("=" * 60)
-    _logger.info("RUNNING STARTUP SELF-TESTS")
-    _logger.info("=" * 60)
+@dataclass
+class ContextTaskManager:
+    timeout_seconds: int = 300
+    _executor: ThreadPoolExecutor = field(
+        default_factory=lambda: ThreadPoolExecutor(max_workers=1, thread_name_prefix="context")
+    )
+    _task: GenerationTask | None = None
+    _lock: threading.Lock = field(default_factory=threading.Lock)
 
-    try:
-        result = subprocess.run(
-            [sys.executable, "-m", "pytest", "tests/", "-v", "-p", "no:cacheprovider"],
-            check=False,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.PIPE,
+    def _generate(self, config_path: Path, output_path: Path, mode: str) -> dict[str, Any]:
+        output_path.parent.mkdir(mode=0o750, parents=True, exist_ok=True)
+        temporary = output_path.with_name(
+            f".{output_path.stem}.{uuid.uuid4().hex}{output_path.suffix}"
         )
-        _logger.info("=" * 60)
-        if result.returncode == 0:
-            _logger.info("ALL TESTS PASSED")
-        else:
-            _logger.error(
-                "TESTS FAILED (%d): %s",
-                result.returncode,
-                result.stderr.decode("utf-8", errors="replace")[:500],
+        context = multiprocessing.get_context("spawn")
+        receive, send = context.Pipe(duplex=False)
+        process = context.Process(
+            target=_context_generation_worker,
+            args=(
+                send,
+                str(config_path),
+                str(temporary),
+                HA_URL if mode in {"online", "hybrid"} else "",
+                HA_TOKEN if mode in {"online", "hybrid"} else "",
+                mode,
+            ),
+            name="ha-context-generator",
+        )
+        try:
+            process.start()
+            send.close()
+            process.join(self.timeout_seconds)
+            if process.is_alive():
+                process.terminate()
+                process.join(5)
+                if process.is_alive():
+                    process.kill()
+                    process.join(5)
+                raise TimeoutError("Context generation exceeded its deadline")
+            if not receive.poll(1):
+                raise RuntimeError("Context generator exited without a result")
+            status, payload = receive.recv()
+            if status != "ok":
+                raise RuntimeError(f"Context generation failed: {payload}")
+            if not isinstance(payload, dict) or not temporary.is_file():
+                raise RuntimeError("Context generator returned an invalid artifact")
+            temporary.chmod(0o640)
+            temporary.replace(output_path)
+            payload["output_file"] = str(output_path)
+            return cast(dict[str, Any], payload)
+        finally:
+            receive.close()
+            if process.is_alive():
+                process.kill()
+                process.join(5)
+            process.close()
+            temporary.unlink(missing_ok=True)
+
+    def start(self, config_path: str, output_path: str, mode: str, owner: str) -> GenerationTask:
+        if mode not in {"offline", "online", "hybrid"}:
+            raise ValueError("mode must be offline, online, or hybrid")
+        config_policy = PathPolicy.from_paths(
+            [Path(HA_CONFIG_PATH)], max_file_size=20 * 1024 * 1024, deny_storage=False
+        )
+        safe_config = config_policy.resolve(config_path, require_directory=True)
+        safe_output = resolve_output_path(output_path, CONTEXT_OUTPUT_ROOT)
+        with self._lock:
+            if self._task is not None and not self._task.future.done():
+                raise RuntimeError("Context generation is already running")
+            future = self._executor.submit(self._generate, safe_config, safe_output, mode)
+            self._task = GenerationTask(
+                task_id=uuid.uuid4().hex,
+                owner=owner,
+                output_path=safe_output,
+                started_at=time.monotonic(),
+                future=future,
+                mode=mode,
             )
-        _logger.info("=" * 60)
-        return result.returncode == 0
-    except Exception as e:
-        _logger.error("Error running tests: %s", e)
-        return False
+            return self._task
+
+    def status(self, owner: str) -> dict[str, Any]:
+        with self._lock:
+            task = self._task
+        if task is None:
+            return {"status": "idle"}
+        if task.owner != owner:
+            raise PermissionError("Task belongs to another principal")
+        elapsed = time.monotonic() - task.started_at
+        if not task.future.done() and elapsed > self.timeout_seconds:
+            return {"status": "deadline_exceeded", "task_id": task.task_id}
+        if not task.future.done():
+            return {"status": "running", "task_id": task.task_id, "mode": task.mode}
+        exception = task.future.exception()
+        if exception is not None:
+            return {"status": "error", "task_id": task.task_id, "error": "Generation failed"}
+        return {
+            "status": "completed",
+            "task_id": task.task_id,
+            "output_path": str(task.output_path),
+            "stats": task.future.result(),
+        }
+
+    def output_for(self, owner: str) -> Path:
+        with self._lock:
+            task = self._task
+        if task is None or task.owner != owner or not task.future.done() or task.future.exception():
+            raise FileNotFoundError("No completed context artifact")
+        return resolve_output_path(task.output_path, CONTEXT_OUTPUT_ROOT)
 
 
-# =============================================================================
-# REST API (Starlette on separate port 9093)
-# =============================================================================
+_CONTEXT_TASKS = ContextTaskManager()
 
 
-def create_rest_app():
-    """REST API for tools (alternative access, not MCP)."""
-    from pathlib import Path
+def create_rest_app(auth_token: str | None = None) -> Any:
+    """Create the optional authenticated REST compatibility adapter."""
     from starlette.applications import Starlette
     from starlette.middleware import Middleware
+    from starlette.middleware.base import BaseHTTPMiddleware
     from starlette.middleware.cors import CORSMiddleware
+    from starlette.requests import Request
     from starlette.responses import JSONResponse, PlainTextResponse
     from starlette.routing import Route
 
-    async def health(request):
-        return JSONResponse(
-            {
-                "status": "healthy",
-                "server": "HA-Observer",
-                "version": __version__,
-                "tool_count": get_tool_count(),
-                "tools_version": __version__,
-                "invocations": get_invocation_counts(),
-                "endpoints": {
-                    "mcp_sse": f"http://{MCP_BIND_HOST}:{MCP_SSE_PORT}/sse",
-                    "mcp_messages": f"http://{MCP_BIND_HOST}:{MCP_SSE_PORT}/messages",
-                    "rest_api": f"http://{MCP_BIND_HOST}:{REST_API_PORT}/api/",
-                },
-            }
-        )
+    token = REST_API_TOKEN if auth_token is None else auth_token
+    if not token:
+        raise ValueError("REST_API_TOKEN or MCP_AUTH_TOKEN is required for the REST adapter")
 
-    # -- Tool description helpers ------------------------------------------------
-
-    def _extract_fn(tool):
-        """Extract the callable function from a FastMCP tool wrapper."""
-        if hasattr(tool, "fn") and callable(tool.fn):
-            return tool.fn
-        if callable(tool):
-            return tool
-        return None
-
-    def _extract_desc(tool):
-        """Return the first-line description of a tool (never None)."""
-        if hasattr(tool, "description") and tool.description:
-            return tool.description
-        fn = _extract_fn(tool)
-        if fn and fn.__doc__:
-            return fn.__doc__.strip().split("\n")[0]
-        return ""
-
-    def _signature_to_json_schema(fn):
-        """Convert a Python function signature to a JSON Schema parameters object."""
-        sig = inspect.signature(fn)
-        properties: dict[str, Any] = {}
-        required: list[str] = []
-
-        _JSON_TYPE = {
-            str: "string",
-            int: "integer",
-            float: "number",
-            bool: "boolean",
-            dict: "object",
-            list: "array",
-            type(None): "null",
-        }
-
-        for pname, param in sig.parameters.items():
-            if pname == "self":
-                continue
-
-            ann = param.annotation
-            if ann is inspect.Parameter.empty:
-                continue
-
-            # Unwrap Optional / Union[..., None]
-            origin = getattr(ann, "__origin__", None)
-            args = getattr(ann, "__args__", ())
-            if origin is not None and str(origin) in (
-                "typing.Union",
-                "typing.Optional",
-            ):
-                non_none = [a for a in args if a is not type(None)]
-                ann = non_none[0] if len(non_none) == 1 else ann
-
-            json_type = _JSON_TYPE.get(ann)
-            if json_type is None:
-                # Fall back to string for unknown types (Any, complex generics)
-                json_type = "string"
-
-            prop: dict[str, Any] = {"type": json_type}
-            if param.default is not inspect.Parameter.empty:
-                prop["default"] = param.default if param.default is not None else None
-            else:
-                required.append(pname)
-
-            properties[pname] = prop
-
-        schema: dict[str, Any] = {"type": "object", "properties": properties}
-        if required:
-            schema["required"] = required
-        return schema
-
-    # -- Category prefix map (longest-prefix-first) ------------------------------
-
-    _CATEGORY_MAP: list[tuple[str, str]] = [
-        ("test_template", "Dev Tools"),
-        ("diagnose_entity", "Dev Tools"),
-        ("investigate_", "Composite"),
-        ("get_area_diagnostic", "Composite"),
-        ("compare_templates", "System"),
-        ("describe_", "System"),
-        ("diagnose_", "Diagnostics"),
-        ("trigger_health", "Diagnostics"),
-        ("get_entity", "States"),
-        ("search_entities", "States"),
-        ("get_states", "States"),
-        ("list_automations", "Automations"),
-        ("get_automation_", "Automations"),
-        ("list_scripts", "Scripts & Scenes"),
-        ("get_script_", "Scripts & Scenes"),
-        ("list_blueprints", "Blueprints"),
-        ("get_blueprint_", "Blueprints"),
-        ("get_device_", "Devices & Areas"),
-        ("search_devices", "Devices & Areas"),
-        ("search_in_config", "Config"),
-        ("read_config", "Config"),
-        ("get_log_", "Logs"),
-        ("search_logs", "Logs"),
-        ("analyze_log", "Logs"),
-        ("get_history_", "History"),
-        ("get_recent_", "History"),
-        ("search_lovelace", "Lovelace"),
-        ("get_lovelace", "Lovelace"),
-        ("bulk_", "Batch & Tools"),
-        ("compare_", "Batch & Tools"),
-        ("check_entities", "Batch & Tools"),
-        ("graph_", "Graph"),
-    ]
-    _CATEGORY_MAP.sort(key=lambda x: len(x[0]), reverse=True)
-
-    # -- REST endpoint: GET /api/tools ------------------------------------------
-
-    async def list_tools_endpoint(request):
-        detail = request.query_params.get("detail", "minimal")
-        tools = get_all_tools()
-
-        if detail == "full":
-            tool_list = []
-            for name, tool in tools.items():
-                fn = _extract_fn(tool)
-                entry: dict[str, Any] = {
-                    "name": name,
-                    "description": _extract_desc(tool),
-                }
-                if fn:
-                    entry["parameters"] = _signature_to_json_schema(fn)
-                tool_list.append(entry)
-            tool_list.sort(key=lambda x: x["name"])
-            return JSONResponse(
-                {
-                    "success": True,
-                    "total": len(tool_list),
-                    "tool_count": len(tool_list),
-                    "tools": tool_list,
-                }
-            )
-
-        # detail == "minimal" (default)
-        categories: dict[str, list[dict[str, str]]] = {}
-        uncategorized: list[dict[str, str]] = []
-        for name, tool in tools.items():
-            desc = _extract_desc(tool)
-            entry = {"name": name, "description": desc}
-            cat = None
-            for prefix, category in _CATEGORY_MAP:
-                if name.startswith(prefix):
-                    cat = category
-                    break
-            if cat:
-                categories.setdefault(cat, []).append(entry)
-            else:
-                uncategorized.append(entry)
-
-        if uncategorized:
-            categories["Other"] = uncategorized
-
-        total = sum(len(v) for v in categories.values())
-        return JSONResponse(
-            {
-                "success": True,
-                "total": total,
-                "tool_count": total,
-                "categories": categories,
-            }
-        )
-
-    async def call_tool_endpoint(request):
-        tool_name = request.path_params.get("tool_name", "")
-
-        try:
-            body = await request.body()
-            args = json.loads(body) if body else {}
-        except json.JSONDecodeError:
-            args = {}
-        except Exception:
-            args = {}
-
-        tool = get_tool(tool_name)
-
-        if tool is None:
-            all_tool_names = list(get_all_tools().keys())
-            return JSONResponse(
-                {
-                    "success": False,
-                    "error": f"Tool '{tool_name}' not found",
-                    "available_tools": sorted(all_tool_names)[:30],
-                    "total_tools": len(all_tool_names),
-                },
-                status_code=404,
-            )
-
-        try:
-            if hasattr(tool, "fn") and callable(tool.fn):
-                fn = tool.fn
-            elif callable(tool):
-                fn = tool
-            else:
-                return JSONResponse(
-                    {"success": False, "error": f"Tool '{tool_name}' is not callable"},
-                    status_code=500,
-                )
-
-            if inspect.iscoroutinefunction(fn):
-                result = await fn(**args)
-            else:
-                result = fn(**args)
-
-            if isinstance(result, str):
-                try:
-                    result = json.loads(result)
-                except json.JSONDecodeError:
-                    pass
-
-            if not isinstance(result, dict):
-                return JSONResponse(
-                    {"success": True, "data": result, "tool": tool_name},
-                    status_code=200,
-                )
-            if "success" not in result:
+    class BearerAuthMiddleware(BaseHTTPMiddleware):
+        async def dispatch(self, request: Request, call_next: Any) -> Any:
+            if request.method == "OPTIONS" or request.url.path in {"/health", "/api/health"}:
+                return await call_next(request)
+            if not bearer_token_is_valid(request.headers, token):
                 return JSONResponse(
                     {
                         "success": False,
-                        "error": "Tool result missing 'success' key",
-                        "tool": tool_name,
+                        "error": {"code": "UNAUTHORIZED", "message": "Bearer token required"},
                     },
-                    status_code=502,
+                    status_code=401,
+                    headers={"WWW-Authenticate": "Bearer"},
                 )
-            tool_success = result.get("success", False)
-            status_code = 200 if tool_success else 502
-
-            return JSONResponse(
-                {"success": tool_success, "tool": tool_name, "result": result},
-                status_code=status_code,
+            principal = Principal(
+                subject="authenticated-rest-client",
+                transport="rest",
+                capabilities=frozenset({"ha.read", "filesystem.read", "artifact.read"}),
             )
+            with principal_scope(principal):
+                return await call_next(request)
 
-        except TypeError as e:
+    async def health(request: Request) -> JSONResponse:
+        return JSONResponse(
+            {
+                "status": "ready" if HEALTH_STATE.get("ready") else "not_ready",
+                "version": __version__,
+                "tool_count": get_tool_count(),
+                "ready": bool(HEALTH_STATE.get("ready")),
+                "components": HEALTH_STATE.get("components", {}),
+            },
+            status_code=200,
+        )
+
+    async def list_tools_endpoint(request: Request) -> JSONResponse:
+        full = request.query_params.get("detail") == "full"
+        entries = []
+        for name, tool in sorted(get_all_tools().items()):
+            entry: dict[str, Any] = {"name": name, "description": _extract_desc(tool)}
+            if full:
+                function = _extract_fn(tool)
+                entry["parameters"] = _signature_to_json_schema(function) if function else {}
+                entry["manifest"] = get_manifest(name)
+            entries.append(entry)
+        return JSONResponse({"success": True, "total": len(entries), "tools": entries})
+
+    async def call_tool_endpoint(request: Request) -> JSONResponse:
+        tool_name = request.path_params["tool_name"]
+        tool = get_tool(tool_name)
+        if tool is None:
+            return JSONResponse(
+                {"success": False, "error": {"code": "NOT_FOUND", "message": "Tool not found"}},
+                status_code=404,
+            )
+        chunks: list[bytes] = []
+        body_size = 0
+        async for chunk in request.stream():
+            body_size += len(chunk)
+            if body_size > 1024 * 1024:
+                return JSONResponse(
+                    {
+                        "success": False,
+                        "error": {
+                            "code": "REQUEST_TOO_LARGE",
+                            "message": "Request body exceeds 1 MiB",
+                        },
+                    },
+                    status_code=413,
+                )
+            chunks.append(chunk)
+        body = b"".join(chunks)
+        try:
+            arguments = json.loads(body) if body else {}
+        except json.JSONDecodeError:
             return JSONResponse(
                 {
                     "success": False,
-                    "error": f"Invalid arguments: {e}",
-                    "tool": tool_name,
+                    "error": {"code": "INVALID_JSON", "message": "JSON object required"},
                 },
                 status_code=400,
             )
-        except Exception as e:
+        if not isinstance(arguments, dict):
             return JSONResponse(
                 {
                     "success": False,
-                    "error": str(e),
-                    "error_type": type(e).__name__,
-                    "tool": tool_name,
+                    "error": {"code": "INVALID_ARGUMENTS", "message": "JSON object required"},
+                },
+                status_code=400,
+            )
+        function = _extract_fn(tool)
+        if function is None:
+            return JSONResponse(
+                {
+                    "success": False,
+                    "error": {"code": "NOT_CALLABLE", "message": "Tool is unavailable"},
                 },
                 status_code=500,
             )
-
-    async def context_generate(request):
-        """Generate HA context file."""
-        global _generation_state
-        with _generation_lock:
-            if _generation_state["status"] == "running":
-                return JSONResponse(
-                    {
-                        "success": False,
-                        "error": "Generation already in progress",
-                        "started_at": _generation_state["started_at"],
-                    },
-                    status_code=409,
-                )
-
         try:
-            body = await request.body()
-            params = json.loads(body) if body else {}
-        except json.JSONDecodeError:
-            params = {}
+            inspect.signature(function).bind(**arguments)
+        except TypeError:
+            return JSONResponse(
+                {
+                    "success": False,
+                    "error": {
+                        "code": "INVALID_ARGUMENTS",
+                        "message": "Arguments do not match schema",
+                    },
+                },
+                status_code=400,
+            )
+        try:
+            result = (
+                await function(**arguments)
+                if inspect.iscoroutinefunction(function)
+                else await asyncio.to_thread(function, **arguments)
+            )
+        except InvocationError as exc:
+            status = {"FORBIDDEN": 403, "BUSY": 429, "DEADLINE_EXCEEDED": 504}.get(exc.code, 502)
+            return JSONResponse(
+                {"success": False, "error": {"code": exc.code, "message": str(exc)}},
+                status_code=status,
+            )
         except Exception:
-            params = {}
-
-        config_path = params.get("config_path", HA_CONFIG_PATH)
-        output_path = params.get("output_path", OUTPUT_PATH)
-        mode = params.get("mode", "hybrid")
-
-        allowed_prefixes = [HA_CONFIG_PATH, os.path.dirname(OUTPUT_PATH) or "/app"]
-        if not any(str(config_path).startswith(p) for p in allowed_prefixes):
+            _logger.exception("REST tool invocation failed: %s", tool_name)
             return JSONResponse(
                 {
                     "success": False,
-                    "error": f"Invalid config_path: {config_path}",
-                },
-                status_code=403,
-            )
-        if not any(str(output_path).startswith(p) for p in allowed_prefixes):
-            return JSONResponse(
-                {
-                    "success": False,
-                    "error": f"Invalid output_path: {output_path}",
-                },
-                status_code=403,
-            )
-
-        with _generation_lock:
-            _generation_state["status"] = "running"
-            _generation_state["started_at"] = time.time()
-            _generation_state["output_path"] = output_path
-            _generation_state["error"] = None
-            _generation_state["stats"] = {}
-
-        thread = threading.Thread(
-            target=_run_context_generation,
-            args=(config_path, output_path, mode),
-            daemon=True,
-        )
-        thread.start()
-
-        return JSONResponse(
-            {
-                "success": True,
-                "message": "Context generation started",
-                "mode": mode,
-                "config_path": config_path,
-                "output_path": output_path,
-                "started_at": _generation_state["started_at"],
-            }
-        )
-
-    async def context_status(request):
-        """Get context generation status."""
-        with _generation_lock:
-            return JSONResponse(
-                {
-                    "status": _generation_state["status"],
-                    "started_at": _generation_state["started_at"],
-                    "completed_at": _generation_state["completed_at"],
-                    "output_path": _generation_state["output_path"],
-                    "error": _generation_state["error"],
-                    "stats": _generation_state["stats"],
-                }
-            )
-
-    async def context_download(request):
-        """Download generated context file."""
-        output_path = _generation_state["output_path"] or OUTPUT_PATH
-        if not os.path.exists(output_path):
-            return JSONResponse(
-                {
-                    "success": False,
-                    "error": "Context file not found. Run generation first.",
-                    "path": output_path,
-                },
-                status_code=404,
-            )
-        if _generation_state["status"] == "running":
-            return JSONResponse(
-                {
-                    "success": False,
-                    "error": "Generation still in progress",
-                    "status": "running",
-                },
-                status_code=409,
-            )
-
-        format_param = request.query_params.get("format", "markdown")
-        try:
-            with open(output_path, encoding="utf-8") as f:
-                content = f.read()
-            if format_param == "json":
-                return JSONResponse(
-                    {
-                        "success": True,
-                        "content": content,
-                        "path": output_path,
-                        "size_bytes": len(content.encode("utf-8")),
-                        "generated_at": _generation_state["completed_at"],
-                    }
-                )
-            return PlainTextResponse(
-                content,
-                media_type="text/markdown",
-                headers={"Content-Disposition": f'attachment; filename="{Path(output_path).name}"'},
-            )
-        except Exception as exc:
-            return JSONResponse(
-                {
-                    "success": False,
-                    "error": f"Failed to read context file: {exc}",
+                    "error": {"code": "INTERNAL_ERROR", "message": "Tool invocation failed"},
                 },
                 status_code=500,
             )
+        if isinstance(result, str):
+            try:
+                result = json.loads(result)
+            except json.JSONDecodeError:
+                pass
+        return JSONResponse({"success": True, "tool": tool_name, "result": result})
 
-    async def context_modes(request):
-        """List available generation modes."""
-        return JSONResponse(
-            {
-                "modes": [
-                    {
-                        "id": "offline",
-                        "name": "Offline Mode",
-                        "description": "Reads only from local filesystem",
-                    },
-                    {
-                        "id": "online",
-                        "name": "Online Mode",
-                        "description": "Fetches data from HA API",
-                    },
-                    {
-                        "id": "hybrid",
-                        "name": "Hybrid Mode (default)",
-                        "description": "Combines offline and online data",
-                    },
-                ]
-            }
-        )
-
-    async def openapi_schema(request):
-        tools = get_all_tools()
-        paths = {
-            "/api/tools": {
-                "get": {
-                    "summary": "List all available tools",
-                    "operationId": "listTools",
-                    "responses": {"200": {"description": "List of tools"}},
-                }
-            },
-            "/api/health": {
-                "get": {
-                    "summary": "Health check",
-                    "operationId": "healthCheck",
-                    "responses": {"200": {"description": "Server is healthy"}},
-                }
-            },
-        }
-
-        for name, tool in tools.items():
-            desc = "MCP Tool"
-            if hasattr(tool, "description") and tool.description:
-                desc = tool.description
-            elif hasattr(tool, "fn") and hasattr(tool.fn, "__doc__") and tool.fn.__doc__:
-                desc = tool.fn.__doc__.strip().split("\n")[0]
-
-            paths[f"/api/tools/{name}"] = {
-                "post": {
-                    "summary": desc[:100] if len(desc) > 100 else desc,
-                    "operationId": name,
-                    "requestBody": {
-                        "content": {"application/json": {"schema": {"type": "object"}}}
-                    },
-                    "responses": {"200": {"description": "Tool result"}},
-                }
-            }
-
-        return JSONResponse(
-            {
-                "openapi": "3.0.0",
-                "info": {
-                    "title": "HA-Observer REST API",
-                    "description": "REST bridge for Home Assistant MCP tools",
-                    "version": __version__,
-                },
-                "servers": [{"url": "/"}],
-                "paths": paths,
-            }
-        )
-
-    async def get_tool_manifest(request):
-        """Return manifest for a specific tool."""
-        tool_name = request.path_params.get("tool_name", "")
-        from tools.manifests import get_manifest as _get_manifest
-
-        manifest = _get_manifest(tool_name)
+    async def tool_manifest(request: Request) -> JSONResponse:
+        name = request.path_params["tool_name"]
+        manifest = get_manifest(name)
         if manifest is None:
             return JSONResponse(
-                {"success": False, "error": f"Manifest not found for tool '{tool_name}'"},
+                {"success": False, "error": {"code": "NOT_FOUND", "message": "Manifest not found"}},
                 status_code=404,
             )
         return JSONResponse({"success": True, "manifest": manifest})
 
-    async def get_tool_schema(request):
-        """Return full JSON schema for a single tool including parameters and manifest."""
-        tool_name = request.path_params.get("tool_name", "")
-        tool = get_tool(tool_name)
+    async def tool_schema(request: Request) -> JSONResponse:
+        name = request.path_params["tool_name"]
+        tool = get_tool(name)
         if tool is None:
-            all_names = sorted(get_all_tools().keys())
             return JSONResponse(
-                {
-                    "success": False,
-                    "error": f"Tool '{tool_name}' not found",
-                    "available_tools": all_names[:30],
-                    "total_tools": len(all_names),
-                },
+                {"success": False, "error": {"code": "NOT_FOUND", "message": "Tool not found"}},
                 status_code=404,
             )
-
-        fn = _extract_fn(tool)
-        from tools.manifests import get_manifest as _get_manifest
-
+        function = _extract_fn(tool)
         return JSONResponse(
             {
                 "success": True,
-                "name": tool_name,
+                "name": name,
                 "description": _extract_desc(tool),
-                "parameters": _signature_to_json_schema(fn)
-                if fn
-                else {"type": "object", "properties": {}},
-                "manifest": _get_manifest(tool_name),
+                "parameters": _signature_to_json_schema(function) if function else {},
+                "manifest": get_manifest(name),
+            }
+        )
+
+    async def context_generate(request: Request) -> JSONResponse:
+        try:
+            params = await request.json()
+        except (json.JSONDecodeError, TypeError):
+            params = {}
+        if not isinstance(params, dict):
+            return JSONResponse(
+                {
+                    "success": False,
+                    "error": {"code": "INVALID_ARGUMENTS", "message": "JSON object required"},
+                },
+                status_code=400,
+            )
+        try:
+            task = _CONTEXT_TASKS.start(
+                str(params.get("config_path", HA_CONFIG_PATH)),
+                str(params.get("output_path", OUTPUT_PATH)),
+                str(params.get("mode", "hybrid")),
+                current_principal().subject,
+            )
+        except (ValueError, SecurityBoundaryError) as exc:
+            return JSONResponse(
+                {"success": False, "error": {"code": "INVALID_PATH", "message": str(exc)}},
+                status_code=400,
+            )
+        except RuntimeError as exc:
+            return JSONResponse(
+                {"success": False, "error": {"code": "CONFLICT", "message": str(exc)}},
+                status_code=409,
+            )
+        return JSONResponse(
+            {"success": True, "task_id": task.task_id, "status": "running"}, status_code=202
+        )
+
+    async def context_status(request: Request) -> JSONResponse:
+        try:
+            status = _CONTEXT_TASKS.status(current_principal().subject)
+        except PermissionError:
+            return JSONResponse(
+                {
+                    "success": False,
+                    "error": {"code": "FORBIDDEN", "message": "Task is not accessible"},
+                },
+                status_code=403,
+            )
+        return JSONResponse({"success": True, **status})
+
+    async def context_download(request: Request) -> Any:
+        try:
+            output = _CONTEXT_TASKS.output_for(current_principal().subject)
+            content = output.read_text(encoding="utf-8")
+        except (FileNotFoundError, OSError, SecurityBoundaryError):
+            return JSONResponse(
+                {
+                    "success": False,
+                    "error": {"code": "NOT_FOUND", "message": "Context artifact not available"},
+                },
+                status_code=404,
+            )
+        if request.query_params.get("format") == "json":
+            return JSONResponse(
+                {"success": True, "content": content, "size_bytes": len(content.encode())}
+            )
+        return PlainTextResponse(
+            content,
+            media_type="text/markdown",
+            headers={"Content-Disposition": f'attachment; filename="{output.name}"'},
+        )
+
+    async def context_modes(request: Request) -> JSONResponse:
+        return JSONResponse({"modes": ["offline", "online", "hybrid"]})
+
+    async def openapi_schema(request: Request) -> JSONResponse:
+        paths: dict[str, Any] = {
+            "/api/tools": {"get": {"summary": "List tools", "security": [{"bearerAuth": []}]}},
+        }
+        for name in sorted(get_all_tools()):
+            paths[f"/api/tools/{name}"] = {
+                "post": {"summary": _extract_desc(get_tool(name)), "security": [{"bearerAuth": []}]}
+            }
+        return JSONResponse(
+            {
+                "openapi": "3.0.3",
+                "info": {"title": "HA-Observer REST compatibility API", "version": __version__},
+                "components": {
+                    "securitySchemes": {"bearerAuth": {"type": "http", "scheme": "bearer"}}
+                },
+                "paths": paths,
             }
         )
 
     routes = [
-        Route("/health", endpoint=health, methods=["GET"]),
-        Route("/api/health", endpoint=health, methods=["GET"]),
-        Route("/api/tools", endpoint=list_tools_endpoint, methods=["GET"]),
-        Route("/api/tools/{tool_name}", endpoint=call_tool_endpoint, methods=["POST"]),
-        Route("/api/tools/{tool_name}/manifest", endpoint=get_tool_manifest, methods=["GET"]),
-        Route("/api/tools/{tool_name}/schema", endpoint=get_tool_schema, methods=["GET"]),
-        Route("/api/openapi.json", endpoint=openapi_schema, methods=["GET"]),
-        Route("/api/context/generate", endpoint=context_generate, methods=["POST"]),
-        Route("/api/context/status", endpoint=context_status, methods=["GET"]),
-        Route("/api/context/download", endpoint=context_download, methods=["GET"]),
-        Route("/api/context/modes", endpoint=context_modes, methods=["GET"]),
+        Route("/health", health, methods=["GET"]),
+        Route("/api/health", health, methods=["GET"]),
+        Route("/api/tools", list_tools_endpoint, methods=["GET"]),
+        Route("/api/tools/{tool_name}", call_tool_endpoint, methods=["POST"]),
+        Route("/api/tools/{tool_name}/manifest", tool_manifest, methods=["GET"]),
+        Route("/api/tools/{tool_name}/schema", tool_schema, methods=["GET"]),
+        Route("/api/openapi.json", openapi_schema, methods=["GET"]),
+        Route("/api/context/generate", context_generate, methods=["POST"]),
+        Route("/api/context/status", context_status, methods=["GET"]),
+        Route("/api/context/download", context_download, methods=["GET"]),
+        Route("/api/context/modes", context_modes, methods=["GET"]),
     ]
-
     middleware = [
+        Middleware(BearerAuthMiddleware),
         Middleware(
             CORSMiddleware,
             allow_origins=CORS_ALLOWED_ORIGINS,
-            allow_methods=["*"],
-            allow_headers=["*"],
-        )
+            allow_methods=["GET", "POST", "OPTIONS"],
+            allow_headers=["authorization", "content-type"],
+        ),
     ]
 
-    return Starlette(routes=routes, middleware=middleware)
+    @asynccontextmanager
+    async def lifespan(app: Any) -> AsyncIterator[None]:
+        del app
+        _set_health_component("rest", "ready")
+        try:
+            yield
+        finally:
+            if REST_API_ENABLED:
+                _set_health_component("rest", "failed")
+
+    return Starlette(routes=routes, middleware=middleware, lifespan=lifespan)
 
 
-def run_rest_api():
-    """Start REST API in a separate thread."""
+def run_rest_api() -> None:
     import uvicorn
 
-    app = create_rest_app()
-    _logger.info("REST API started on port %d", REST_API_PORT)
-    uvicorn.run(app, host=MCP_BIND_HOST, port=REST_API_PORT, log_level="warning")
+    uvicorn.run(
+        create_rest_app(),
+        host=MCP_BIND_HOST,
+        port=REST_API_PORT,
+        log_level="warning",
+        access_log=False,
+    )
 
 
-# =============================================================================
-# MAIN ENTRY POINT
-# =============================================================================
+def run_startup_tests() -> bool:
+    try:
+        result = subprocess.run(
+            [sys.executable, "-m", "pytest", "tests/unit", "-q", "-p", "no:cacheprovider"],
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            timeout=300,
+        )
+    except subprocess.TimeoutExpired:
+        _logger.error("Startup tests exceeded the 300 second deadline")
+        return False
+    if result.returncode:
+        _logger.error("Startup tests failed")
+    return result.returncode == 0
+
+
+def validate_runtime_config() -> None:
+    network_transport = MCP_TRANSPORT == "http"
+    if network_transport and not MCP_AUTH_TOKEN:
+        raise RuntimeError("MCP_AUTH_TOKEN is required for Streamable HTTP transport")
+    if REST_API_ENABLED and not REST_API_TOKEN:
+        raise RuntimeError("REST_API_TOKEN or MCP_AUTH_TOKEN is required when REST_API_ENABLED=1")
+    if MCP_BIND_HOST not in {"127.0.0.1", "localhost", "::1"} and not MCP_AUTH_TOKEN:
+        raise RuntimeError("Non-loopback binding requires MCP_AUTH_TOKEN")
+
+
+def _probe_network_transport() -> None:
+    deadline = time.monotonic() + 20
+    probe_host = (
+        "127.0.0.1" if MCP_BIND_HOST in {"0.0.0.0", "::"} else MCP_BIND_HOST  # nosec B104 -- comparison only
+    )
+    while time.monotonic() < deadline:
+        try:
+            with socket.create_connection((probe_host, MCP_PORT), timeout=1):
+                _set_health_component("transport", "ready", port=MCP_PORT)
+                return
+        except OSError:
+            time.sleep(0.1)
+    _set_health_component("transport", "failed", port=MCP_PORT)
+
+
+def main() -> None:
+    validate_runtime_config()
+    _initialize_runtime_health()
+    server = get_mcp_server()
+    if not HA_TOKEN:
+        _logger.warning("HA_TOKEN is not set; Home Assistant API operations will fail closed")
+    if RUN_TESTS_ON_STARTUP and not run_startup_tests():
+        raise SystemExit("Startup tests failed")
+    if HEALTH_SERVER_ENABLED:
+        start_health_server()
+    if REST_API_ENABLED:
+        threading.Thread(target=run_rest_api, daemon=True, name="rest-api").start()
+
+    if MCP_TRANSPORT == "stdio":
+        set_process_principal(
+            Principal(
+                subject="local-parent-process",
+                transport="stdio",
+                capabilities=frozenset({"ha.read", "filesystem.read", "artifact.read"}),
+            )
+        )
+        _set_health_component("transport", "ready", transport="stdio")
+        server.run(transport="stdio", show_banner=False)
+        return
+
+    set_process_principal(
+        Principal(
+            subject="unauthenticated-network-default",
+            transport=MCP_TRANSPORT,
+            capabilities=frozenset(),
+        )
+    )
+    threading.Thread(
+        target=_probe_network_transport, daemon=True, name="mcp-transport-probe"
+    ).start()
+    network_transport = MCP_TRANSPORT
+    server.run(
+        transport=network_transport,
+        host=MCP_BIND_HOST,
+        port=MCP_PORT,
+        path="/mcp",
+        show_banner=False,
+    )
+
 
 if __name__ == "__main__":
-    # 1. Start health check server
-    start_health_server(port=HEALTH_CHECK_PORT)
-    HEALTH_STATE["status"] = "healthy"
-    HEALTH_STATE["last_heartbeat"] = time.time()
-
-    # 2. Run startup tests (optional)
-    if RUN_TESTS_ON_STARTUP:
-        run_startup_tests()
-
-    _logger.info("=" * 50)
-    _logger.info("HA-Observer MCP Server v%s", __version__)
-    _logger.info("=" * 50)
-    _logger.info("HA_URL: %s", HA_URL)
-    _logger.info("HA_CONFIG_PATH: %s", HA_CONFIG_PATH)
-    _logger.info("Registered tools: %d", tool_count)
-    _logger.info("Bind host: %s", MCP_BIND_HOST)
-    _logger.info("-" * 50)
-
-    if MCP_BIND_HOST == "0.0.0.0":
-        _logger.critical(
-            "All endpoints bound to 0.0.0.0 — public access ENABLED! "
-            "Set MCP_UNSAFE_PUBLIC_ACCESS_CONFIRMED=0 for localhost-only."
-        )
-
-    # 3. Start REST API in a separate thread
-    rest_thread = threading.Thread(target=run_rest_api, daemon=True, name="RestAPI")
-    rest_thread.start()
-
-    _logger.info("Endpoints:")
-    _logger.info("  Health:      http://%s:%d/health", MCP_BIND_HOST, HEALTH_CHECK_PORT)
-    _logger.info("  MCP SSE:     http://%s:%d/sse", MCP_BIND_HOST, MCP_SSE_PORT)
-    _logger.info("  MCP MSG:     http://%s:%d/messages", MCP_BIND_HOST, MCP_SSE_PORT)
-    _logger.info("  REST API:    http://%s:%d/api/", MCP_BIND_HOST, REST_API_PORT)
-    _logger.info("=" * 50)
-
-    # 4. Start MCP SSE server - BLOCKING!
-    _logger.info("Starting MCP SSE transport on port %d...", MCP_SSE_PORT)
-    mcp.run(transport="sse", host=MCP_BIND_HOST, port=MCP_SSE_PORT)
+    main()

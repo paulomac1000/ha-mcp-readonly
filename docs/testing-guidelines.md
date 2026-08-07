@@ -1,101 +1,71 @@
 ---
-description: Testing guidelines for HA-MCP-Readonly — anti-patterns, VCR cassette tests, and CI configuration
-last_verified: 2026-05-10
+description: Executable testing strategy for domain, policy, protocol, package, and container boundaries.
+doc_id: guide.ha-mcp-testing
+type: guide
+status: active
+rigor: operational
+owners: [repository-maintainers]
+verification: Run `pytest tests/unit tests/protocol -q`, build the wheel, install it in a clean environment, and execute the container smoke test from `.github/workflows/ci.yml`.
 ---
 
-# Testing Guidelines — HA-MCP-Readonly
+# Testing guidelines
 
-## Anti-Pattern: Blind Mocks
+## Evidence layers
 
-This is what failed in v1.1.0:
+Each layer answers a different question:
 
-```python
-# ❌ This test passes but proves nothing about real HA behavior
-with patch("tools.automations.make_ha_request",
-           return_value={"success": True, "data": [...]}):
-    tool = mcp._tools["get_automation_traces"]
-    data = json.loads(tool("automation.123"))
-    assert data["success"] is True  # Always true - mock never fails
-```
+| Layer | Evidence |
+| --- | --- |
+| Domain unit | Pure parsing, filtering, normalization, and controlled errors |
+| Policy unit | Manifest coverage, authorization, deadline, concurrency, response size, path containment |
+| Protocol | Official FastMCP client handshake, `tools/list`, `tools/call`, schema rejection |
+| Backend contract | Recorded or dedicated Home Assistant fixture responses, including failures |
+| Package | Wheel contents and clean-environment import and startup |
+| Container | Non-root runtime, default-image health, exact platform archive, REST metadata, context lifecycle, authenticated Streamable HTTP |
 
-The real HA endpoint returned `404`, but the mock returned `success: true`.
-**100% of 6 tests passed while the tool was completely broken in production.**
+A direct call to a Python function or private SDK registry is useful unit evidence but not MCP protocol evidence.
 
-> **Status:** Planned enhancement. VCR cassette testing is not yet implemented.
+## Network-backed tools
 
-## Required: VCR Cassette Tests
+Tests must cover success, timeout, authentication failure, not-found behavior, malformed backend data, and sanitization. Prefer deterministic recorded responses or a dedicated test Home Assistant instance. Never commit real tokens, hostnames, entity histories, or unredacted cassettes.
 
-For every NEW tool that calls the HA REST API, include at least one test using
-a recorded HTTP cassette (real response captured from a live HA instance).
+Blind mocks that always return `success: true` are insufficient. A mock must represent the actual endpoint shape and at least one realistic failure mode.
 
-### Setup
+## Security regressions
 
-```bash
-pip install vcrpy
-```
+At minimum, preserve tests for:
 
-Add `vcrpy` to `requirements-test.txt`.
+- sibling-prefix and `..` path escape attempts;
+- symlinks crossing a configured root;
+- `.storage`, authentication records, secrets files, and environment files;
+- missing manifests and missing capabilities;
+- deadline and response-size enforcement;
+- REST bearer authentication, CORS preflight, stable errors, and all manifest/schema routes;
+- protocol-native input validation over a real stdio subprocess and network transport;
+- offline context generation with blocked network access, provenance, redaction, and atomic publication;
+- wheel contents, non-root execution, default-image health, exact quarantined-digest smoke tests on every published architecture, and protected digest-only promotion.
 
-### Writing a VCR Test
-
-```python
-import vcr
-import json
-
-@vcr.use_cassette("tests/cassettes/get_xyz.yaml")
-def test_get_xyz_real_response(self, mock_mcp, config_path, ha_url, ha_token):
-    register_tools(mock_mcp, config_path, ha_url, ha_token)
-    tool = mock_mcp._tools["get_xyz"]
-    data = json.loads(tool("some_entity"))
-    assert data["success"] is True  # Actually verified against real HA
-```
-
-### Cassette Recording
-
-1. Run the test against a real HA instance once → cassette is recorded to `tests/cassettes/`
-2. Commit the cassette file to the repo
-3. Subsequent CI runs replay the cassette (no live HA needed)
-
-### Cassette Sanitization
-
-Before committing, sanitize any sensitive data:
-
-```python
-import re
-
-def sanitize_cassette(cassette_path):
-    """Remove tokens, IPs, and personal data from cassette."""
-    with open(cassette_path) as f:
-        content = f.read()
-    content = re.sub(r"Authorization: Bearer [^\n]+", "Authorization: Bearer REDACTED", content)
-    content = re.sub(r"[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+", "XXX.XXX.XXX.XXX", content)
-    with open(cassette_path, "w") as f:
-        f.write(content)
-```
-
-## Existing Tool Changes
-
-When modifying an existing tool's HA API interaction:
-- [ ] If the endpoint or response schema changes → update or re-record the cassette
-- [ ] If only internal logic changes → existing mocks may still be acceptable
-- [ ] Run `pytest tests/unit/ -v` and confirm all pass
-
-## Test Categories
-
-| Layer | Command | What it tests | Requires |
-|-------|---------|--------------|----------|
-| Unit (pure logic) | `pytest tests/unit/ -m "not cassette"` | YAML parsing, internal logic, edge cases | Nothing |
-| VCR (API) | `pytest tests/unit/ -m cassette` | Real HA API responses (replayed) | `vcrpy` |
-| Integration | Manual / on-demand | Live HA instance | Running HA |
-
-## CI Configuration
-
-In `.github/workflows/ci.yml`, VCR tests should run as part of the test job.
-Mark cassette tests with `@pytest.mark.cassette` and run them separately if
-cassette recording is slow.
+## Local commands
 
 ```bash
-# In CI
-pip install vcrpy
-pytest tests/unit/ -v --tb=short  # includes cassette tests
+pytest tests/unit -q
+pytest tests/protocol -q
+ruff check .
+ruff format --check .
+mypy server.py tools/ context_generator/core.py context_generator/config.py context_generator/runtime.py context_generator/provenance.py context_generator/snapshot.py scripts/verify_runtime_endpoints.py --strict
+bandit -r server.py tools/ context_generator/ ha_graph/ -ll
+python -m build --wheel --no-isolation
 ```
+
+Real Home Assistant suites remain environment-dependent and must run only against an isolated test instance with disposable data. They do not replace deterministic unit, protocol, package, and container gates.
+
+## Runtime boundary verification
+
+`scripts/verify_runtime_endpoints.py` targets a running release image. It verifies public liveness, component readiness, anonymous rejection, CORS preflight, all 145 tool manifest and schema routes, OpenAPI coverage, a controlled tool call, unknown-tool behavior, the full offline context generate/status/download cycle, redaction sentinels, and an official FastMCP Streamable HTTP handshake with input rejection.
+
+The container CI job executes the script against the built release container. The release workflow independently builds the multi-platform candidate once into quarantine, records the manifest digest, smoke-tests that exact digest on amd64 and arm64, and lets the protected publisher promote only that digest without checking out or executing candidate source. Home Assistant-dependent integration, smoke, and end-to-end suites still require an isolated live Home Assistant instance and valid credentials; skips in an environment without that backend are reported rather than represented as passes.
+
+
+## Legacy typing boundary
+
+The runtime composition layer, all `tools/` modules, and the new context runtime modules (`core`, `config`, `runtime`, `provenance`, and `snapshot`) are strict-mypy gates. The older monolithic `context_generator.analyzers`, `context_generator.formatters`, `context_generator.utils`, `context_generator.constants`, and `ha_graph` modules predate that contract and remain under an explicit scoped mypy override. They must not be added to new runtime-policy code, and new modules must not inherit the override. A full strict migration of that legacy surface is tracked as residual technical debt rather than reported as already complete.

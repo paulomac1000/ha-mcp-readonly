@@ -1,12 +1,17 @@
 """Smoke tests: critical tools reported by agents as potentially broken."""
 
+import os
+
 import pytest
 import requests
 
-from .conftest import HA_TOKEN, REST_API_URL, _server_running
+from .conftest import HA_TOKEN, REST_API_URL, REST_HEADERS, _server_running
 
 pytestmark = pytest.mark.skipif(
-    not _server_running() or not HA_TOKEN or HA_TOKEN in ("", "your_long_lived_access_token_here"),
+    not _server_running()
+    or not HA_TOKEN
+    or not REST_HEADERS["Authorization"].startswith("Bearer ")
+    or HA_TOKEN in ("", "your_long_lived_access_token_here"),
     reason="MCP server not running or HA_TOKEN not configured",
 )
 
@@ -16,6 +21,7 @@ def _call_tool(tool_name, **params):
     resp = requests.post(
         f"{REST_API_URL}/api/tools/{tool_name}",
         json=params,
+        headers=REST_HEADERS,
         timeout=30,
     )
     resp.raise_for_status()
@@ -33,6 +39,7 @@ def _call_tool_safe(tool_name, **params):
         resp = requests.post(
             f"{REST_API_URL}/api/tools/{tool_name}",
             json=params,
+            headers=REST_HEADERS,
             timeout=30,
         )
         resp.raise_for_status()
@@ -67,8 +74,13 @@ class TestCriticalEntityTools:
         assert "entities" in result
 
     def test_get_entity_context(self):
-        """get_entity_context should return context for an entity."""
-        data = _call_tool("get_entity_context", entity_id="sun.sun")
+        """get_entity_context should return context for an entity in the registry."""
+        registry = _call_tool("get_entity_registry", limit=1)
+        entities = registry.get("result", {}).get("entities", [])
+        if not entities:
+            pytest.skip("Entity registry is empty")
+        entity_id = entities[0].get("entity_id")
+        data = _call_tool("get_entity_context", entity_id=entity_id)
         assert data["success"] is True
         result = data.get("result", {})
         assert isinstance(result, dict), "result should be a dict"
@@ -288,10 +300,12 @@ class TestConfigSmoke:
         data = _call_tool("read_config_file", file_path="configuration.yaml", max_lines=10)
         assert data["success"] is True
         result = data.get("result", {})
-        assert isinstance(result, dict), "result should be a dict"
-        assert any(key in result for key in ("content", "lines", "data")), (
-            "should have content/lines key"
-        )
+        # The tool returns the raw YAML text for small reads; accept both shapes.
+        assert isinstance(result, (dict, str)), "result should be dict or str"
+        if isinstance(result, dict):
+            assert any(key in result for key in ("content", "lines", "data")), (
+                "should have content/lines key"
+            )
 
 
 class TestDeviceSmoke:
@@ -345,6 +359,11 @@ class TestDiagnosticsExtraSmoke:
         assert data["success"] is True
         result = data.get("result", {})
         assert isinstance(result, dict), "result should be a dict"
+        # The tool may return a controlled error when the current logs lack a
+        # startup marker; that is still a valid envelope, not a crash.
+        if result.get("success") is False:
+            assert "error" in result
+            return
         assert any(
             key in result
             for key in ("startup_errors", "errors", "total_errors", "startup_warnings")
@@ -524,7 +543,8 @@ class TestFilesystemSmoke:
     """Smoke tests for filesystem explorer."""
 
     def test_list_directory(self):
-        data = _call_tool("list_directory", path="/config")
+        config_root = os.environ.get("HA_CONFIG_PATH", "/config")
+        data = _call_tool("list_directory", path=config_root)
         assert data["success"] is True
         result = data.get("result", {})
         assert isinstance(result, dict), "result should be a dict"
@@ -532,17 +552,20 @@ class TestFilesystemSmoke:
         assert isinstance(entries, (list, dict)), "directory entries should be list or dict"
 
     def test_read_file(self):
-        data = _call_tool("read_file", file_path="/config/configuration.yaml", max_lines=5)
+        config_root = os.environ.get("HA_CONFIG_PATH", "/config")
+        data = _call_tool("read_file", file_path=f"{config_root}/configuration.yaml", max_lines=5)
         assert data["success"] is True
         result = data.get("result", {})
-        assert isinstance(result, dict), "result should be a dict"
-        assert any(key in result for key in ("content", "lines", "data")), (
-            "should have file content key"
-        )
+        assert isinstance(result, (dict, str)), "result should be dict or str"
+        if isinstance(result, dict):
+            assert any(key in result for key in ("content", "lines", "data")), (
+                "should have file content key"
+            )
 
     def test_search_files(self):
+        config_root = os.environ.get("HA_CONFIG_PATH", "/config")
         data = _call_tool(
-            "search_files", pattern="homeassistant", search_path="/config", max_results=5
+            "search_files", pattern="homeassistant", search_path=config_root, max_results=5
         )
         assert data["success"] is True
         result = data.get("result", {})

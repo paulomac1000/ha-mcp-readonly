@@ -30,7 +30,7 @@ HA_TOKEN=your_long_lived_access_token_here
 # HA_CONFIG_PATH=/config                # optional, default shown
 # MCP_DEV_TOOLS_ENABLED=1               # optional, default shown
 # HEALTH_CHECK_PORT=9091             # optional, default shown
-# MCP_SSE_PORT=9092                   # optional, default shown
+# MCP_PORT=9092                       # Streamable HTTP port when enabled
 # REST_API_PORT=9093                 # optional, default shown
 # RUN_TESTS_ON_STARTUP=0             # optional, default shown
 # OUTPUT_PATH=/app/output/ha-ai-context.md  # optional, default shown
@@ -58,19 +58,19 @@ services:
     image: ghcr.io/paulomac1000/ha-mcp-readonly:latest
     container_name: ha-mcp-readonly
     env_file: .env
+    environment:
+      MCP_TRANSPORT: http
+      MCP_BIND_HOST: 0.0.0.0
+      MCP_AUTH_TOKEN: ${MCP_AUTH_TOKEN:?Set a strong MCP_AUTH_TOKEN}
     ports:
-      - "9091:9091"  # health
-      - "9092:9092"  # MCP SSE
-      - "9093:9093"  # REST API
+      - "127.0.0.1:9091:9091"  # health
+      - "127.0.0.1:9092:9092"  # authenticated Streamable HTTP MCP
     volumes:
       - /path/to/ha/config:/config:ro  # Replace with your HA config path (e.g., /config, ~/.homeassistant)
     restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://localhost:9091/health"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 15s
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
 ```
 
 **Option B — with plain `docker run`:**
@@ -78,11 +78,13 @@ services:
 ```bash
 docker run -d \
   --name ha-mcp-readonly \
-  -p 9091:9091 \
-  -p 9092:9092 \
-  -p 9093:9093 \
+  -p 127.0.0.1:9091:9091 \
+  -p 127.0.0.1:9092:9092 \
   -e HA_URL=http://your-ha-ip:8123 \
   -e HA_TOKEN=your_token \
+  -e MCP_TRANSPORT=http \
+  -e MCP_BIND_HOST=0.0.0.0 \
+  -e MCP_AUTH_TOKEN=replace-with-a-high-entropy-caller-token \
   -v /path/to/ha/config:/config:ro \
   ghcr.io/paulomac1000/ha-mcp-readonly:latest
 ```
@@ -106,8 +108,8 @@ HA_URL=http://localhost:8123 HA_TOKEN=your_token python server.py
 | Port | Protocol | Purpose | Endpoint |
 |------|----------|---------|----------|
 | 9091 | HTTP | Health check | `GET /health` |
-| 9092 | SSE | MCP transport | `/sse`, `/messages` |
-| 9093 | HTTP | REST API + Context Generator | `/api/*` |
+| 9092 | HTTP | Authenticated Streamable HTTP MCP | `/mcp` |
+| 9093 | HTTP | Optional authenticated REST API + Context Generator | `/api/*` |
 
 ### Verify
 
@@ -115,13 +117,11 @@ HA_URL=http://localhost:8123 HA_TOKEN=your_token python server.py
 # Health check
 curl http://localhost:9091/health
 
-# List all MCP tools
-curl http://localhost:9093/api/tools
+# Readiness
+curl http://localhost:9091/ready
 
-# Generate a context snapshot
-curl -X POST http://localhost:9093/api/context/generate \
-  -H "Content-Type: application/json" \
-  -d '{"mode": "hybrid"}'
+# MCP uses an official Streamable HTTP client at http://127.0.0.1:9092/mcp.
+# REST/context routes on 9093 exist only when REST_API_ENABLED=1 and require a bearer token.
 ```
 
 ## Available Tools (158 with dev tools, 145 without)
@@ -160,79 +160,96 @@ Tools are organized by category (75 shown in table below). All are **read-only**
 - **New pre-commit hooks**: `mypy strict`, `Bandit`, `Semgrep`, and AFDS documentation validation added to the pre-commit pipeline
 - **Test infrastructure**: 67 integration tests and 158 E2E tests for expanded real-HA and end-to-end coverage
 
-## Claude Desktop Configuration
+## Client configuration
 
-Add the following to your Claude Desktop config:
+### Local stdio
 
-**macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
-**Linux**: `~/.config/Claude/claude_desktop_config.json`
-**Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
+Install the wheel and configure the client to start the server as a subprocess. This is the default transport and does not expose an MCP network port.
 
 ```json
 {
   "mcpServers": {
     "ha-mcp-readonly": {
-      "url": "http://localhost:9092/sse"
+      "command": "ha-mcp-readonly",
+      "env": {
+        "HA_URL": "http://homeassistant.local:8123",
+        "HA_TOKEN": "replace-with-a-long-lived-access-token",
+        "HA_CONFIG_PATH": "/path/to/home-assistant/config"
+      }
     }
   }
 }
 ```
 
-After restarting Claude Desktop, the 139 Home Assistant tools will be available (127 without dev tools enabled).
+### Authenticated Streamable HTTP
 
-### LibreChat
+Set `MCP_TRANSPORT=http`, `MCP_AUTH_TOKEN`, and a controlled bind address. The endpoint is `/mcp`. Legacy `/sse` support has been removed and `MCP_TRANSPORT=sse` is rejected.
 
-```yaml
-mcpServers:
-  ha-mcp-readonly:
-    url: http://ha-mcp-readonly:9092/sse
-    timeout: 30000
+```json
+{
+  "mcpServers": {
+    "ha-mcp-readonly": {
+      "url": "http://127.0.0.1:9092/mcp",
+      "headers": {
+        "Authorization": "Bearer replace-with-a-high-entropy-caller-token"
+      }
+    }
+  }
+}
 ```
+
+The default catalog contains 145 read-only tools. Developer-only tools remain disabled unless `MCP_DEV_TOOLS_ENABLED=1` is set.
 
 ## Context Generator
 
-Generates a comprehensive Markdown snapshot of your entire Home Assistant instance. Designed for scenarios where live MCP access isn't available or desired:
+The context generator creates a bounded Markdown snapshot for offline analysis, retrieval systems, AI project knowledge, audits, and troubleshooting.
 
-**Use cases:**
-- **RAG systems** — use the generated file as a knowledge base for retrieval-augmented generation (e.g., with LangChain, LlamaIndex, or custom RAG pipelines)
-- **ChatGPT Projects / Qwen / Claude Projects** — upload the file as custom knowledge to give the AI full awareness of your smart home without network access to HA
-- **Static context for AI coding tools** — provide the file alongside your codebase so AI assistants understand your automations, devices, and entity relationships
-- **Documentation snapshots** — freeze configuration state for auditing, debugging, or sharing with other users
-
-**Modes:**
-
-| Mode | Description |
+| Mode | Data access |
 |------|-------------|
-| `offline` | Reads only from local filesystem (`/config`), no API calls |
-| `online` | Fetches data from HA REST API (states, history, config) |
-| `hybrid` | Combines offline and online data (default) |
+| `offline` | Local Home Assistant configuration and safe storage records only. Network access is disabled by construction. |
+| `online` | Home Assistant REST and WebSocket APIs. Missing required network access fails the run. |
+| `hybrid` | Local sources plus every supported API source available to the configured token. |
 
-The generated file includes entity inventory, automation analysis, script/scene listing, dashboard usage, log error patterns, device topology, config entry health, blueprint usage, and template entity references.
+The artifact includes the normal analysis sections and a **Source Provenance and Completeness** matrix. Every attempted source records its method, status, record count, byte count, redaction count, requested window, and failure or omission reason. The **Comprehensive Safe Data Snapshot** includes all supported, accessible data within configured bounds:
+
+- states, services, components, events, configuration, history, logbook, error log, calendars, and calendar events;
+- entity, device, area, floor, label, category, configuration-entry, energy, panel, Lovelace-resource, repair, system-health, and Assist-pipeline data exposed by Home Assistant;
+- to-do items and every advertised weather forecast type discovered dynamically from entity states;
+- all discoverable safe `.storage` records plus YAML, JSON, and file inventory data under the configured root;
+- automation, script, scene, blueprint, template, helper, person, zone, energy, HACS, cache, dependency, dashboard, and diagnostic analysis.
+
+Credential stores are excluded. Sensitive fields, bearer tokens, JWTs, secret query parameters, and `!secret` values are redacted. Binary media, camera streams, backup contents, databases, and credential-bearing records are not copied. Sources unavailable because of permissions, missing integrations, unsupported commands, configured windows, or size limits remain visible in provenance rather than being silently omitted.
+
+Relevant limits are `HA_CONTEXT_HISTORY_HOURS`, `HA_CONTEXT_LOG_HOURS`, `HA_CONTEXT_CALENDAR_DAYS`, `HA_CONTEXT_MAX_SOURCE_BYTES`, and `HA_CONTEXT_MAX_OUTPUT_BYTES`.
 
 ```bash
-# Via REST API
-curl -X POST http://localhost:9093/api/context/generate \
+curl -X POST http://127.0.0.1:9093/api/context/generate \
+  -H "Authorization: Bearer $REST_API_TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"mode": "hybrid"}'
+  -d '{"mode":"hybrid"}'
 
-curl http://localhost:9093/api/context/download > ha-ai-context.md
+curl -H "Authorization: Bearer $REST_API_TOKEN" \
+  http://127.0.0.1:9093/api/context/status
+
+curl -H "Authorization: Bearer $REST_API_TOKEN" \
+  http://127.0.0.1:9093/api/context/download > ha-ai-context.md
 ```
 
 ## REST API
 
-The REST API on port 9093 provides HTTP access to all tools and the context generator with an OpenAPI schema.
+The optional REST compatibility adapter is disabled by default. When enabled, every route except health requires a bearer token and uses the same manifest, capability, deadline, concurrency, response-size, and error policy as MCP.
 
 ```bash
-# List tools
-curl http://localhost:9093/api/tools
+curl -H "Authorization: Bearer $REST_API_TOKEN" \
+  'http://127.0.0.1:9093/api/tools?detail=full'
 
-# Call a tool
-curl -X POST http://localhost:9093/api/tools/get_entity_state \
+curl -X POST http://127.0.0.1:9093/api/tools/get_entity_state \
+  -H "Authorization: Bearer $REST_API_TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"entity_id": "sun.sun"}'
+  -d '{"entity_id":"sun.sun"}'
 
-# OpenAPI schema
-curl http://localhost:9093/api/openapi.json
+curl -H "Authorization: Bearer $REST_API_TOKEN" \
+  http://127.0.0.1:9093/api/openapi.json
 ```
 
 ## Development
@@ -250,25 +267,17 @@ pip install -r requirements.txt
 ### Run tests
 
 ```bash
-# Unit tests (no credentials needed, 1142 tests, <20s)
+# Deterministic local gates
 pytest tests/unit/ -q
+pytest tests/protocol/ -q
 
-# Smoke tests (requires local MCP server, 84 tests, <5s)
-pytest tests/smoke/ -q
-
-# Integration tests (requires real HA, 278 tests, ~2min)
+# Backend-dependent suites; require an isolated Home Assistant and credentials
 export HA_URL=http://your-ha:8123
 export HA_TOKEN=your_token
-pytest tests/integration/ -q
-
-# E2E tests (requires real HA + local MCP server, 182 tests, ~30s)
-pytest tests/e2e/ -q
-
-# All tests
-pytest tests/unit/ tests/smoke/ tests/e2e/ tests/integration/ -q
+pytest tests/smoke/ tests/integration/ tests/e2e/ -q
 ```
 
-All unit tests use mocked dependencies — no real Home Assistant instance required. 1602 total tests across 4 suites.
+Backend-dependent tests report skips when the required Home Assistant environment is absent. CI installs the wheel in a clean environment, executes a real stdio subprocess, and verifies health, REST metadata, the offline context lifecycle, and authenticated Streamable HTTP against built release containers. The release workflow separately builds one multi-platform candidate into quarantine, smoke-tests its exact digest on amd64 and arm64, and promotes only that digest from the protected publisher.
 
 ### Lint & format
 
@@ -282,11 +291,14 @@ ruff format --check .
 ```
 server.py                  # Main entry point — FastMCP + REST API + health check
 context_generator/
-├── core.py                # Entry points: main(), generate_context_file()
-├── analyzers.py           # RegistryCollector, AutomationAnalyzer, LogAnalyzer, etc.
-├── formatters.py          # ReportGenerator — Markdown output
-├── constants.py           # ENTITY_PATTERN, HA URLs, ignorable domains, YAML loader
-└── utils.py               # Registry cache, HA API client, YAML helpers
+├── config.py              # Immutable per-run configuration
+├── runtime.py             # Context-local runtime and provenance scope
+├── provenance.py          # Completeness matrix and redaction
+├── snapshot.py            # Safe filesystem, REST, and WebSocket collectors
+├── core.py                # Isolated generation entry points
+├── analyzers.py           # Domain analyzers
+├── formatters.py          # Atomic bounded Markdown output
+└── utils.py               # Runtime-aware registry and API adapters
 
 ha_graph/
 └── graph_builder.py       # HA Semantic Graph: build, query, and export
@@ -336,7 +348,7 @@ tests/
 
 ## Notes
 
-- The server exposes three ports: 9091 (health), 9092 (MCP SSE), 9093 (REST API). Ports are configurable via env.
+- The server may expose 9091 (health), 9092 (authenticated Streamable HTTP MCP), and 9093 (optional authenticated REST/context adapter). Stdio remains the default MCP transport.
 - `MCP_DEV_TOOLS_ENABLED=0` disables template execution and debugging tools for production use.
 - **Security note**: Ports 9091-9093 should not be exposed publicly. Use firewall rules or reverse proxy with authentication if needed.
 - Registry files (areas, devices, entities, config entries) are cached for 5 minutes to reduce filesystem I/O.

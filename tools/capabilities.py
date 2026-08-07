@@ -2,7 +2,7 @@
 
 Exposes the full tool catalog with capability manifests over the MCP
 transport itself. The REST endpoint ``GET /api/tools/{name}/manifest`` is
-unreachable for an agent connected over pure MCP/SSE; this tool closes that
+unreachable for an agent connected over pure MCP; this tool closes that
 gap (mcp-server-standards.md, rule 2b, L3+).
 """
 
@@ -11,6 +11,7 @@ import re
 from typing import Any
 
 from tools import TOOLS_VERSION
+from tools.constants import REST_API_ENABLED
 from tools.manifests import get_all_manifests, make_manifest, register_manifest
 from tools.utils import _error_response, _success_response
 
@@ -84,7 +85,7 @@ def _do_describe_ha_capabilities() -> dict[str, Any]:
         transports, tool_count, the sorted list of tool manifests, and
         a categories dict grouping tools by category.
     """
-    manifests = get_all_manifests()
+    manifests = get_all_manifests(active_only=True)
     tools = sorted(manifests.values(), key=lambda m: str(m.get("name", "")))
 
     # Group tools by category
@@ -99,11 +100,15 @@ def _do_describe_ha_capabilities() -> dict[str, Any]:
         )
         categories[cat_name]["tool_count"] = len(categories[cat_name]["tools"])
 
+    transports = ["stdio", "streamable-http"]
+    if REST_API_ENABLED:
+        transports.append("authenticated-rest-compatibility")
+
     return {
         "schema_version": CAPABILITIES_SCHEMA_VERSION,
         "server": "HA-Observer",
         "tools_version": TOOLS_VERSION,
-        "transports": ["sse", "rest"],
+        "transports": transports,
         "tool_count": len(tools),
         "tools": tools,
         "categories": categories,
@@ -115,7 +120,7 @@ def register_capability_tools(mcp: Any) -> None:
 
     register_manifest(
         "describe_ha_capabilities",
-        make_manifest("describe_ha_capabilities", timeout_ms=1000, latency="instant"),
+        make_manifest("describe_ha_capabilities", timeout_ms=1000, latency="interactive"),
     )
 
     @mcp.tool()
@@ -125,7 +130,7 @@ def register_capability_tools(mcp: Any) -> None:
         This is a zero-I/O introspection tool. It lets an AI agent inspect
         every tool's risk level, side effects, determinism, latency and other
         manifest metadata without invoking the tools themselves. Unlike the
-        REST-only manifest endpoint, this works over the MCP/SSE transport.
+        REST-only manifest endpoint, this works over the MCP transport.
 
         Args:
             None.

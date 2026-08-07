@@ -21,6 +21,7 @@ def _run_generation(output_path):
     os.environ["HA_URL"] = _HA_URL
     os.environ["HA_TOKEN"] = _HA_TOKEN
     os.environ["HA_CONFIG_PATH"] = _HA_CONFIG_PATH
+    os.environ["OUTPUT_PATH"] = output_path
 
     import context_generator.constants as c
 
@@ -94,6 +95,7 @@ class TestContextGeneratorE2E:
         """Online mode should fetch data from HA API."""
         os.environ["HA_URL"] = _HA_URL
         os.environ["HA_TOKEN"] = _HA_TOKEN
+        os.environ["OUTPUT_PATH"] = tmp_output_path
         import context_generator.constants as c
 
         c.HA_URL = _HA_URL
@@ -117,6 +119,7 @@ class TestContextGeneratorE2E:
         c.HA_TOKEN = ""
         c.HA_CONFIG_PATH = _HA_CONFIG_PATH
         c.OUTPUT_FILE = tmp_output_path
+        os.environ["OUTPUT_PATH"] = tmp_output_path
         from context_generator.core import main
 
         main()
@@ -134,6 +137,7 @@ class TestContextGeneratorE2E:
         c.HA_TOKEN = _HA_TOKEN
         c.HA_CONFIG_PATH = _HA_CONFIG_PATH
         c.OUTPUT_FILE = tmp_output_path
+        os.environ["OUTPUT_PATH"] = tmp_output_path
         from context_generator.core import main
 
         main()
@@ -152,6 +156,7 @@ class TestContextGeneratorE2E:
         c.HA_TOKEN = ""
         c.HA_CONFIG_PATH = "/nonexistent/path"
         c.OUTPUT_FILE = tmp_output_path
+        os.environ["OUTPUT_PATH"] = tmp_output_path
         from context_generator.core import main
 
         main()

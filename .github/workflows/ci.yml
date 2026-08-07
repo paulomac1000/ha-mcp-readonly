@@ -2,200 +2,347 @@ name: CI
 
 on:
   push:
-    branches: [main, master]
+    branches: [main]
   pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+  MCP_TRANSPORT: stdio
+  MCP_DEV_TOOLS_ENABLED: "0"
+  HA_CONFIG_PATH: /tmp
 
 jobs:
-  lint:
-    runs-on: ubuntu-latest
+  quality:
+    name: Quality and standards
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v6
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v6
         with:
           persist-credentials: false
-
-      - name: Set up Python
-        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
         with:
-          python-version: "3.14"
-
-      - name: Install linting tools
-        run: pip install --break-system-packages ruff mypy bandit
-
-      - name: Ruff check
-        run: ruff check .
-
-      - name: Ruff format check
-        run: ruff format --check .
-
-      - name: mypy
-        run: mypy tools/ --strict
-
-      - name: bandit
-        run: bandit -r tools/ -ll
-
-      - name: Verify version.py matches pyproject.toml
+          python-version: "3.13"
+          cache: pip
+      - name: Install pinned quality tools
+        run: python -m pip install -c constraints-ci.txt '.[dev]'
+      - name: Ruff
         run: |
-          VERSION_PY=$(grep __version__ version.py | cut -d'"' -f2)
-          VERSION_TOML=$(grep -m1 '^version = ' pyproject.toml | cut -d'"' -f2)
-          if [ "$VERSION_PY" != "$VERSION_TOML" ]; then
-            echo "ERROR: version mismatch!"
-            echo "  version.py:  $VERSION_PY"
-            echo "  pyproject.toml: $VERSION_TOML"
-            exit 1
-          fi
-          echo "Versions match: $VERSION_PY"
-
-      - name: Validate documentation (AFDS)
-        if: hashFiles('afds_config.yaml') != ''
+          ruff check .
+          ruff format --check .
+      - name: Type checking
+        run: >-
+          mypy server.py tools/ context_generator/core.py context_generator/config.py
+          context_generator/runtime.py context_generator/provenance.py context_generator/snapshot.py
+          scripts/verify_runtime_endpoints.py --strict
+      - name: Runtime contract self-check
+        run: python scripts/verify_runtime_endpoints.py --self-check
+      - name: Security lint
+        run: bandit -r server.py tools/ context_generator/ ha_graph/ -ll
+      - name: Verify package version
         run: |
-          curl -sS https://raw.githubusercontent.com/paulomac1000/ai-skills/main/skills/afds-doc-writer/docs_validate.py | python3 - \
-            --config afds_config.yaml --baseline .afds-baseline.json docs/ ./README.md ./CHANGELOG.md ./AGENTS.md ./CONTRIBUTING.md ./SECURITY.md
+          python - <<'PY'
+          import tomllib
+          from pathlib import Path
+          from version import __version__
+          project = tomllib.loads(Path('pyproject.toml').read_text())['project']
+          assert project['version'] == __version__
+          PY
+      - name: Checkout pinned ai-skills validator
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v6
+        with:
+          repository: paulomac1000/ai-skills
+          ref: c6dc6b13b2dd40b6e087140cd071b45067d75b39
+          path: .ai-skills
+          persist-credentials: false
+      - name: Validate governed documentation
+        run: >-
+          python .ai-skills/skills/afds-doc-writer/validate.py
+          AGENTS.md CONTRIBUTING.md SECURITY.md docs/documentation.md docs/testing-guidelines.md docs/ai-skills-adoption.md
+      - name: Validate capability manifests against pinned canonical schema
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          from jsonschema import Draft202012Validator
 
-  test:
-    runs-on: ubuntu-latest
-    needs: lint
+          schema = json.loads(Path('.ai-skills/contracts/capability-manifest.schema.json').read_text())
+          manifests = json.loads(Path('tools/tool_manifests.json').read_text())
+          validator = Draft202012Validator(schema)
+          errors = []
+          for name, manifest in sorted(manifests.items()):
+              for error in validator.iter_errors(manifest):
+                  location = '.'.join(str(part) for part in error.absolute_path) or '$'
+                  errors.append(f'{name}:{location}: {error.message}')
+          if errors:
+              raise SystemExit('\n'.join(errors))
+          print(f'validated {len(manifests)} capability manifests')
+          PY
+
+  tests:
+    name: Tests (Python ${{ matrix.python }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12", "3.13", "3.14"]
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v6
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v6
         with:
           persist-credentials: false
-
-      - name: Set up Python 3.14
-        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
         with:
-          python-version: "3.14"
-
-      - name: Install dependencies
+          python-version: ${{ matrix.python }}
+          cache: pip
+      - name: Install project
+        run: python -m pip install -c constraints-ci.txt '.[dev]'
+      - name: Unit and protocol tests
         run: |
-          python -m pip install --upgrade --break-system-packages pip
-          pip install --break-system-packages -r requirements.txt
-          pip install --break-system-packages -e ".[dev]"
-
-      - name: Run unit tests with coverage
-        run: |
-          pytest tests/unit/ -v --tb=short \
+          pytest tests/unit -q \
             --cov=tools \
+            --cov=context_generator.core \
+            --cov=context_generator.config \
+            --cov=context_generator.runtime \
+            --cov=context_generator.provenance \
+            --cov=context_generator.snapshot \
             --cov-report=term-missing \
             --cov-report=xml
-
-      - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@a99c28d3f0da835de33ff2feb2e15691c7b9641f  # v7
+          pytest tests/protocol -q
+      - name: Upload coverage
+        if: matrix.python == '3.13'
+        uses: codecov/codecov-action@a99c28d3f0da835de33ff2feb2e15691c7b9641f # v7
         with:
-          files: ./coverage.xml
+          files: coverage.xml
           fail_ci_if_error: false
           token: ${{ secrets.CODECOV_TOKEN }}
 
-  docker-smoke:
-    runs-on: ubuntu-latest
-    needs: test
+  build:
+    name: Build and inspect wheel
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    needs: [quality, tests]
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v6
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v6
         with:
           persist-credentials: false
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
+        with:
+          python-version: "3.13"
+          cache: pip
+      - name: Build wheel once
+        run: |
+          python -m pip install -c constraints-ci.txt build==1.5.0 setuptools==83.0.0 wheel==0.47.0
+          python -m build --wheel --no-isolation
+      - name: Inspect wheel contents
+        run: |
+          python - <<'PY'
+          import glob, zipfile
+          wheel = glob.glob('dist/*.whl')
+          assert len(wheel) == 1, wheel
+          with zipfile.ZipFile(wheel[0]) as archive:
+              names = set(archive.namelist())
+          required = {
+              'server.py', 'version.py', 'tools/tool_manifests.json',
+              'ha_graph/__init__.py', 'context_generator/__init__.py'
+          }
+          missing = sorted(required - names)
+          assert not missing, f'missing wheel files: {missing}'
+          PY
+      - name: Smoke test installed wheel in clean environment
+        run: |
+          python -m venv /tmp/wheel-test
+          /tmp/wheel-test/bin/python -m pip install dist/*.whl
+          /tmp/wheel-test/bin/python - <<'PY'
+          import asyncio
+          from fastmcp import Client
+          import server
+          async def verify():
+              async with Client(server.get_mcp_server()) as client:
+                  tools = await client.list_tools()
+                  assert len(tools) == 145
+                  result = await client.call_tool('describe_ha_capabilities', {})
+                  assert not result.is_error
+          asyncio.run(verify())
+          PY
+      - name: Verify real stdio subprocess from installed wheel
+        run: |
+          /tmp/wheel-test/bin/python - <<'PY'
+          import asyncio
+          import os
+          from fastmcp import Client
+          from fastmcp.client.transports import StdioTransport
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5  # v4
+          async def verify():
+              env = {
+                  **os.environ,
+                  "MCP_TRANSPORT": "stdio",
+                  "HEALTH_SERVER_ENABLED": "0",
+                  "HA_CONFIG_PATH": "/tmp",
+                  "MCP_DEV_TOOLS_ENABLED": "0",
+              }
+              transport = StdioTransport(
+                  command="/tmp/wheel-test/bin/ha-mcp-readonly", args=[], env=env
+              )
+              async with Client(transport, timeout=30) as client:
+                  tools = await client.list_tools()
+                  assert len(tools) == 145
+                  result = await client.call_tool("describe_ha_capabilities", {})
+                  assert not result.is_error
+          asyncio.run(verify())
+          PY
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
+        with:
+          name: python-wheel-${{ github.sha }}
+          path: dist/*.whl
+          if-no-files-found: error
+          retention-days: 7
 
-      - name: Build Docker image
-        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf  # v7
+  container:
+    name: Container (${{ matrix.arch }}) from tested wheel
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: python-wheel-${{ github.sha }}
+          path: dist
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
+        if: matrix.arch == 'amd64'
+        with:
+          python-version: "3.13"
+          cache: pip
+      - name: Install official MCP client for network verification
+        if: matrix.arch == 'amd64'
+        run: python -m pip install -c constraints-ci.txt dist/*.whl
+      - uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4
+      - uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4
+      - name: Build platform image once
+        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7
         with:
           context: .
-          load: true
-          tags: ha-mcp-readonly:test
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      - name: Smoke test — tool count
+          file: Dockerfile.release
+          platforms: linux/${{ matrix.arch }}
+          tags: ha-mcp-readonly:${{ github.sha }}-${{ matrix.arch }}
+          outputs: type=docker,dest=/tmp/ha-mcp-${{ matrix.arch }}.tar
+          cache-from: type=gha,scope=${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.arch }}
+      - name: Load exact platform image
+        run: docker load --input /tmp/ha-mcp-${{ matrix.arch }}.tar
+      - name: Verify non-root image and catalog
         run: |
-          docker run --rm -e MCP_DEV_TOOLS_ENABLED=0 ha-mcp-readonly:test python3 -c "
-          from server import get_tool_count
-          tc = get_tool_count()
-          assert tc == 145, f'Expected 145 tools, got {tc}'
-          print('Tool count OK:', tc)
-          "
-
-      - name: Smoke test — REST API health + tools
+          IMAGE=ha-mcp-readonly:${GITHUB_SHA}-${{ matrix.arch }}
+          test "$(docker run --rm --platform linux/${{ matrix.arch }} --entrypoint=id "$IMAGE" -u)" = "10001"
+          docker run --rm --platform linux/${{ matrix.arch }} --entrypoint=python \
+            -e MCP_TRANSPORT=stdio -e MCP_DEV_TOOLS_ENABLED=0 \
+            "$IMAGE" -c "import server; assert server.get_tool_count() == 145"
+      - name: Verify default image health configuration
         run: |
-          docker run -d --rm \
-            -p 9099:9091 -p 9100:9093 \
-            -e HA_URL=https://localhost:8123 -e HA_TOKEN=fake \
-            -e MCP_DEV_TOOLS_ENABLED=0 \
-            -e MCP_UNSAFE_PUBLIC_ACCESS_CONFIRMED=1 \
-            --name ha-mcp-smoke ha-mcp-readonly:test
-          sleep 5
-          curl -fsS --retry 10 --retry-delay 2 \
-            http://localhost:9099/health || exit 1
-          TOOLS=$(curl -s http://localhost:9100/api/tools \
-            | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['total'])")
-          [ "$TOOLS" = "145" ] \
-            || (echo "FAIL: expected 145, got $TOOLS" && exit 1)
-          docker stop ha-mcp-smoke
-
-  integration-tests:
-    timeout-minutes: 10
-    runs-on: ubuntu-latest
-    continue-on-error: true
-    services:
-      homeassistant:
-        image: ghcr.io/home-assistant/home-assistant:stable
-        ports:
-          - 8123:8123
-    env:
-      HA_URL: http://homeassistant:8123
-      HA_TOKEN: ${{ secrets.HA_TOKEN }}
-    steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v6
-        with:
-          persist-credentials: false
-
-      - name: Set up Python 3.14
-        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6
-        with:
-          python-version: "3.14"
-
-      - name: Install dependencies
+          IMAGE=ha-mcp-readonly:${GITHUB_SHA}-${{ matrix.arch }}
+          docker run -dit --rm --platform linux/${{ matrix.arch }} \
+            --name ha-mcp-default-${{ matrix.arch }} \
+            -p 127.0.0.1:9091:9091 -e HA_CONFIG_PATH=/tmp "$IMAGE"
+          trap 'docker logs ha-mcp-default-${{ matrix.arch }}; docker stop ha-mcp-default-${{ matrix.arch }} || true' EXIT
+          python - <<'PY'
+          import time, urllib.request
+          for _ in range(60):
+              try:
+                  with urllib.request.urlopen('http://127.0.0.1:9091/ready', timeout=2) as response:
+                      assert response.status == 200
+                      break
+              except Exception:
+                  time.sleep(1)
+          else:
+              raise SystemExit('default container did not become ready')
+          PY
+          docker exec ha-mcp-default-${{ matrix.arch }} python -c \
+            "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9091/ready', timeout=3)"
+      - name: Verify all runtime boundaries on the exact amd64 image
+        if: matrix.arch == 'amd64'
+        shell: bash
         run: |
-          python -m pip install --upgrade --break-system-packages pip
-          pip install --break-system-packages -r requirements.txt
-          pip install --break-system-packages -e ".[dev]"
+          set -euo pipefail
+          IMAGE=ha-mcp-readonly:${GITHUB_SHA}-amd64
+          CONFIG_ROOT="$RUNNER_TEMP/ha-config"
+          mkdir -p "$CONFIG_ROOT/.storage"
+          cat > "$CONFIG_ROOT/configuration.yaml" <<'YAML'
+          homeassistant:
+            name: CI Home
+          automation: !include automations.yaml
+          YAML
+          cat > "$CONFIG_ROOT/automations.yaml" <<'YAML'
+          - id: ci_automation
+            alias: CI automation
+            triggers: []
+            conditions: []
+            actions: []
+          YAML
+          cat > "$CONFIG_ROOT/secrets.yaml" <<'YAML'
+          private_password: ci-secret-password
+          YAML
+          cat > "$CONFIG_ROOT/.storage/core.entity_registry" <<'JSON'
+          {"version":1,"minor_version":1,"key":"core.entity_registry","data":{"entities":[{"entity_id":"sensor.ci_temperature","platform":"template","unique_id":"ci-temperature","device_id":"ci-device","area_id":"ci-area","config_entry_id":"ci-entry"}]}}
+          JSON
+          cat > "$CONFIG_ROOT/.storage/core.device_registry" <<'JSON'
+          {"version":1,"minor_version":1,"key":"core.device_registry","data":{"devices":[{"id":"ci-device","name":"CI device","area_id":"ci-area","config_entries":["ci-entry"]}]}}
+          JSON
+          cat > "$CONFIG_ROOT/.storage/core.area_registry" <<'JSON'
+          {"version":1,"minor_version":1,"key":"core.area_registry","data":{"areas":[{"id":"ci-area","name":"CI area","floor_id":"ci-floor","labels":["ci-label"]}]}}
+          JSON
+          cat > "$CONFIG_ROOT/.storage/core.floor_registry" <<'JSON'
+          {"version":1,"minor_version":1,"key":"core.floor_registry","data":{"floors":[{"floor_id":"ci-floor","name":"CI floor","level":0}]}}
+          JSON
+          cat > "$CONFIG_ROOT/.storage/core.label_registry" <<'JSON'
+          {"version":1,"minor_version":1,"key":"core.label_registry","data":{"labels":[{"label_id":"ci-label","name":"CI label"}]}}
+          JSON
+          cat > "$CONFIG_ROOT/.storage/core.config_entries" <<'JSON'
+          {"version":1,"minor_version":1,"key":"core.config_entries","data":{"entries":[{"entry_id":"ci-entry","domain":"template","title":"CI integration","data":{"access_token":"ci-secret-token","password":"ci-secret-password"}}]}}
+          JSON
 
-      - name: Run integration tests
-        run: pytest tests/integration/ -q
-
-  smoke-tests:
-    timeout-minutes: 10
-    runs-on: ubuntu-latest
-    continue-on-error: true
-    services:
-      homeassistant:
-        image: ghcr.io/home-assistant/home-assistant:stable
-        ports:
-          - 8123:8123
-    env:
-      HA_URL: http://homeassistant:8123
-      HA_TOKEN: ${{ secrets.HA_TOKEN }}
-    steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v6
-        with:
-          persist-credentials: false
-
-      - name: Set up Python 3.14
-        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6
-        with:
-          python-version: "3.14"
-
-      - name: Install dependencies
+          docker run -d --rm --name ha-mcp-runtime \
+            --read-only --cap-drop ALL --security-opt no-new-privileges \
+            --tmpfs /tmp:rw,noexec,nosuid,size=64m,mode=1777 \
+            --tmpfs /app/output:rw,noexec,nosuid,size=256m,uid=10001,gid=10001,mode=0750 \
+            -v "$CONFIG_ROOT:/config:ro" \
+            -p 127.0.0.1:9091:9091 -p 127.0.0.1:9092:9092 -p 127.0.0.1:9093:9093 \
+            -e MCP_TRANSPORT=http -e MCP_BIND_HOST=0.0.0.0 \
+            -e MCP_AUTH_TOKEN=test-only-ci-token -e REST_API_ENABLED=1 \
+            -e HA_URL=http://unreachable.invalid:8123 -e HA_TOKEN=ci-backend-token \
+            -e HA_CONFIG_PATH=/config -e OUTPUT_PATH=/app/output/ha-ai-context.md \
+            -e CONTEXT_OUTPUT_ROOT=/app/output \
+            "$IMAGE"
+          trap 'docker logs ha-mcp-runtime; docker stop ha-mcp-runtime || true' EXIT
+          RUNTIME_AUTH_TOKEN=test-only-ci-token \
+          RUNTIME_FORBIDDEN_CONTEXT_VALUES=ci-secret-token,ci-secret-password \
+            python scripts/verify_runtime_endpoints.py --strict
+      - name: Record exact image evidence
         run: |
-          python -m pip install --upgrade --break-system-packages pip
-          pip install --break-system-packages -r requirements.txt
-          pip install --break-system-packages -e ".[dev]"
-
-      - name: Run smoke tests
-        run: pytest tests/smoke/ -q
+          IMAGE=ha-mcp-readonly:${GITHUB_SHA}-${{ matrix.arch }}
+          docker image inspect --format '{{.Id}}' "$IMAGE" > /tmp/image-${{ matrix.arch }}.id
+          (cd /tmp && sha256sum ha-mcp-${{ matrix.arch }}.tar > ha-mcp-${{ matrix.arch }}.tar.sha256)
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
+        with:
+          name: container-image-${{ github.sha }}-${{ matrix.arch }}
+          path: |
+            /tmp/ha-mcp-${{ matrix.arch }}.tar
+            /tmp/ha-mcp-${{ matrix.arch }}.tar.sha256
+            /tmp/image-${{ matrix.arch }}.id
+          if-no-files-found: error
+          retention-days: 7

@@ -3,7 +3,6 @@ Integration test fixtures — real HA, MCPWrapper, sample entities.
 """
 
 import asyncio
-import inspect
 import json
 import os
 import sys
@@ -73,192 +72,42 @@ def mock_mcp():
 
 
 class MCPWrapper:
-    """
-    Wrapper for FastMCP providing compatibility with different versions (0.3.x and ≥0.4.x).
-    Handles both sync and async tools, always returning a ready result.
+    """Synchronous facade over the supported in-memory FastMCP client.
 
-    CRITICAL: Uses ONE shared event loop for all async operations,
-    to avoid "Future attached to a different loop" error.
+    The tools are reached through ``fastmcp.Client`` (the supported client
+    API) rather than private SDK registries, which is what the project
+    contract requires for protocol evidence.
     """
 
     def __init__(self, mcp_instance):
         self._mcp = mcp_instance
+        self._loop = None
         self._tools_cache = None
-        self._has_get_tool = False
-        self._has_tm_get_tool = False
-        self._loop = None  # Shared event loop
-
-    def _discover_tools(self):
-        """
-        Discovers available tools using various strategies for compatibility.
-        returns dict {name: callable}.
-        """
-        if self._tools_cache is not None:
-            return self._tools_cache
-
-        tools = {}
-
-        self._has_get_tool = hasattr(self._mcp, "get_tool") and callable(self._mcp.get_tool)
-
-        self._has_tm_get_tool = False
-        if hasattr(self._mcp, "_tool_manager"):
-            tm = self._mcp._tool_manager
-            if hasattr(tm, "get_tool") and callable(tm.get_tool):
-                self._has_tm_get_tool = True
-
-        # Strategy 1: Direct _tools dict on FastMCP instatece
-        if hasattr(self._mcp, "_tools") and isinstance(self._mcp._tools, dict):
-            for name, tool in self._mcp._tools.items():
-                unwrapped = self._unwrap_tool(tool)
-                if unwrapped:
-                    tools[name] = unwrapped
-
-        # Strategy 2: _tool_manager with _tools dict
-        if not tools and hasattr(self._mcp, "_tool_manager"):
-            tm = self._mcp._tool_manager
-            if hasattr(tm, "_tools") and isinstance(tm._tools, dict):
-                for name, tool in tm._tools.items():
-                    unwrapped = self._unwrap_tool(tool)
-                    if unwrapped:
-                        tools[name] = unwrapped
-
-        # Strategy 3: tools property/attribute
-        if not tools and hasattr(self._mcp, "tools"):
-            tools_attr = self._mcp.tools
-            if isinstance(tools_attr, dict):
-                for name, tool in tools_attr.items():
-                    unwrapped = self._unwrap_tool(tool)
-                    if unwrapped:
-                        tools[name] = unwrapped
-            elif hasattr(tools_attr, "__iter__"):
-                for tool in tools_attr:
-                    name = self._get_tool_name(tool)
-                    if name:
-                        unwrapped = self._unwrap_tool(tool)
-                        if unwrapped:
-                            tools[name] = unwrapped
-
-        self._tools_cache = tools
-        return tools
-
-    def _get_tool_name(self, tool):
-        """Extract name from a tool object."""
-        for attr in ("name", "__name__", "_name"):
-            if hasattr(tool, attr):
-                val = getattr(tool, attr)
-                if val:
-                    return val
-        return None
-
-    def _unwrap_tool(self, tool):
-        """Unwrap tool object to get the actual callable function."""
-        if tool is None:
-            return None
-
-        for attr in ("fn", "func", "_func", "function", "_function", "callback"):
-            if hasattr(tool, attr):
-                unwrapped = getattr(tool, attr)
-                if callable(unwrapped):
-                    return unwrapped
-
-        if callable(tool):
-            return tool
-
-        return None
-
-    def _get_tool_function(self, name):
-        """Get tool function by name using multiple strategies."""
-        tools = self._discover_tools()
-        if name in tools and tools[name] is not None:
-            return tools[name]
-
-        if self._has_get_tool:
-            try:
-                tool = self._mcp.get_tool(name)
-                if tool:
-                    unwrapped = self._unwrap_tool(tool)
-                    if unwrapped:
-                        if self._tools_cache is not None:
-                            self._tools_cache[name] = unwrapped
-                        return unwrapped
-            except Exception:
-                pass
-
-        if self._has_tm_get_tool:
-            try:
-                tool = self._mcp._tool_manager.get_tool(name)
-                if tool:
-                    unwrapped = self._unwrap_tool(tool)
-                    if unwrapped:
-                        if self._tools_cache is not None:
-                            self._tools_cache[name] = unwrapped
-                        return unwrapped
-            except Exception:
-                pass
-
-        return None
-
-    def _list_available_tools(self):
-        """List available tool names for debugging."""
-        tools = self._discover_tools()
-        names = list(tools.keys())
-
-        if hasattr(self._mcp, "list_tools") and callable(self._mcp.list_tools):
-            try:
-                listed = self._mcp.list_tools()
-                if isinstance(listed, (list, tuple)):
-                    for item in listed:
-                        if isinstance(item, str):
-                            if item not in names:
-                                names.append(item)
-                        elif hasattr(item, "name"):
-                            if item.name not in names:
-                                names.append(item.name)
-            except Exception:
-                pass
-
-        return names
-
-    def call_tool(self, name, *args, **kwargs):
-        """
-        Execute a tool by name, handling async execution automatically.
-        Always returns a ready result (not a coroutine).
-        """
-        func = self._get_tool_function(name)
-
-        if not func:
-            available = self._list_available_tools()
-            preview = available[:10] if len(available) > 10 else available
-            raise ValueError(
-                f"Tool '{name}' not found. Available ({len(available)} total): {preview}"
-            )
-
-        if inspect.iscoroutinefunction(func):
-            return self._run_async(func, *args, **kwargs)
-        else:
-            return func(*args, **kwargs)
 
     def _get_or_create_loop(self):
-        """
-        Fetches or creates shared event loop.
-        CRITICAL: Always returns THE SAME loop for all operations.
-        """
+        """Fetch or create the single shared event loop."""
         if self._loop is None or self._loop.is_closed():
             self._loop = asyncio.new_event_loop()
             asyncio.set_event_loop(self._loop)
         return self._loop
 
-    def _run_async(self, func, *args, **kwargs):
-        """
-        Runs async function from sync context.
-
-        CRITICAL: Does NOT use ThreadPoolExecutor or asyncio.run()!
-        Instead it uses ONE shared event loop,
-        which prevents the "Future attached to a different loop" error.
-        """
+    def _run_async(self, coro_factory):
+        """Run a coroutine-returning callable on the shared loop."""
         loop = self._get_or_create_loop()
-        coro = func(*args, **kwargs)
-        return loop.run_until_complete(coro)
+        return loop.run_until_complete(coro_factory())
+
+    def call_tool(self, name, *args, **kwargs):
+        """Execute a tool through the supported FastMCP client."""
+        from fastmcp import Client
+
+        async def _call():
+            async with Client(self._mcp) as client:
+                result = await client.call_tool(name, kwargs or {})
+                if result.content:
+                    return result.content[0].text
+                return ""
+
+        return self._run_async(_call)
 
 
 @pytest.fixture(scope="session")

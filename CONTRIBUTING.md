@@ -1,3 +1,13 @@
+---
+description: Contribution workflow and quality requirements for HA-MCP-Readonly changes.
+doc_id: guide.ha-mcp-contributing
+type: guide
+status: active
+rigor: operational
+owners: [repository-maintainers]
+verification: Run Ruff, strict mypy, Bandit, unit tests, protocol tests, and the applicable package or runtime checks before opening a pull request.
+---
+
 # Contributing to HA-MCP-Readonly
 
 Thank you for your interest in contributing! This document provides guidelines for contributing to the project.
@@ -24,7 +34,7 @@ Thank you for your interest in contributing! This document provides guidelines f
 2. Create a feature branch (`git checkout -b feature/amazing-feature`)
 3. Make your changes
 4. Add or update tests as needed
-5. Ensure all tests pass: `pytest tests/unit/ -v`
+5. Run the deterministic gates from `docs/testing-guidelines.md` in a virtual environment
 6. Update documentation if needed
 7. Commit with clear messages
 8. Open a Pull Request
@@ -36,7 +46,7 @@ git clone https://github.com/paulomac1000/ha-mcp-readonly.git
 cd ha-mcp-readonly
 python -m venv venv
 source venv/bin/activate
-pip install -r requirements.txt
+python -m pip install -c constraints-ci.txt '.[dev]'
 ```
 
 ## Coding Standards
@@ -113,11 +123,17 @@ pytest tests/e2e/ -v
 pytest tests/unit/ tests/smoke/ tests/e2e/ -v
 ```
 
-### Coverage
+### Coverage and static gates
 
 ```bash
-pytest tests/unit/ --cov=tools --cov-report=html
+pytest tests/unit/ -q --cov=tools --cov=context_generator.core --cov=context_generator.config --cov=context_generator.runtime --cov=context_generator.provenance --cov=context_generator.snapshot --cov-report=term-missing
+ruff check .
+ruff format --check .
+mypy server.py tools/ context_generator/core.py context_generator/config.py context_generator/runtime.py context_generator/provenance.py context_generator/snapshot.py scripts/verify_runtime_endpoints.py --strict
+bandit -r server.py tools/ context_generator/ ha_graph/ -ll
 ```
+
+The legacy analyzer/formatter and graph modules have a deliberately scoped mypy override documented in `docs/testing-guidelines.md`; do not extend that exemption to new code.
 
 ## Release Checklist
 

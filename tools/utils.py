@@ -150,12 +150,26 @@ def make_ha_request(
     last_code = "HTTP_ERROR"
     last_retryable = True
 
+    # The invocation kernel exposes one absolute deadline for queueing and
+    # execution. Nested HTTP requests must not start a retry that cannot finish
+    # inside that same budget.
+    from tools.invocation import remaining_budget_seconds
+
     for attempt in range(retries):
+        remaining = remaining_budget_seconds()
+        if remaining is not None and remaining <= 0:
+            return {
+                "success": False,
+                "error": "Invocation deadline exceeded",
+                "error_code": "TIMEOUT",
+                "retryable": True,
+            }
+        request_timeout = timeout if remaining is None else max(0.001, min(timeout, remaining))
         try:
             if method == "POST":
-                response = requests.post(url, headers=headers, json=data, timeout=timeout)
+                response = requests.post(url, headers=headers, json=data, timeout=request_timeout)
             else:
-                response = requests.get(url, headers=headers, timeout=timeout)
+                response = requests.get(url, headers=headers, timeout=request_timeout)
 
             response.raise_for_status()
 
@@ -177,7 +191,13 @@ def make_ha_request(
                 last_code = "HTTP_ERROR"
                 last_retryable = True
             if attempt < retries - 1:
-                time.sleep(backoff * (2**attempt))
+                sleep_for = backoff * (2**attempt)
+                remaining = remaining_budget_seconds()
+                if remaining is not None:
+                    if remaining <= sleep_for:
+                        break
+                    sleep_for = min(sleep_for, remaining)
+                time.sleep(sleep_for)
 
     # ``error`` stays a string for backward compatibility; ``error_code`` and
     # ``retryable`` are the structured (extended error contract) siblings.

@@ -10,6 +10,7 @@ import re
 from pathlib import Path
 from typing import Any
 
+from tools.security import PathPolicy, SecurityBoundaryError
 from tools.utils import _error_response, _success_response, create_error_response
 
 _logger = logging.getLogger(__name__)
@@ -35,104 +36,45 @@ BINARY_EXTENSIONS: set[str] = {
 
 
 class SecurityContext:
-    """
-    Validate filesystem paths against an allowlist to block traversal attempts.
-    Patterns follow mcp-filesystem-python without importing the vendor package.
-    """
+    """Compatibility facade over the shared fail-closed path policy."""
 
     def __init__(
         self,
         allowed_directories: list[Path],
         max_file_size: int = 10 * 1024 * 1024,
         max_depth: int = 10,
-    ):
-        """
-        Args:
-            allowed_directories: List of allowed directories for browsing.
-            max_file_size: Maximum file size in bytes (default 10MB).
-            max_depth: Maximum directory depth allowed for traversal.
-        """
-        self.allowed_directories = [d.resolve() for d in allowed_directories]
+    ) -> None:
+        self.allowed_directories = [
+            d.expanduser().resolve(strict=False) for d in allowed_directories
+        ]
         self.max_file_size = max_file_size
         self.max_depth = max_depth
+        self._policy = PathPolicy.from_paths(
+            self.allowed_directories,
+            max_file_size=max_file_size,
+            max_depth=max_depth,
+        )
 
     def validate_path(self, path: str | Path) -> Path:
-        """
-        Validate the path against the allowlist and guard against traversal.
-
-        Raises:
-            PermissionError: If the path is outside the allowlist or contains traversal.
-        """
-        # SECURITY: Block path traversal attempts before any processing
-        path_str = str(path)
-
-        # Block common traversal patterns
-        if ".." in path_str:
-            raise PermissionError("Path traversal blocked: '..' not allowed in path")
-        if "~" in path_str:
-            raise PermissionError("Path traversal blocked: '~' not allowed in path")
-        if path_str.startswith("/"):
-            allowed_roots = [str(d) for d in self.allowed_directories]
-            if not any(path_str.startswith(root) for root in allowed_roots):
-                raise PermissionError("Access denied: path must be within allowed directories")
-
-        # Normalize to absolute Path
-        target = Path(path).resolve()
-
-        # SECURITY: Ensure target is strictly under allowed directories
-        # Using str().startswith() is not enough - we need to check parent relationship
-        is_allowed = False
-        for allowed in self.allowed_directories:
-            try:
-                # This will raise ValueError if target is not under allowed
-                target.relative_to(allowed)
-                is_allowed = True
-                break
-            except ValueError:
-                continue
-
-        if not is_allowed:
-            raise PermissionError("Access denied: path must be within /config")
-
-        # Validate file size when applicable
-        if target.is_file():
-            try:
-                size = target.stat().st_size
-                if size > self.max_file_size:
-                    raise PermissionError(
-                        f"File too large ({size / 1024 / 1024:.1f}MB > {self.max_file_size / 1024 / 1024}MB limit): {target}"
-                    )
-            except FileNotFoundError:
-                raise PermissionError(f"File not found: {target}")
-
-        # Validate depth relative to the allowlisted base
         try:
-            base_dir = next(a for a in self.allowed_directories if str(target).startswith(str(a)))
-            rel_path = target.relative_to(base_dir)
-            if len(rel_path.parts) > self.max_depth:
-                raise PermissionError(
-                    f"Path too deep (depth {len(rel_path.parts)} > {self.max_depth} limit): {target}"
-                )
-        except ValueError:
-            raise PermissionError(f"Path validation failed: {target}")
+            return self._policy.resolve(path)
+        except SecurityBoundaryError as exc:
+            raise PermissionError(str(exc)) from exc
 
-        return target
+    def validate_text_file(self, path: str | Path) -> Path:
+        try:
+            return self._policy.resolve(path, require_file=True, require_text=True)
+        except SecurityBoundaryError as exc:
+            raise PermissionError(str(exc)) from exc
 
     def is_binary_file(self, path: Path) -> bool:
-        """Check if a file is binary based on extension and magic numbers."""
-        if path.suffix.lower() in BINARY_EXTENSIONS:
+        if path.suffix.casefold() in BINARY_EXTENSIONS:
             return True
-
-        # Basic magic number and null-byte detection for safety
         try:
-            with open(path, "rb") as f:
-                header = f.read(16)
-                if b"\x00" in header:
-                    return True
-        except Exception:
-            pass
-
-        return False
+            with path.open("rb") as handle:
+                return b"\x00" in handle.read(4096)
+        except OSError:
+            return True
 
 
 # Global security context – restricted to Home Assistant config only
@@ -176,15 +118,16 @@ def _do_list_directory(path: str, max_entries: int) -> dict[str, Any]:
         if len(entries) >= max_entries:
             break
         try:
-            stat = entry.stat()
+            safe_entry = SECURITY_CONTEXT.validate_path(entry)
+            stat = safe_entry.stat()
             entries.append(
                 {
                     "name": entry.name,
-                    "type": "directory" if entry.is_dir() else "file",
-                    "size_bytes": stat.st_size if entry.is_file() else None,
+                    "type": "directory" if safe_entry.is_dir() else "file",
+                    "size_bytes": stat.st_size if safe_entry.is_file() else None,
                     "modified_timestamp": stat.st_mtime,
-                    "is_binary": SECURITY_CONTEXT.is_binary_file(entry)
-                    if entry.is_file()
+                    "is_binary": SECURITY_CONTEXT.is_binary_file(safe_entry)
+                    if safe_entry.is_file()
                     else False,
                 }
             )
@@ -206,7 +149,7 @@ def _do_list_directory(path: str, max_entries: int) -> dict[str, Any]:
 def _do_read_file(file_path: str, max_lines: int, offset: int) -> dict[str, Any]:
     """Read a text file with allowlist validation and size limits."""
     try:
-        target = SECURITY_CONTEXT.validate_path(file_path)
+        target = SECURITY_CONTEXT.validate_text_file(file_path)
     except PermissionError as e:
         return create_error_response("ACCESS_DENIED", str(e), retryable=False)
 
@@ -298,10 +241,18 @@ def _do_search_files(pattern: str, search_path: str, max_results: int) -> dict[s
     results: list[dict[str, Any]] = []
     files_searched = 0
 
-    for root, dirs, files in os.walk(target):
+    for root, dirs, files in os.walk(target, followlinks=False):
         if root.count(os.sep) - str(target).count(os.sep) > SECURITY_CONTEXT.max_depth:
             dirs[:] = []
             continue
+        safe_dirs: list[str] = []
+        for dirname in dirs:
+            try:
+                SECURITY_CONTEXT.validate_path(Path(root) / dirname)
+            except PermissionError:
+                continue
+            safe_dirs.append(dirname)
+        dirs[:] = safe_dirs
 
         for filename in files:
             files_searched += 1
@@ -309,6 +260,10 @@ def _do_search_files(pattern: str, search_path: str, max_results: int) -> dict[s
                 break
 
             filepath = Path(root) / filename
+            try:
+                filepath = SECURITY_CONTEXT.validate_text_file(filepath)
+            except PermissionError:
+                continue
             if SECURITY_CONTEXT.is_binary_file(filepath):
                 continue
             try:
@@ -356,8 +311,20 @@ def _do_search_files(pattern: str, search_path: str, max_results: int) -> dict[s
 # =============================================================================
 
 
-def register_filesystem_tools(mcp) -> None:  # type: ignore[no-untyped-def]
-    """Register filesystem tools on the MCP server with allowlist enforcement."""
+def register_filesystem_tools(mcp, config_path: str | None = None) -> None:  # type: ignore[no-untyped-def]
+    """Register filesystem tools on the MCP server with allowlist enforcement.
+
+    When ``config_path`` is provided, the security context is rebuilt around it
+    so the generic filesystem tools honor the configured Home Assistant root
+    instead of the container-default ``/config``.
+    """
+    global SECURITY_CONTEXT
+    if config_path:
+        SECURITY_CONTEXT = SecurityContext(
+            allowed_directories=[Path(config_path)],
+            max_file_size=10 * 1024 * 1024,
+            max_depth=20,
+        )
 
     @mcp.tool()
     def list_directory(path: str = "/config", max_entries: int = 100) -> str:

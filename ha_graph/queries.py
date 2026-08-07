@@ -89,6 +89,7 @@ def entity_impact(index: GraphIndex, entity_id: str) -> dict[str, Any]:
         return {
             "entity_id": entity_id,
             "exists": False,
+            "risk": "low",
             "direct_impact": impact,
             "edges": [],
         }
@@ -154,7 +155,14 @@ def get_neighbors(
         ``nodes`` (list of node dicts), ``edges`` (list of edge dicts).
     """
     if node_id not in index.nodes:
-        return {"node_id": node_id, "found": False, "nodes": [], "edges": []}
+        return {
+            "node_id": node_id,
+            "found": False,
+            "depth": depth,
+            "direction": direction,
+            "nodes": [],
+            "edges": [],
+        }
 
     visited: set[str] = set()
     subgraph_nodes: dict[str, Any] = {}

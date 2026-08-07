@@ -227,10 +227,12 @@ class TestEntityImpact:
         assert impact["risk"] == "low"
 
     def test_nonexistent_entity(self, graph):
-        """Non-existent entity returns exists=False."""
+        """Non-existent entity returns exists=False with a stable shape."""
         impact = entity_impact(graph, "light.nonexistent")
         assert impact["exists"] is False
+        assert impact["risk"] == "low"
         assert impact["direct_impact"]["automations_triggered_by"] == []
+        assert impact["edges"] == []
 
     def test_impact_categorized_correctly(self, graph):
         """Impact categories group edges correctly."""
@@ -239,6 +241,12 @@ class TestEntityImpact:
         # hallway is controlled AND read by motion_light automation
         assert len(impact["direct_impact"]["automations_controlling"]) >= 1
         assert len(impact["direct_impact"]["automations_reading"]) >= 1
+
+    def test_script_control_is_categorized(self, graph):
+        """Entity controlled by a script lands in scripts_controlling."""
+        impact = entity_impact(graph, "light.living_room")
+        assert impact["exists"] is True
+        assert len(impact["direct_impact"]["scripts_controlling"]) >= 1
 
 
 class TestGetNeighbors:
@@ -260,9 +268,13 @@ class TestGetNeighbors:
         assert "automation:temp_alert" in node_ids
 
     def test_nonexistent_node(self, graph):
-        """Non-existent node returns found=False."""
-        result = get_neighbors(graph, "entity:nonexistent", depth=1)
+        """Non-existent node returns found=False with a stable shape."""
+        result = get_neighbors(graph, "entity:nonexistent", depth=1, direction="both")
         assert result["found"] is False
+        assert result["depth"] == 1
+        assert result["direction"] == "both"
+        assert result["nodes"] == []
+        assert result["edges"] == []
 
     def test_both_directions(self, graph):
         """Direction='both' returns both incoming and outgoing neighbors."""

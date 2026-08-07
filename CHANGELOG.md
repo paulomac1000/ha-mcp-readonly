@@ -1,9 +1,39 @@
 ---
-description: Release history for HA-MCP-Readonly following Keep a Changelog
-last_verified: 2026-06-01
+description: Release history for HA-MCP-Readonly following Keep a Changelog.
+doc_id: reference.ha-mcp-changelog
+type: reference
+status: active
+rigor: informative
+owners: [repository-maintainers]
+verification: Confirm release entries against signed tags, package metadata, and the release workflow for the named version.
 ---
 
 # Changelog
+
+## [Unreleased]
+
+### Changed
+
+- Added a fail-closed explicit capability manifest catalog and shared invocation policy for every exposed tool.
+- Made local stdio the default and authenticated Streamable HTTP the supported network transport.
+- Disabled the REST compatibility adapter and developer tools by default.
+- Hardened filesystem and artifact path containment, symlink handling, sensitive Home Assistant files, and atomic context publication.
+- Added official-client protocol tests, wheel inspection, clean-install smoke tests, and container construction from the tested wheel.
+- Switched the container to a non-root user and removed host-control socket assumptions.
+- Pinned CI tooling and the ai-skills documentation validator to immutable revisions.
+
+### Fixed
+
+- Generic filesystem tools now honor the configured `HA_CONFIG_PATH` instead of a hardcoded `/config` root; `.storage` and sensitive files remain blocked.
+- `search_config_by_params` gained a raw-text pre-filter and a realistic deadline, cutting large-config searches from ~23s to under 1s.
+- `get_blueprint_usage_summary` now collects blueprint instances in a single pass (9s → ~1.5s) and no longer exceeds its deadline under load.
+- `graph_entity_impact` and `graph_get_neighbors` now return stable shapes (`risk`, `depth`, `direction`) for entities and nodes absent from the graph index.
+
+### Tests
+
+- REST smoke/e2e suites now send the required bearer token and resolve parameter identifiers from the live server instead of hardcoded ids.
+- Integration tests drive the supported in-memory FastMCP client instead of private SDK registries, restoring 269+ tests against fastmcp 3.x.
+- Added unit tests for `tools/auth.py`, blueprint instance collection, the config search pre-filter, artifact/output containment, and graph not-found branches.
 
 All notable changes to this project will be documented in this file.
 

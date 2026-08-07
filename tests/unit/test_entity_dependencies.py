@@ -20,11 +20,15 @@ class TestGetEntityDependencies:
     """Tests for get_entity_dependencies()."""
 
     @pytest.fixture(autouse=True)
-    def setup(self, mock_mcp, config_path, ha_url, ha_token, mock_registry_data):
+    def setup(self, mock_mcp, config_path, ha_url, ha_token, mock_registry_data, monkeypatch):
         """Setup test fixtures."""
         self.mock_mcp = mock_mcp
         self.config_path = config_path
         self.mock_registry_data = mock_registry_data
+        monkeypatch.setattr(
+            "tools.entity_dependencies.make_ha_request",
+            lambda *args, **kwargs: {"success": False, "error": "offline unit test"},
+        )
 
         # Sample automation YAML content
         self.automations_yaml = """
