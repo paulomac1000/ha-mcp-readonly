@@ -974,8 +974,10 @@ def _probe_network_transport() -> None:
 
 def main() -> None:
     validate_runtime_config()
-    _initialize_runtime_health()
+    # Build the registered catalog first, then evaluate dependency health so
+    # runtime activation can reduce the supported deployment profile.
     server = get_mcp_server()
+    _initialize_runtime_health()
     if not HA_TOKEN:
         _logger.warning("HA_TOKEN is not set; Home Assistant API operations will fail closed")
     if RUN_TESTS_ON_STARTUP and not run_startup_tests():

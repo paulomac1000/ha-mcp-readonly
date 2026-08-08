@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify the real liveness, REST, context, and Streamable HTTP MCP boundaries."""
+"""Verify liveness, authenticated REST, context, and Streamable HTTP MCP parity."""
 
 from __future__ import annotations
 
@@ -79,13 +79,10 @@ def verify_health() -> None:
     assert status == 200 and live.get("status") == "live", live
     status, ready = _json(f"{HEALTH_URL}/ready")
     assert status == 200 and ready.get("status") == "ready", ready
-    status, detailed = _json(f"{HEALTH_URL}/health")
-    assert status == 200, detailed
-    assert "invocations" not in detailed, "public health must not expose usage profiling"
-    components = detailed.get("components")
-    assert isinstance(components, dict)
-    for required in ("catalog", "transport", "filesystem", "backend", "rest"):
-        assert required in components, (required, components)
+    status, public = _json(f"{HEALTH_URL}/health")
+    assert status == 200, public
+    assert set(public) <= {"status", "version"}, public
+    assert "components" not in public and "component_details" not in public, public
 
 
 def verify_rest(strict: bool) -> dict[str, Any]:
@@ -93,26 +90,33 @@ def verify_rest(strict: bool) -> dict[str, Any]:
     assert status == 401, unauthorized
 
     status, health = _json(f"{REST_URL}/api/health")
-    assert status == 200 and "components" in health, health
+    assert status == 200, health
+    assert set(health) <= {"status", "version"}, health
+    status, details_unauthorized = _json(f"{REST_URL}/api/health/details")
+    assert status == 401, details_unauthorized
+    status, details = _json(f"{REST_URL}/api/health/details", token=TOKEN)
+    assert status == 200 and isinstance(details.get("components"), dict), details
 
     status, catalog = _json(f"{REST_URL}/api/tools?detail=full", token=TOKEN)
     assert status == 200, catalog
     tools = catalog.get("tools")
-    assert isinstance(tools, list) and len(tools) == 145, (
-        len(tools) if isinstance(tools, list) else tools
-    )
-    assert catalog.get("total") == 145
+    assert isinstance(tools, list) and tools, tools
+    assert catalog.get("total") == len(tools)
+    names = {str(tool["name"]) for tool in tools}
+    assert len(names) == len(tools), "REST catalog contains duplicate operation names"
+    assert "describe_ha_capabilities" in names
+    active_names = {str(tool["name"]) for tool in tools if tool.get("active") is True}
+    assert "describe_ha_capabilities" in active_names
 
     status, openapi = _json(f"{REST_URL}/api/openapi.json", token=TOKEN)
     assert status == 200
     paths = openapi.get("paths")
     assert isinstance(paths, dict)
     for tool in tools:
-        name = tool["name"]
+        name = str(tool["name"])
         assert f"/api/tools/{name}" in paths
         manifest = tool.get("manifest")
         assert isinstance(manifest, dict)
-        assert manifest.get("active_state") == "active"
         assert manifest.get("operation_kind") == "read"
         assert manifest.get("retryable") is False
         concurrency = manifest.get("concurrency")
@@ -120,9 +124,28 @@ def verify_rest(strict: bool) -> dict[str, Any]:
         if strict:
             m_status, m_payload = _json(f"{REST_URL}/api/tools/{name}/manifest", token=TOKEN)
             s_status, s_payload = _json(f"{REST_URL}/api/tools/{name}/schema", token=TOKEN)
-            assert m_status == 200 and m_payload.get("manifest", {}).get("id") == name
+            runtime_manifest = m_payload.get("manifest", {})
+            assert m_status == 200 and runtime_manifest.get("id") == name
+            assert runtime_manifest.get("runtime_active") is (name in active_names)
             assert s_status == 200 and s_payload.get("name") == name
-    return {"tool_count": len(tools), "openapi_paths": len(paths)}
+
+    if "get_entity_state" not in active_names:
+        call_status, call_payload = _json(
+            f"{REST_URL}/api/tools/get_entity_state",
+            token=TOKEN,
+            method="POST",
+            payload={"entity_id": "sensor.ci_temperature"},
+        )
+        assert call_status == 503, call_payload
+        assert call_payload.get("error", {}).get("code") == "UNAVAILABLE_DEPENDENCY"
+
+    return {
+        "tool_count": len(tools),
+        "active_tool_count": len(active_names),
+        "tool_names": names,
+        "active_names": active_names,
+        "openapi_paths": len(paths),
+    }
 
 
 def verify_context() -> int:
@@ -134,8 +157,7 @@ def verify_context() -> int:
         timeout=10,
     )
     assert status == 202, start
-    task_id = start.get("task_id")
-    assert task_id
+    assert start.get("task_id")
     deadline = time.monotonic() + 90
     final: dict[str, Any] = {}
     while time.monotonic() < deadline:
@@ -161,7 +183,17 @@ def verify_context() -> int:
     return len(body)
 
 
-async def verify_mcp() -> None:
+def _tool_payload(result: Any) -> dict[str, Any]:
+    content = getattr(result, "content", None)
+    assert isinstance(content, list) and content
+    text = getattr(content[0], "text", None)
+    assert isinstance(text, str)
+    payload = json.loads(text)
+    assert isinstance(payload, dict)
+    return payload
+
+
+async def verify_mcp(rest_stats: dict[str, Any]) -> None:
     from fastmcp import Client
     from fastmcp.client.transports import StreamableHttpTransport
 
@@ -179,9 +211,29 @@ async def verify_mcp() -> None:
     )
     async with Client(transport, timeout=20) as client:
         tools = await client.list_tools()
-        assert len(tools) == 145
+        mcp_names = {tool.name for tool in tools}
+        assert mcp_names == rest_stats["tool_names"], {
+            "mcp_only": sorted(mcp_names - rest_stats["tool_names"]),
+            "rest_only": sorted(rest_stats["tool_names"] - mcp_names),
+            "mcp_count": len(mcp_names),
+            "rest_count": len(rest_stats["tool_names"]),
+        }
         result = await client.call_tool("describe_ha_capabilities", {})
         assert not result.is_error
+        payload = _tool_payload(result)
+        assert payload.get("success") is True, payload
+        active_count = int(payload["active_tool_count"])
+        assert active_count == len(rest_stats["active_names"]), payload
+        assert int(payload["tool_count"]) == active_count, payload
+        assert int(payload["supported_tool_count"]) >= len(mcp_names), payload
+        supported_rows = payload.get("tools")
+        assert isinstance(supported_rows, list)
+        capability_active = {
+            str(row["name"])
+            for row in supported_rows
+            if isinstance(row, dict) and row.get("runtime_active") is True
+        }
+        assert capability_active == rest_stats["active_names"]
 
 
 def self_check() -> None:
@@ -190,11 +242,11 @@ def self_check() -> None:
 
     manifests = get_all_manifests()
     assert len(manifests) >= 145
-    assert len(server.get_all_tools()) == 145
-    for name in server.get_all_tools():
+    registered = server.get_all_tools()
+    assert len(registered) >= 1
+    for name in registered:
         manifest = manifests[name]
         assert manifest["id"] == name
-        assert manifest["active_state"] == "active"
         assert manifest["operation_kind"] == "read"
         assert manifest["retryable"] is False
         assert manifest["concurrency"]["limit"] >= 1
@@ -216,8 +268,11 @@ def main() -> None:
     verify_health()
     stats = verify_rest(args.strict)
     context_bytes = verify_context()
-    asyncio.run(verify_mcp())
-    print(json.dumps({**stats, "context_bytes": context_bytes, "status": "ok"}, sort_keys=True))
+    asyncio.run(verify_mcp(stats))
+    printable = {
+        key: value for key, value in stats.items() if key not in {"tool_names", "active_names"}
+    }
+    print(json.dumps({**printable, "context_bytes": context_bytes, "status": "ok"}, sort_keys=True))
 
 
 if __name__ == "__main__":

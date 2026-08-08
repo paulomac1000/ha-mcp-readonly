@@ -159,17 +159,20 @@ def _config_entries(raw: dict[str, Any]) -> dict[str, Any]:
                 continue
             item = {key: row[key] for key in allowed if key in row}
             # Zone config entries contain geospatial configuration rather than credentials.
-            if row.get("domain") == "zone" and isinstance(row.get("data"), dict):
-                zone = row["data"]
-                item["data"] = {
-                    key: zone[key]
+            raw_data = row.get("data")
+            safe_data: dict[str, Any] = {}
+            if row.get("domain") == "zone" and isinstance(raw_data, dict):
+                safe_data = {
+                    key: raw_data[key]
                     for key in ("latitude", "longitude", "radius", "passive")
-                    if key in zone
+                    if key in raw_data
                 }
-            elif "data" in row:
-                # Make the omission explicit without exposing arbitrary integration
-                # credential/config payloads to the model-visible artifact.
-                item["data"] = "[REDACTED]"
+            if isinstance(raw_data, dict):
+                # Preserve the mapping shape expected by internal analyzers while
+                # exposing only a typed safe projection to the model artifact.
+                item["data"] = safe_data
+                if set(raw_data) - set(safe_data):
+                    item["data_redacted"] = True
             safe_rows.append(item)
     return _wrapper(raw, {"entries": safe_rows})
 
