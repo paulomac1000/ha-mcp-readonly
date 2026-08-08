@@ -5,13 +5,15 @@ import time
 import pytest
 
 from tools.invocation import InvocationError, InvocationKernel, Principal, principal_scope
-from tools.manifests import make_manifest, register_manifest
+from tools.manifests import get_all_manifests, make_manifest, register_manifest, set_active_tools
 
 
 def _register(name: str, **updates: object) -> None:
     manifest = make_manifest(name)
     manifest.update(updates)
+    active = set(get_all_manifests(active_only=True))
     register_manifest(name, manifest)
+    set_active_tools(active | {name})
 
 
 def test_missing_manifest_fails_closed() -> None:
