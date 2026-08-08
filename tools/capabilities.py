@@ -84,22 +84,22 @@ def _categorize_tool(name: str) -> str:
 
 
 def _do_describe_ha_capabilities() -> dict[str, Any]:
-    """Build the capability catalog from registered tool manifests. Zero I/O.
+    """Build the supported and active capability catalogs from governed manifests. Zero I/O.
 
-    Returns:
-        Dict with schema_version, server name, tools_version, supported
-        transports, tool_count, the sorted list of tool manifests, and
-        a categories dict grouping tools by category.
+    ``tool_count`` remains the compatibility field for the currently advertised
+    MCP catalog. ``supported_tool_count`` names the complete governed catalog,
+    including capabilities disabled by the active deployment profile.
     """
     supported_manifests = get_all_manifests(active_only=False)
-    active_manifests = get_all_manifests(active_only=True) if active_profile_initialized() else {}
-    inactive_reasons = get_inactive_reasons() if active_profile_initialized() else {}
+    initialized = active_profile_initialized()
+    active_manifests = get_all_manifests(active_only=True) if initialized else {}
+    inactive_reasons = get_inactive_reasons() if initialized else {}
     active_names = set(active_manifests)
     tools = []
     for manifest in supported_manifests.values():
         item = dict(manifest)
         name = str(item.get("name", ""))
-        runtime_active = name in active_names if active_profile_initialized() else None
+        runtime_active = name in active_names if initialized else None
         item["runtime_active"] = runtime_active
         if runtime_active is False:
             item["active_state"] = "inactive"
@@ -110,17 +110,17 @@ def _do_describe_ha_capabilities() -> dict[str, Any]:
 
     # Group supported tools by category; each entry exposes current activation.
     categories: dict[str, dict[str, Any]] = {}
-    for t in tools:
-        name = str(t.get("name", ""))
+    for tool in tools:
+        name = str(tool.get("name", ""))
         cat_name = _categorize_tool(name)
         if cat_name not in categories:
             categories[cat_name] = {"tool_count": 0, "tools": []}
         categories[cat_name]["tools"].append(
             {
                 "name": name,
-                "description": str(t.get("description", "")),
-                "active": t.get("runtime_active"),
-                "inactive_reason": t.get("inactive_reason"),
+                "description": str(tool.get("description", "")),
+                "active": tool.get("runtime_active"),
+                "inactive_reason": tool.get("inactive_reason"),
             }
         )
         categories[cat_name]["tool_count"] = len(categories[cat_name]["tools"])
@@ -129,18 +129,17 @@ def _do_describe_ha_capabilities() -> dict[str, Any]:
     if REST_API_ENABLED:
         transports.append("authenticated-rest-compatibility")
 
+    active_count = len(active_names) if initialized else len(tools)
     return {
         "schema_version": CAPABILITIES_SCHEMA_VERSION,
         "server": "HA-Observer",
         "tools_version": TOOLS_VERSION,
         "transports": transports,
-        "tool_count": len(tools),
+        "tool_count": active_count,
         "supported_tool_count": len(tools),
-        "active_profile_initialized": active_profile_initialized(),
-        "active_tool_count": len(active_names),
-        "inactive_tool_count": len(tools) - len(active_names)
-        if active_profile_initialized()
-        else None,
+        "active_profile_initialized": initialized,
+        "active_tool_count": active_count,
+        "inactive_tool_count": len(tools) - active_count if initialized else None,
         "tools": tools,
         "categories": categories,
     }
@@ -159,20 +158,18 @@ def register_capability_tools(mcp: Any) -> None:
 
     @mcp.tool()
     async def describe_ha_capabilities() -> str:
-        """Return the catalog of registered tools with their capability manifests.
+        """Return the supported catalog and active deployment profile.
 
         This is a zero-I/O introspection tool. It lets an AI agent inspect
-        every tool's risk level, side effects, determinism, latency and other
-        manifest metadata without invoking the tools themselves. Unlike the
-        REST-only manifest endpoint, this works over the MCP transport.
+        every governed capability's risk, side effects, activation state and
+        inactive reason without invoking the operation itself.
 
         Args:
             None.
 
         Returns:
-            JSON string with a ``success`` flag and a payload containing
-            ``schema_version``, ``tools_version``, supported ``transports``,
-            ``tool_count`` and the list of tool manifests.
+            JSON string with a ``success`` flag and a payload containing the
+            supported and active catalog counts plus per-tool manifests.
         """
         try:
             return _success_response(_do_describe_ha_capabilities())
