@@ -166,6 +166,10 @@ def _config_entries(raw: dict[str, Any]) -> dict[str, Any]:
                     for key in ("latitude", "longitude", "radius", "passive")
                     if key in zone
                 }
+            elif "data" in row:
+                # Make the omission explicit without exposing arbitrary integration
+                # credential/config payloads to the model-visible artifact.
+                item["data"] = "[REDACTED]"
             safe_rows.append(item)
     return _wrapper(raw, {"entries": safe_rows})
 

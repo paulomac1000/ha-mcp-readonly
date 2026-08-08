@@ -326,7 +326,10 @@ def get_mcp_server() -> FastMCP:
                 _MCP_SERVER = built
                 HEALTH_STATE["tool_count"] = len(_TOOL_CATALOG)
                 _set_health_component("catalog", "ready", tool_count=len(_TOOL_CATALOG))
-                _refresh_active_catalog()
+                # Composition is intentionally dependency-agnostic. Runtime startup
+                # applies dependency health and may reduce this supported catalog.
+                set_active_tools(set(_TOOL_CATALOG))
+                HEALTH_STATE["active_tool_count"] = len(_TOOL_CATALOG)
     return _MCP_SERVER
 
 
@@ -343,8 +346,12 @@ def get_tool_count() -> int:
     return len(get_all_tools())
 
 
-def _extract_fn(tool: Operation) -> Any:
-    return tool.fn
+def _extract_fn(tool: Any) -> Any | None:
+    """Return the application-owned callable without inspecting FastMCP internals."""
+    function = getattr(tool, "fn", None)
+    if callable(function):
+        return function
+    return tool if callable(tool) else None
 
 
 def _extract_desc(tool: Operation) -> str:
@@ -612,7 +619,9 @@ def create_rest_app(auth_token: str | None = None) -> Any:
         ready = bool(HEALTH_STATE.get("ready"))
         return JSONResponse(
             {"status": "ready" if ready else "not_ready", "version": __version__},
-            status_code=200 if ready else 503,
+            # `/ready` is the readiness gate. Public `/health` is deliberately
+            # minimal and liveness-like so it does not expose dependency detail.
+            status_code=200,
         )
 
     async def health_details(request: Request) -> JSONResponse:

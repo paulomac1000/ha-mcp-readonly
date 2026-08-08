@@ -161,12 +161,14 @@ def _do_read_file(file_path: str, max_lines: int, offset: int) -> dict[str, Any]
         return create_error_response("ACCESS_DENIED", str(e), retryable=False)
 
     if not target.is_file():
-        return create_error_response("INVALID_PARAM", f"Not a file: {target}", retryable=False)
+        return create_error_response(
+            "INVALID_PARAM", f"Path is not a regular file: {target}", retryable=False
+        )
 
     if SECURITY_CONTEXT.is_binary_file(target):
         return create_error_response(
             "UNSUPPORTED",
-            f"Binary file type not allowed: {target}. Use list_directory to explore this location",
+            f"Binary file type not allowlisted for reading: {target}. Use list_directory to explore this location",
             retryable=False,
         )
 
