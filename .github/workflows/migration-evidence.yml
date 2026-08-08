@@ -45,7 +45,8 @@ jobs:
             context_generator/runtime.py context_generator/provenance.py context_generator/snapshot.py \
             scripts/verify_runtime_endpoints.py --strict
           bandit -r server.py tools/ context_generator/ ha_graph/ -ll
-          pytest tests/unit tests/protocol -q
+          pytest tests/unit -q
+          pytest tests/protocol -q
       - name: Build and exercise exact wheel over stdio
         run: |
           python -m build --wheel --no-isolation
