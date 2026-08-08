@@ -255,25 +255,30 @@ jobs:
             "$IMAGE" -c "import server; assert server.get_tool_count() == 145"
       - name: Verify default image health configuration
         run: |
+          set -euo pipefail
           IMAGE=ha-mcp-readonly:${GITHUB_SHA}-${{ matrix.arch }}
+          NAME=ha-mcp-default-${{ matrix.arch }}
           docker run -dit --rm --platform linux/${{ matrix.arch }} \
-            --name ha-mcp-default-${{ matrix.arch }} \
-            -p 127.0.0.1:9091:9091 -e HA_CONFIG_PATH=/tmp "$IMAGE"
-          trap 'docker logs ha-mcp-default-${{ matrix.arch }}; docker stop ha-mcp-default-${{ matrix.arch }} || true' EXIT
-          python - <<'PY'
-          import time, urllib.request
-          for _ in range(60):
-              try:
-                  with urllib.request.urlopen('http://127.0.0.1:9091/ready', timeout=2) as response:
-                      assert response.status == 200
-                      break
-              except Exception:
-                  time.sleep(1)
-          else:
-              raise SystemExit('default container did not become ready')
-          PY
-          docker exec ha-mcp-default-${{ matrix.arch }} python -c \
-            "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9091/ready', timeout=3)"
+            --name "$NAME" -e HA_CONFIG_PATH=/tmp "$IMAGE"
+          trap 'docker logs "$NAME"; docker stop "$NAME" || true' EXIT
+          for _ in $(seq 1 60); do
+            STATUS="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}missing{{end}}' "$NAME")"
+            case "$STATUS" in
+              healthy) break ;;
+              unhealthy)
+                docker inspect --format '{{json .State.Health.Log}}' "$NAME"
+                exit 1
+                ;;
+              missing)
+                echo 'image has no Docker HEALTHCHECK' >&2
+                exit 1
+                ;;
+            esac
+            sleep 1
+          done
+          test "$(docker inspect --format '{{.State.Health.Status}}' "$NAME")" = healthy
+          docker exec "$NAME" python -c \
+            "import urllib.request; response=urllib.request.urlopen('http://127.0.0.1:9091/ready', timeout=3); assert response.status == 200"
       - name: Verify all runtime boundaries on the exact amd64 image
         if: matrix.arch == 'amd64'
         shell: bash
