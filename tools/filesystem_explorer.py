@@ -61,6 +61,13 @@ class SecurityContext:
         except SecurityBoundaryError as exc:
             raise PermissionError(str(exc)) from exc
 
+    def validate_metadata_path(self, path: str | Path) -> Path:
+        """Validate containment/sensitivity without hiding oversized files from listings."""
+        try:
+            return self._policy.resolve(path, check_file_size=False)
+        except SecurityBoundaryError as exc:
+            raise PermissionError(str(exc)) from exc
+
     def validate_text_file(self, path: str | Path) -> Path:
         try:
             return self._policy.resolve(path, require_file=True, require_text=True)
@@ -118,7 +125,7 @@ def _do_list_directory(path: str, max_entries: int) -> dict[str, Any]:
         if len(entries) >= max_entries:
             break
         try:
-            safe_entry = SECURITY_CONTEXT.validate_path(entry)
+            safe_entry = SECURITY_CONTEXT.validate_metadata_path(entry)
             stat = safe_entry.stat()
             entries.append(
                 {
@@ -149,7 +156,7 @@ def _do_list_directory(path: str, max_entries: int) -> dict[str, Any]:
 def _do_read_file(file_path: str, max_lines: int, offset: int) -> dict[str, Any]:
     """Read a text file with allowlist validation and size limits."""
     try:
-        target = SECURITY_CONTEXT.validate_text_file(file_path)
+        target = SECURITY_CONTEXT.validate_metadata_path(file_path)
     except PermissionError as e:
         return create_error_response("ACCESS_DENIED", str(e), retryable=False)
 
@@ -162,6 +169,11 @@ def _do_read_file(file_path: str, max_lines: int, offset: int) -> dict[str, Any]
             f"Binary file type not allowed: {target}. Use list_directory to explore this location",
             retryable=False,
         )
+
+    try:
+        target = SECURITY_CONTEXT.validate_text_file(target)
+    except PermissionError as e:
+        return create_error_response("ACCESS_DENIED", str(e), retryable=False)
 
     max_bytes = 5 * 1024 * 1024
     try:
@@ -326,8 +338,10 @@ def register_filesystem_tools(mcp, config_path: str | None = None) -> None:  # t
             max_depth=20,
         )
 
+    default_root = str(SECURITY_CONTEXT.allowed_directories[0])
+
     @mcp.tool()
-    def list_directory(path: str = "/config", max_entries: int = 100) -> str:
+    def list_directory(path: str = default_root, max_entries: int = 100) -> str:
         """[READ] List directory contents with allowlist validation.
 
         Args:
@@ -368,12 +382,12 @@ def register_filesystem_tools(mcp, config_path: str | None = None) -> None:  # t
             return _error_response(str(exc))
 
     @mcp.tool()
-    def search_files(pattern: str, search_path: str = "/config", max_results: int = 50) -> str:
+    def search_files(pattern: str, search_path: str = default_root, max_results: int = 50) -> str:
         """[READ] Search for files containing a text pattern (safe grep).
 
         Args:
             pattern: Pattern to search for (only safe characters allowed).
-            search_path: Directory to search (default /config).
+            search_path: Directory to search (default configured HA root).
             max_results: Maximum number of results (default 50).
 
         Returns:

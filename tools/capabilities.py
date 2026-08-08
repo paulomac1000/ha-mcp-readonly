@@ -12,7 +12,13 @@ from typing import Any
 
 from tools import TOOLS_VERSION
 from tools.constants import REST_API_ENABLED
-from tools.manifests import get_all_manifests, make_manifest, register_manifest
+from tools.manifests import (
+    active_profile_initialized,
+    get_all_manifests,
+    get_inactive_reasons,
+    make_manifest,
+    register_manifest,
+)
 from tools.utils import _error_response, _success_response
 
 _logger = logging.getLogger(__name__)
@@ -85,10 +91,24 @@ def _do_describe_ha_capabilities() -> dict[str, Any]:
         transports, tool_count, the sorted list of tool manifests, and
         a categories dict grouping tools by category.
     """
-    manifests = get_all_manifests(active_only=True)
-    tools = sorted(manifests.values(), key=lambda m: str(m.get("name", "")))
+    supported_manifests = get_all_manifests(active_only=False)
+    active_manifests = get_all_manifests(active_only=True) if active_profile_initialized() else {}
+    inactive_reasons = get_inactive_reasons() if active_profile_initialized() else {}
+    active_names = set(active_manifests)
+    tools = []
+    for manifest in supported_manifests.values():
+        item = dict(manifest)
+        name = str(item.get("name", ""))
+        runtime_active = name in active_names if active_profile_initialized() else None
+        item["runtime_active"] = runtime_active
+        if runtime_active is False:
+            item["active_state"] = "inactive"
+        if name in inactive_reasons:
+            item["inactive_reason"] = inactive_reasons[name]
+        tools.append(item)
+    tools.sort(key=lambda m: str(m.get("name", "")))
 
-    # Group tools by category
+    # Group supported tools by category; each entry exposes current activation.
     categories: dict[str, dict[str, Any]] = {}
     for t in tools:
         name = str(t.get("name", ""))
@@ -96,7 +116,12 @@ def _do_describe_ha_capabilities() -> dict[str, Any]:
         if cat_name not in categories:
             categories[cat_name] = {"tool_count": 0, "tools": []}
         categories[cat_name]["tools"].append(
-            {"name": name, "description": str(t.get("description", ""))}
+            {
+                "name": name,
+                "description": str(t.get("description", "")),
+                "active": t.get("runtime_active"),
+                "inactive_reason": t.get("inactive_reason"),
+            }
         )
         categories[cat_name]["tool_count"] = len(categories[cat_name]["tools"])
 
@@ -110,6 +135,12 @@ def _do_describe_ha_capabilities() -> dict[str, Any]:
         "tools_version": TOOLS_VERSION,
         "transports": transports,
         "tool_count": len(tools),
+        "supported_tool_count": len(tools),
+        "active_profile_initialized": active_profile_initialized(),
+        "active_tool_count": len(active_names),
+        "inactive_tool_count": len(tools) - len(active_names)
+        if active_profile_initialized()
+        else None,
         "tools": tools,
         "categories": categories,
     }
@@ -118,10 +149,13 @@ def _do_describe_ha_capabilities() -> dict[str, Any]:
 def register_capability_tools(mcp: Any) -> None:
     """Register the capability introspection tool on the MCP server."""
 
-    register_manifest(
-        "describe_ha_capabilities",
-        make_manifest("describe_ha_capabilities", timeout_ms=1000, latency="interactive"),
-    )
+    manifest = make_manifest("describe_ha_capabilities", timeout_ms=1000, latency="interactive")
+    manifest["extensions"]["target_binding"] = {
+        "kind": "deployment-resource",
+        "target": "runtime",
+        "revalidation": "per-invocation",
+    }
+    register_manifest("describe_ha_capabilities", manifest)
 
     @mcp.tool()
     async def describe_ha_capabilities() -> str:

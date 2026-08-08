@@ -28,6 +28,8 @@ class Principal:
     subject: str
     transport: str
     capabilities: frozenset[str]
+    targets: frozenset[str] = frozenset({"runtime", "home_assistant", "home_assistant_config"})
+    credential_id: str | None = None
 
 
 LOCAL_PRINCIPAL = Principal(
@@ -87,18 +89,37 @@ class InvocationKernel:
         # ThreadPoolExecutor itself has an unbounded queue. This semaphore bounds
         # running plus queued synchronous invocations.
         self._executor_capacity = threading.BoundedSemaphore(max_workers + queue_capacity)
-        self._locks: dict[str, threading.BoundedSemaphore] = {}
+        self._locks: dict[str, tuple[int, threading.BoundedSemaphore]] = {}
         self._locks_guard = threading.Lock()
 
     def _manifest(self, tool_name: str) -> dict[str, Any]:
-        from tools.manifests import get_manifest
+        from tools.manifests import get_manifest, inactive_reason, is_tool_active
 
         manifest = get_manifest(tool_name)
         if manifest is None:
             raise InvocationError("MANIFEST_MISSING", f"Tool '{tool_name}' has no manifest")
+        if not is_tool_active(tool_name):
+            reason = (
+                inactive_reason(tool_name) or "Capability is inactive in this deployment profile"
+            )
+            raise InvocationError("UNAVAILABLE_DEPENDENCY", reason)
         return manifest
 
-    def _authorize(self, tool_name: str, manifest: dict[str, Any]) -> None:
+    @staticmethod
+    def _declared_target(manifest: dict[str, Any]) -> str:
+        binding = manifest.get("extensions", {}).get("target_binding")
+        if not isinstance(binding, dict):
+            raise InvocationError("MANIFEST_INVALID", "Operation target binding is missing")
+        target = binding.get("target")
+        if not isinstance(target, str) or not target:
+            raise InvocationError(
+                "MANIFEST_INVALID", "Operation target binding has no stable target"
+            )
+        if binding.get("kind") != "deployment-resource":
+            raise InvocationError("MANIFEST_INVALID", "Unsupported target binding kind")
+        return target
+
+    def _authorize(self, tool_name: str, manifest: dict[str, Any]) -> str:
         required_scopes = {str(scope) for scope in manifest["authorization_scopes"]}
         principal = current_principal()
         missing = required_scopes - principal.capabilities
@@ -108,13 +129,84 @@ class InvocationKernel:
                 "FORBIDDEN",
                 f"Principal '{principal.subject}' lacks capability '{required}' for '{tool_name}'",
             )
+        target = self._declared_target(manifest)
+        if target not in principal.targets:
+            raise InvocationError(
+                "FORBIDDEN",
+                f"Principal '{principal.subject}' is not authorized for target '{target}'",
+            )
+        # deployment-resource bindings resolve to one immutable process target;
+        # re-reading the same manifest immediately before execution is the
+        # revalidation step and prevents transport adapters from substituting it.
+        if self._declared_target(self._manifest(tool_name)) != target:
+            raise InvocationError("TARGET_CHANGED", "Operation target changed during authorization")
+        return target
 
-    def _semaphore(self, tool_name: str, limit: int) -> threading.BoundedSemaphore:
+    def _concurrency_key(
+        self,
+        tool_name: str,
+        manifest: dict[str, Any],
+        target: str,
+        args: tuple[Any, ...],
+        kwargs: dict[str, Any],
+    ) -> str:
+        del args
+        scope = str(manifest["concurrency"]["scope"])
+        principal = current_principal()
+        if scope == "global":
+            return "global"
+        if scope == "capability":
+            return f"capability:{tool_name}"
+        if scope == "principal":
+            return f"principal:{principal.subject}"
+        if scope == "target":
+            return f"target:{target}"
+        if scope == "principal-target":
+            return f"principal-target:{principal.subject}:{target}"
+        if scope == "credential":
+            credential = principal.credential_id or principal.subject
+            return f"credential:{credential}"
+        if scope == "resource":
+            field = manifest.get("extensions", {}).get("concurrency_resource_argument")
+            if not isinstance(field, str) or field not in kwargs:
+                raise InvocationError(
+                    "MANIFEST_INVALID",
+                    "resource concurrency requires extensions.concurrency_resource_argument",
+                )
+            return f"resource:{target}:{kwargs[field]}"
+        if scope == "custom":
+            fields = manifest.get("extensions", {}).get("concurrency_key_fields")
+            if (
+                not isinstance(fields, list)
+                or not fields
+                or not all(isinstance(x, str) for x in fields)
+            ):
+                raise InvocationError(
+                    "MANIFEST_INVALID",
+                    "custom concurrency requires extensions.concurrency_key_fields",
+                )
+            try:
+                values = ":".join(str(kwargs[field]) for field in fields)
+            except KeyError as exc:
+                raise InvocationError(
+                    "INVALID_ARGUMENTS", f"Missing concurrency key argument: {exc.args[0]}"
+                ) from exc
+            return f"custom:{tool_name}:{values}"
+        raise InvocationError("MANIFEST_INVALID", f"Unsupported concurrency scope: {scope}")
+
+    def _semaphore(self, key: str, limit: int) -> threading.BoundedSemaphore:
         with self._locks_guard:
-            semaphore = self._locks.get(tool_name)
-            if semaphore is None:
+            existing = self._locks.get(key)
+            if existing is None:
                 semaphore = threading.BoundedSemaphore(limit)
-                self._locks[tool_name] = semaphore
+                self._locks[key] = (limit, semaphore)
+                return semaphore
+            existing_limit, semaphore = existing
+            if existing_limit != limit:
+                raise InvocationError(
+                    "MANIFEST_INVALID",
+                    f"Concurrency key '{key}' is declared with conflicting limits",
+                )
             return semaphore
 
     def enforce_final_result_size(self, tool_name: str, result: Any) -> None:
@@ -156,10 +248,11 @@ class InvocationKernel:
         **kwargs: Any,
     ) -> Any:
         manifest = self._manifest(tool_name)
-        self._authorize(tool_name, manifest)
+        target = self._authorize(tool_name, manifest)
         timeout = int(manifest["extensions"]["timeout_ms"]) / 1000
         deadline = time.monotonic() + timeout
-        semaphore = self._semaphore(tool_name, int(manifest["concurrency"]["limit"]))
+        concurrency_key = self._concurrency_key(tool_name, manifest, target, args, kwargs)
+        semaphore = self._semaphore(concurrency_key, int(manifest["concurrency"]["limit"]))
 
         if not semaphore.acquire(timeout=_remaining(deadline)):
             raise InvocationError("BUSY", f"Tool '{tool_name}' concurrency limit reached")
@@ -217,10 +310,11 @@ class InvocationKernel:
         **kwargs: Any,
     ) -> Any:
         manifest = self._manifest(tool_name)
-        self._authorize(tool_name, manifest)
+        target = self._authorize(tool_name, manifest)
         timeout = int(manifest["extensions"]["timeout_ms"]) / 1000
         deadline = time.monotonic() + timeout
-        semaphore = self._semaphore(tool_name, int(manifest["concurrency"]["limit"]))
+        concurrency_key = self._concurrency_key(tool_name, manifest, target, args, kwargs)
+        semaphore = self._semaphore(concurrency_key, int(manifest["concurrency"]["limit"]))
 
         acquire_task = asyncio.create_task(
             asyncio.to_thread(semaphore.acquire, True, _remaining(deadline))

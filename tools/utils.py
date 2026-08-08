@@ -123,11 +123,15 @@ def make_ha_request(
     method: str = "GET",
     data: dict[str, Any] | None = None,
     timeout: int = 10,
-    retries: int = 3,
+    retries: int = 1,
     backoff: float = 1.0,
 ) -> dict[str, Any]:
     """
-    Execute HTTP request to Home Assistant API with exponential-backoff retry.
+    Execute an HA API request. Automatic retries are disabled by default.
+
+    A caller may opt into multiple attempts only when its operation contract
+    explicitly permits retry and the request is safe to repeat. POST requests
+    are never retried by this shared helper.
 
     Returns ``{"success": True, "data": ...}`` on success,
     ``{"success": False, "error": "..."}`` on failure.
@@ -139,6 +143,12 @@ def make_ha_request(
             "error_code": "CONFIG_ERROR",
             "retryable": False,
         }
+    if retries < 1:
+        raise ValueError("retries must be at least 1")
+    if method.upper() == "POST" and retries != 1:
+        raise ValueError(
+            "POST retries require operation-specific handling and are not supported here"
+        )
 
     url = f"{ha_url}{endpoint}"
     headers = {

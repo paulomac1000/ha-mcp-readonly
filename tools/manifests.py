@@ -119,7 +119,8 @@ class ToolManifest(BaseModel):
 
 
 _TOOL_MANIFESTS: dict[str, dict[str, Any]] = {}
-_ACTIVE_TOOL_NAMES: frozenset[str] = frozenset()
+_ACTIVE_TOOL_NAMES: frozenset[str] | None = None
+_INACTIVE_REASONS: dict[str, str] = {}
 
 
 def _load_declared_manifests() -> None:
@@ -151,16 +152,43 @@ def get_manifest(name: str) -> dict[str, Any] | None:
 
 
 def get_all_manifests(*, active_only: bool = False) -> dict[str, dict[str, Any]]:
-    names = _ACTIVE_TOOL_NAMES if active_only and _ACTIVE_TOOL_NAMES else _TOOL_MANIFESTS.keys()
+    names: set[str]
+    if active_only and _ACTIVE_TOOL_NAMES is not None:
+        names = set(_ACTIVE_TOOL_NAMES)
+    else:
+        names = set(_TOOL_MANIFESTS)
     return {name: dict(_TOOL_MANIFESTS[name]) for name in names}
 
 
-def set_active_tools(tool_names: set[str]) -> None:
-    global _ACTIVE_TOOL_NAMES
+def get_inactive_reasons() -> dict[str, str]:
+    return dict(_INACTIVE_REASONS)
+
+
+def is_tool_active(name: str) -> bool:
+    """Return runtime activation; uninitialized profiles permit composition-time validation."""
+    return _ACTIVE_TOOL_NAMES is None or name in _ACTIVE_TOOL_NAMES
+
+
+def inactive_reason(name: str) -> str | None:
+    return _INACTIVE_REASONS.get(name)
+
+
+def active_profile_initialized() -> bool:
+    return _ACTIVE_TOOL_NAMES is not None
+
+
+def set_active_tools(tool_names: set[str], inactive_reasons: dict[str, str] | None = None) -> None:
+    global _ACTIVE_TOOL_NAMES, _INACTIVE_REASONS
     missing = sorted(tool_names - _TOOL_MANIFESTS.keys())
     if missing:
         raise RuntimeError("Missing explicit tool manifests: " + ", ".join(missing))
+    unknown_reasons = sorted(set(inactive_reasons or {}) - _TOOL_MANIFESTS.keys())
+    if unknown_reasons:
+        raise RuntimeError(
+            "Inactive reasons reference unknown manifests: " + ", ".join(unknown_reasons)
+        )
     _ACTIVE_TOOL_NAMES = frozenset(tool_names)
+    _INACTIVE_REASONS = dict(inactive_reasons or {})
 
 
 def _runtime_extensions(
@@ -223,7 +251,7 @@ def make_manifest(
         authorization_scopes=["ha.read"],
         concurrency=ConcurrencyPolicy(scope="capability", limit=8),
         max_response_bytes=2 * 1024 * 1024,
-        protocol_revisions=["2025-06-18"],
+        protocol_revisions=["2025-11-25"],
         extensions=_runtime_extensions(
             timeout_ms=timeout_ms,
             target="home_assistant",
@@ -259,7 +287,7 @@ def _mutation_manifest(
         ),
         concurrency=ConcurrencyPolicy(scope="target", limit=1),
         max_response_bytes=2 * 1024 * 1024,
-        protocol_revisions=["2025-06-18"],
+        protocol_revisions=["2025-11-25"],
         extensions={
             **_runtime_extensions(
                 timeout_ms=timeout_ms,

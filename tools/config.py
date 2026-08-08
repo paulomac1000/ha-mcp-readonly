@@ -38,17 +38,30 @@ def _load_yaml_file_internal(file_path: str, config_path: str) -> Any | None:
 
 
 def _file_mentions_any(file_path: str, terms: list[str]) -> bool:
-    """Cheap raw-text pre-filter before a full YAML parse.
+    """Streaming raw-text pre-filter with no false negatives after 4 MiB.
 
-    A file that does not contain any search term as raw text cannot contain a
-    dictionary match for that term, so the expensive parse can be skipped.
+    The old implementation inspected only the first 4 MiB and could report a
+    complete negative result even when a match appeared later. This scans the
+    complete file in bounded chunks while keeping a small overlap so a term
+    split across chunk boundaries is still detected.
     """
+    if not terms:
+        return True
+    overlap = max(len(term) for term in terms) - 1
+    tail = ""
     try:
         with open(file_path, encoding="utf-8", errors="ignore") as handle:
-            text = handle.read(4 * 1024 * 1024)
+            while True:
+                chunk = handle.read(1024 * 1024)
+                if not chunk:
+                    return False
+                text = tail + chunk
+                if any(term in text for term in terms):
+                    return True
+                tail = text[-overlap:] if overlap > 0 else ""
     except OSError:
+        # Fail open to the full YAML parser when the cheap filter cannot read.
         return True
-    return any(term in text for term in terms)
 
 
 def _sanitize_config(obj: Any) -> Any:
@@ -457,7 +470,10 @@ def _do_search_config_by_params(
             "file_pattern": file_pattern,
         },
         "summary": {
-            "files_searched": len(search_files),
+            "files_discovered": len(search_files),
+            "files_searched": len(bounded_files),
+            "search_truncated": len(search_files) > len(bounded_files),
+            "max_files": _SEARCH_MAX_FILES,
             "files_with_matches": len(results),
             "total_matches": sum(r["match_count"] for r in results),
         },

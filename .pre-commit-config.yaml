@@ -123,13 +123,14 @@ repos:
 
       # ── Docs ──
       - id: afds-docs
-        name: AFDS documentation validation
-        entry: bash -c 'curl -sS https://raw.githubusercontent.com/paulomac1000/ai-skills/c6dc6b13b2dd40b6e087140cd071b45067d75b39/skills/afds-doc-writer/validate.py | python3 - AGENTS.md CONTRIBUTING.md SECURITY.md docs/documentation.md docs/testing-guidelines.md docs/ai-skills-adoption.md'
+        name: AFDS documentation validation (vendored pinned validator)
+        entry: python3 scripts/vendor/afds_validate_c6dc6b13.py AGENTS.md CONTRIBUTING.md SECURITY.md docs/documentation.md docs/testing-guidelines.md docs/ai-skills-adoption.md
         language: system
         pass_filenames: false
         always_run: true
         stages: [pre-commit]
         fail_fast: false
+
 
       # ── Tests ──
       - id: unit-tests

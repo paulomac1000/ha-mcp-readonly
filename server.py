@@ -33,12 +33,14 @@ from tools.invocation import (
     set_process_principal,
 )
 from tools.manifests import (
-    _inject_meta_envelope,
-    _inject_risk_prefixes,
-    auto_register_all_read_tools,
+    get_all_manifests,
+    get_inactive_reasons,
     get_manifest,
+    is_tool_active,
+    set_active_tools,
 )
 from tools.observability import RequestIdFilter
+from tools.operations import Operation, OperationMCPAdapter, OperationRegistry
 from tools.security import (
     PathPolicy,
     SecurityBoundaryError,
@@ -77,7 +79,7 @@ for _handler in logging.getLogger().handlers:
 _logger = logging.getLogger("ha-mcp")
 
 _MCP_SERVER: FastMCP | None = None
-_TOOL_CATALOG: dict[str, Any] = {}
+_TOOL_CATALOG: dict[str, Operation] = {}
 _SERVER_LOCK = threading.Lock()
 HEALTH_STATE: dict[str, Any] = {
     "status": "starting",
@@ -122,6 +124,7 @@ def _initialize_runtime_health() -> None:
         HEALTH_STATE["capability_degradation"] = {
             "ha.read": "Home Assistant token is not configured"
         }
+        _refresh_active_catalog()
         return
     try:
         import requests
@@ -146,6 +149,7 @@ def _initialize_runtime_health() -> None:
     else:
         _set_health_component("backend", "ready", configured=True, reachable=True)
         HEALTH_STATE.pop("capability_degradation", None)
+    _refresh_active_catalog()
 
 
 def _network_auth_provider() -> Any | None:
@@ -156,23 +160,6 @@ def _network_auth_provider() -> Any | None:
     from tools.auth import ConfiguredBearerTokenVerifier
 
     return ConfiguredBearerTokenVerifier(MCP_AUTH_TOKEN)
-
-
-def _extract_fastmcp_catalog(server: FastMCP) -> dict[str, Any]:
-    """Isolate SDK-private discovery behind one compatibility adapter."""
-    try:
-        components = server._local_provider._components
-        return {
-            key.removeprefix("tool:").removesuffix("@"): value
-            for key, value in components.items()
-            if key.startswith("tool:")
-        }
-    except AttributeError:
-        pass
-    try:
-        return dict(server._tool_manager._tools)  # type: ignore[attr-defined]
-    except AttributeError as exc:
-        raise RuntimeError("Unsupported FastMCP tool catalog API") from exc
 
 
 class RequestPrincipalMiddleware(Middleware):
@@ -190,12 +177,14 @@ class RequestPrincipalMiddleware(Middleware):
                     subject="local-mcp-client",
                     transport="stdio",
                     capabilities=frozenset({"ha.read", "filesystem.read", "artifact.read"}),
+                    targets=frozenset({"runtime", "home_assistant", "home_assistant_config"}),
                 )
                 if MCP_TRANSPORT == "stdio"
                 else Principal(
                     subject="unauthenticated-network-client",
                     transport=MCP_TRANSPORT,
                     capabilities=frozenset(),
+                    targets=frozenset(),
                 )
             )
         else:
@@ -205,6 +194,10 @@ class RequestPrincipalMiddleware(Middleware):
                 ),
                 transport=MCP_TRANSPORT,
                 capabilities=frozenset(access_token.scopes or []),
+                targets=frozenset({"runtime", "home_assistant", "home_assistant_config"}),
+                credential_id=str(
+                    access_token.client_id or access_token.subject or "configured-token"
+                ),
             )
         with principal_scope(principal):
             return await call_next(context)
@@ -220,6 +213,9 @@ def create_mcp_server() -> FastMCP:
         mask_error_details=True,
         strict_input_validation=True,
     )
+
+    registry = OperationRegistry()
+    operations = OperationMCPAdapter(server, registry)
 
     from tools.areas import register_area_tools
     from tools.automations import register_automation_tools
@@ -247,38 +243,74 @@ def create_mcp_server() -> FastMCP:
     from tools.states import register_state_tools
     from tools.storage import register_storage_tools
 
-    register_state_tools(server, HA_URL, HA_TOKEN, HA_CONFIG_PATH)
-    register_automation_tools(server, HA_CONFIG_PATH, HA_URL, HA_TOKEN)
-    register_script_tools(server, HA_CONFIG_PATH)
-    register_scene_tools(server, HA_CONFIG_PATH)
-    register_blueprint_tools(server, HA_CONFIG_PATH)
-    register_config_tools(server, HA_CONFIG_PATH, HA_URL, HA_TOKEN)
-    register_log_tools(server, HA_CONFIG_PATH, HA_URL, HA_TOKEN)
-    register_storage_tools(server, HA_CONFIG_PATH, HA_URL, HA_TOKEN)
-    register_diagnostics_tools(server, HA_URL, HA_TOKEN, HA_CONFIG_PATH)
-    register_health_reporter_tools(server, HA_URL, HA_TOKEN, HA_CONFIG_PATH)
-    register_filesystem_tools(server, HA_CONFIG_PATH)
-    register_graph_tools(server, HA_CONFIG_PATH, HA_URL, HA_TOKEN)
-    register_composite_tools(server, HA_CONFIG_PATH, HA_URL, HA_TOKEN)
+    register_state_tools(operations, HA_URL, HA_TOKEN, HA_CONFIG_PATH)
+    register_automation_tools(operations, HA_CONFIG_PATH, HA_URL, HA_TOKEN)
+    register_script_tools(operations, HA_CONFIG_PATH)
+    register_scene_tools(operations, HA_CONFIG_PATH)
+    register_blueprint_tools(operations, HA_CONFIG_PATH)
+    register_config_tools(operations, HA_CONFIG_PATH, HA_URL, HA_TOKEN)
+    register_log_tools(operations, HA_CONFIG_PATH, HA_URL, HA_TOKEN)
+    register_storage_tools(operations, HA_CONFIG_PATH, HA_URL, HA_TOKEN)
+    register_diagnostics_tools(operations, HA_URL, HA_TOKEN, HA_CONFIG_PATH)
+    register_health_reporter_tools(operations, HA_URL, HA_TOKEN, HA_CONFIG_PATH)
+    register_filesystem_tools(operations, HA_CONFIG_PATH)
+    register_graph_tools(operations, HA_CONFIG_PATH, HA_URL, HA_TOKEN)
+    register_composite_tools(operations, HA_CONFIG_PATH, HA_URL, HA_TOKEN)
     if DEV_TOOLS_ENABLED:
-        register_dev_tools(server, HA_URL, HA_TOKEN, HA_CONFIG_PATH)
-    register_config_entry_tools(server, HA_CONFIG_PATH, HA_URL, HA_TOKEN)
-    register_device_tools(server, HA_CONFIG_PATH, HA_URL, HA_TOKEN)
-    register_entity_dependency_tools(server, HA_CONFIG_PATH, HA_URL, HA_TOKEN)
-    register_entity_context_tools(server, HA_CONFIG_PATH, HA_URL, HA_TOKEN)
-    register_history_tools(server, HA_URL, HA_TOKEN)
-    register_area_tools(server, HA_CONFIG_PATH, HA_URL, HA_TOKEN)
-    register_integration_tools(server, HA_CONFIG_PATH, HA_URL, HA_TOKEN)
-    register_batch_operations_tools(server, HA_CONFIG_PATH, HA_URL, HA_TOKEN)
-    register_categories_tools(server, HA_CONFIG_PATH)
-    register_helpers_health_tools(server, HA_URL, HA_TOKEN)
-    register_capability_tools(server)
+        register_dev_tools(operations, HA_URL, HA_TOKEN, HA_CONFIG_PATH)
+    register_config_entry_tools(operations, HA_CONFIG_PATH, HA_URL, HA_TOKEN)
+    register_device_tools(operations, HA_CONFIG_PATH, HA_URL, HA_TOKEN)
+    register_entity_dependency_tools(operations, HA_CONFIG_PATH, HA_URL, HA_TOKEN)
+    register_entity_context_tools(operations, HA_CONFIG_PATH, HA_URL, HA_TOKEN)
+    register_history_tools(operations, HA_URL, HA_TOKEN)
+    register_area_tools(operations, HA_CONFIG_PATH, HA_URL, HA_TOKEN)
+    register_integration_tools(operations, HA_CONFIG_PATH, HA_URL, HA_TOKEN)
+    register_batch_operations_tools(operations, HA_CONFIG_PATH, HA_URL, HA_TOKEN)
+    register_categories_tools(operations, HA_CONFIG_PATH)
+    register_helpers_health_tools(operations, HA_URL, HA_TOKEN)
+    register_capability_tools(operations)
 
-    catalog = _extract_fastmcp_catalog(server)
-    auto_register_all_read_tools(set(catalog))
-    _inject_risk_prefixes(catalog)
-    _inject_meta_envelope(catalog)
+    registered = registry.names()
+    missing = sorted(name for name in registered if get_manifest(name) is None)
+    if missing:
+        raise RuntimeError("Missing explicit tool manifests: " + ", ".join(missing))
+    setattr(server, "_ha_operation_registry", registry)
     return server
+
+
+def _refresh_active_catalog() -> None:
+    """Derive the active profile from registered operations and dependency state."""
+    if not _TOOL_CATALOG:
+        return
+    components = HEALTH_STATE.get("components", {})
+    backend = components.get("backend")
+    filesystem = components.get("filesystem")
+    active: set[str] = set()
+    reasons: dict[str, str] = {}
+    for name in _TOOL_CATALOG:
+        manifest = get_manifest(name)
+        if manifest is None:
+            continue
+        binding = manifest.get("extensions", {}).get("target_binding", {})
+        target = binding.get("target") if isinstance(binding, dict) else None
+        if target == "runtime":
+            active.add(name)
+        elif target == "home_assistant_config":
+            if filesystem == "ready":
+                active.add(name)
+            else:
+                reasons[name] = "Home Assistant configuration root is unavailable"
+        elif target == "home_assistant":
+            if backend == "ready":
+                active.add(name)
+            else:
+                reasons[name] = "Home Assistant backend is unavailable"
+        else:
+            reasons[name] = "Unknown or unsupported target binding"
+    for name in set(get_all_manifests()) - set(_TOOL_CATALOG):
+        reasons.setdefault(name, "Capability is not registered in the active deployment profile")
+    set_active_tools(active, reasons)
+    HEALTH_STATE["active_tool_count"] = len(active)
 
 
 def get_mcp_server() -> FastMCP:
@@ -287,19 +319,23 @@ def get_mcp_server() -> FastMCP:
         with _SERVER_LOCK:
             if _MCP_SERVER is None:
                 built = create_mcp_server()
-                _TOOL_CATALOG = _extract_fastmcp_catalog(built)
+                registry = getattr(built, "_ha_operation_registry")
+                if not isinstance(registry, OperationRegistry):
+                    raise RuntimeError("MCP server has no application-owned operation registry")
+                _TOOL_CATALOG = registry.all()
                 _MCP_SERVER = built
                 HEALTH_STATE["tool_count"] = len(_TOOL_CATALOG)
                 _set_health_component("catalog", "ready", tool_count=len(_TOOL_CATALOG))
+                _refresh_active_catalog()
     return _MCP_SERVER
 
 
-def get_all_tools() -> dict[str, Any]:
+def get_all_tools() -> dict[str, Operation]:
     get_mcp_server()
     return dict(_TOOL_CATALOG)
 
 
-def get_tool(name: str) -> Any | None:
+def get_tool(name: str) -> Operation | None:
     return get_all_tools().get(name)
 
 
@@ -307,20 +343,12 @@ def get_tool_count() -> int:
     return len(get_all_tools())
 
 
-def _extract_fn(tool: Any) -> Any | None:
-    for attr in ("fn", "func", "_func", "function"):
-        function = getattr(tool, attr, None)
-        if callable(function):
-            return function
-    return tool if callable(tool) else None
+def _extract_fn(tool: Operation) -> Any:
+    return tool.fn
 
 
-def _extract_desc(tool: Any) -> str:
-    description = getattr(tool, "description", None)
-    if description:
-        return str(description)
-    function = _extract_fn(tool)
-    return (function.__doc__ or "").strip().split("\n", maxsplit=1)[0] if function else ""
+def _extract_desc(tool: Operation) -> str:
+    return tool.description.split("\n", maxsplit=1)[0].rstrip(".")
 
 
 def _signature_to_json_schema(function: Any) -> dict[str, Any]:
@@ -375,10 +403,7 @@ class HealthHandler(BaseHTTPRequestHandler):
             payload = {"status": "ready" if ready else "not_ready", "version": __version__}
             status = 200 if ready else 503
         else:
-            payload = {
-                **HEALTH_STATE,
-                "version": __version__,
-            }
+            payload = {"status": "ready" if ready else "not_ready", "version": __version__}
             status = 200 if ready else 503
         body = json.dumps(payload).encode("utf-8")
         self.send_response(status)
@@ -577,27 +602,45 @@ def create_rest_app(auth_token: str | None = None) -> Any:
                 subject="authenticated-rest-client",
                 transport="rest",
                 capabilities=frozenset({"ha.read", "filesystem.read", "artifact.read"}),
+                targets=frozenset({"runtime", "home_assistant", "home_assistant_config"}),
+                credential_id="configured-rest-token",
             )
             with principal_scope(principal):
                 return await call_next(request)
 
     async def health(request: Request) -> JSONResponse:
+        ready = bool(HEALTH_STATE.get("ready"))
+        return JSONResponse(
+            {"status": "ready" if ready else "not_ready", "version": __version__},
+            status_code=200 if ready else 503,
+        )
+
+    async def health_details(request: Request) -> JSONResponse:
         return JSONResponse(
             {
-                "status": "ready" if HEALTH_STATE.get("ready") else "not_ready",
+                "status": HEALTH_STATE.get("status", "unknown"),
                 "version": __version__,
-                "tool_count": get_tool_count(),
                 "ready": bool(HEALTH_STATE.get("ready")),
+                "tool_count": get_tool_count(),
+                "active_tool_count": HEALTH_STATE.get("active_tool_count", 0),
                 "components": HEALTH_STATE.get("components", {}),
-            },
-            status_code=200,
+                "component_details": HEALTH_STATE.get("component_details", {}),
+                "capability_degradation": HEALTH_STATE.get("capability_degradation", {}),
+            }
         )
 
     async def list_tools_endpoint(request: Request) -> JSONResponse:
         full = request.query_params.get("detail") == "full"
         entries = []
+        inactive_reasons = get_inactive_reasons()
         for name, tool in sorted(get_all_tools().items()):
-            entry: dict[str, Any] = {"name": name, "description": _extract_desc(tool)}
+            entry: dict[str, Any] = {
+                "name": name,
+                "description": _extract_desc(tool),
+                "active": is_tool_active(name),
+            }
+            if not entry["active"]:
+                entry["inactive_reason"] = inactive_reasons.get(name, "Capability is inactive")
             if full:
                 function = _extract_fn(tool)
                 entry["parameters"] = _signature_to_json_schema(function) if function else {}
@@ -677,7 +720,12 @@ def create_rest_app(auth_token: str | None = None) -> Any:
                 else await asyncio.to_thread(function, **arguments)
             )
         except InvocationError as exc:
-            status = {"FORBIDDEN": 403, "BUSY": 429, "DEADLINE_EXCEEDED": 504}.get(exc.code, 502)
+            status = {
+                "FORBIDDEN": 403,
+                "BUSY": 429,
+                "DEADLINE_EXCEEDED": 504,
+                "UNAVAILABLE_DEPENDENCY": 503,
+            }.get(exc.code, 502)
             return JSONResponse(
                 {"success": False, "error": {"code": exc.code, "message": str(exc)}},
                 status_code=status,
@@ -706,7 +754,13 @@ def create_rest_app(auth_token: str | None = None) -> Any:
                 {"success": False, "error": {"code": "NOT_FOUND", "message": "Manifest not found"}},
                 status_code=404,
             )
-        return JSONResponse({"success": True, "manifest": manifest})
+        runtime_manifest = dict(manifest)
+        runtime_manifest["runtime_active"] = is_tool_active(name)
+        if not runtime_manifest["runtime_active"]:
+            runtime_manifest["inactive_reason"] = get_inactive_reasons().get(
+                name, "Capability is inactive"
+            )
+        return JSONResponse({"success": True, "manifest": runtime_manifest})
 
     async def tool_schema(request: Request) -> JSONResponse:
         name = request.path_params["tool_name"]
@@ -803,9 +857,9 @@ def create_rest_app(auth_token: str | None = None) -> Any:
         paths: dict[str, Any] = {
             "/api/tools": {"get": {"summary": "List tools", "security": [{"bearerAuth": []}]}},
         }
-        for name in sorted(get_all_tools()):
+        for name, operation in sorted(get_all_tools().items()):
             paths[f"/api/tools/{name}"] = {
-                "post": {"summary": _extract_desc(get_tool(name)), "security": [{"bearerAuth": []}]}
+                "post": {"summary": _extract_desc(operation), "security": [{"bearerAuth": []}]}
             }
         return JSONResponse(
             {
@@ -821,6 +875,7 @@ def create_rest_app(auth_token: str | None = None) -> Any:
     routes = [
         Route("/health", health, methods=["GET"]),
         Route("/api/health", health, methods=["GET"]),
+        Route("/api/health/details", health_details, methods=["GET"]),
         Route("/api/tools", list_tools_endpoint, methods=["GET"]),
         Route("/api/tools/{tool_name}", call_tool_endpoint, methods=["POST"]),
         Route("/api/tools/{tool_name}/manifest", tool_manifest, methods=["GET"]),
@@ -927,6 +982,7 @@ def main() -> None:
                 subject="local-parent-process",
                 transport="stdio",
                 capabilities=frozenset({"ha.read", "filesystem.read", "artifact.read"}),
+                targets=frozenset({"runtime", "home_assistant", "home_assistant_config"}),
             )
         )
         _set_health_component("transport", "ready", transport="stdio")
@@ -938,6 +994,7 @@ def main() -> None:
             subject="unauthenticated-network-default",
             transport=MCP_TRANSPORT,
             capabilities=frozenset(),
+            targets=frozenset(),
         )
     )
     threading.Thread(

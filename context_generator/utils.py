@@ -15,6 +15,7 @@ import yaml
 from . import constants
 from .provenance import record_count
 from .runtime import current_config, current_provenance
+from .storage_policy import sanitize_model_visible_storage
 
 _logger = logging.getLogger(__name__)
 
@@ -142,7 +143,18 @@ def load_registry(name: str, use_cache: bool = True) -> dict:
         path = _config_path() / ".storage" / name
         if path.exists():
             with open(path, encoding="utf-8") as f:
-                data = json.load(f)
+                raw = json.load(f)
+                data = sanitize_model_visible_storage(name, raw)
+                if data is None:
+                    with _CACHE_LOCK:
+                        _CACHE_STATS["blocked"] += 1
+                    _record_source(
+                        f"storage:{name}",
+                        method="storage",
+                        status="skipped",
+                        reason="policy: .storage schema is not allowlisted for model-visible context",
+                    )
+                    return {}
                 with _CACHE_LOCK:
                     _registry_cache[cache_key] = data
                     _registry_cache_timestamps[cache_key] = now
@@ -182,7 +194,10 @@ def make_ha_request(
         "Content-Type": "application/json",
     }
 
-    for attempt in range(3):
+    # Context collection follows the same conservative no-automatic-retry
+    # contract as public READ operations. A failed source is recorded in the
+    # provenance matrix rather than being retried implicitly.
+    for attempt in range(1):
         try:
             if method == "GET":
                 response = requests.get(f"{ha_url}{endpoint}", headers=headers, timeout=timeout)
@@ -210,23 +225,19 @@ def make_ha_request(
             )
             return {"success": False, "error": reason}
         except requests.exceptions.Timeout:
-            if attempt < 2:
-                continue
-            reason = "Request timeout after 3 attempts"
+            reason = "Request timeout"
             _record_source(
                 source, method="rest", status="unavailable", reason=reason, requested=endpoint
             )
             return {"success": False, "error": reason}
         except Exception as e:
-            if attempt < 2:
-                continue
             reason = type(e).__name__
             _record_source(
                 source, method="rest", status="unavailable", reason=reason, requested=endpoint
             )
             return {"success": False, "error": str(e)}
 
-    return {"success": False, "error": "Max retries exceeded"}
+    return {"success": False, "error": "Request failed"}
 
 
 def load_yaml_file(filepath: str) -> Any:

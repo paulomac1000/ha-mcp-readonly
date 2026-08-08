@@ -111,6 +111,7 @@ class PathPolicy:
         require_file: bool = False,
         require_directory: bool = False,
         require_text: bool = False,
+        check_file_size: bool = True,
     ) -> Path:
         text = os.fspath(raw_path)
         if not text or "\x00" in text:
@@ -125,7 +126,7 @@ class PathPolicy:
         root = self._root_for(resolved)
         relative = resolved.relative_to(root)
         if len(relative.parts) > self.max_depth:
-            raise SecurityBoundaryError("Access denied: path exceeds maximum depth")
+            raise SecurityBoundaryError("Access denied: path is too deep and exceeds maximum depth")
         self._reject_sensitive(relative)
         self._reject_symlink_components(root, relative)
 
@@ -137,9 +138,9 @@ class PathPolicy:
             raise SecurityBoundaryError("Path is not a directory")
         if resolved.is_file():
             size = resolved.stat().st_size
-            if size > self.max_file_size:
+            if check_file_size and size > self.max_file_size:
                 raise SecurityBoundaryError(
-                    f"File exceeds maximum size ({size} > {self.max_file_size} bytes)"
+                    f"File too large: exceeds maximum size ({size} > {self.max_file_size} bytes)"
                 )
             if require_text and resolved.suffix.casefold() not in self.allowed_suffixes:
                 raise SecurityBoundaryError(

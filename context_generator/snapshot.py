@@ -10,6 +10,7 @@ from urllib.parse import urlencode
 
 from .config import GenerationConfig
 from .provenance import ProvenanceTracker, record_count, redact_sensitive
+from .storage_policy import SAFE_STORAGE_SANITIZERS, sanitize_model_visible_storage
 from .utils import make_ha_request
 
 _logger = logging.getLogger(__name__)
@@ -538,6 +539,21 @@ class ComprehensiveSnapshotCollector:
                     value = json.loads(raw)
                 except json.JSONDecodeError:
                     value = raw
+            if ".storage" in relative.parts:
+                projected = sanitize_model_visible_storage(path.name, value)
+                if projected is None:
+                    self.provenance.record(
+                        f"file:{relative.as_posix()}",
+                        method="filesystem",
+                        status="skipped",
+                        size_bytes=size,
+                        reason=(
+                            "policy: .storage schema is not on the positive model-visible allowlist; "
+                            f"allowed={','.join(sorted(SAFE_STORAGE_SANITIZERS))}"
+                        ),
+                    )
+                    continue
+                value = projected
             safe, redactions = redact_sensitive(value)
             output[relative.as_posix()] = safe
             total_bytes += size
