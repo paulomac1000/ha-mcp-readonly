@@ -20,10 +20,13 @@ def main() -> None:
                 "pull_request": args.pr,
                 "required_external_evidence": [
                     "successful exact-head CI jobs and artifact digests",
-                    "official mcp==2.0.0 stdio smoke of the exact wheel",
-                    "official mcp==2.0.0 Streamable HTTP smoke of the exact container",
+                    "official mcp==1.29.0 stdio smoke for negotiated 2025-11-25 on the exact wheel",
+                    "official mcp==1.29.0 Streamable HTTP smoke for negotiated 2025-11-25 on the exact container",
                     "real Home Assistant smoke, E2E, and integration suites",
                     "independent GitHub APPROVED review bound to the same revision",
+                ],
+                "unsupported_claims": [
+                    "Do not claim MCP 2026-07-28 compatibility for the FastMCP 3.x lane without separate exact-artifact evidence."
                 ],
                 "ai_skills_revision": "b54fc6b27ea80b36a70d5de73445970e17f55789",
                 "decision_before_external_evidence": "request-changes",
