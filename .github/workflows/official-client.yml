@@ -1,0 +1,128 @@
+name: Official MCP client
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: official-mcp-client-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+  MCP_EXPECTED_VERSION: "2.0.0"
+
+jobs:
+  official-client:
+    name: Official client exact artifacts
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
+        with:
+          python-version: "3.13"
+          cache: pip
+      - name: Build exact wheel
+        run: |
+          python -m pip install -c constraints-ci.txt build==1.5.0 setuptools==83.0.0 wheel==0.47.0
+          python -m build --wheel --no-isolation
+      - name: Install exact server wheel
+        run: |
+          python -m venv /tmp/ha-server
+          /tmp/ha-server/bin/python -m pip install dist/*.whl
+          /tmp/ha-server/bin/python -m pip check
+      - name: Install independent official MCP client
+        run: |
+          python -m venv /tmp/official-client
+          /tmp/official-client/bin/python -m pip install 'mcp==2.0.0'
+      - name: Official-client stdio verification
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        run: |
+          /tmp/official-client/bin/python scripts/verify_official_mcp_client.py stdio \
+            --command /tmp/ha-server/bin/ha-mcp-readonly --config-path /tmp
+      - name: Build exact container from the tested wheel
+        run: docker build -f Dockerfile.release -t ha-mcp-readonly:official-${GITHUB_SHA} .
+      - name: Start hardened Streamable HTTP container
+        run: |
+          mkdir -p /tmp/ha-config/.storage
+          printf 'homeassistant:\n  name: CI Home\n' > /tmp/ha-config/configuration.yaml
+          docker run -d --rm --name ha-mcp-official \
+            --read-only --cap-drop ALL --security-opt no-new-privileges \
+            --tmpfs /tmp:rw,noexec,nosuid,size=64m,mode=1777 \
+            -v /tmp/ha-config:/config:ro \
+            -p 127.0.0.1:9092:9092 \
+            -e MCP_TRANSPORT=http -e MCP_BIND_HOST=0.0.0.0 \
+            -e MCP_ALLOWED_HOSTS=127.0.0.1,localhost \
+            -e MCP_HTTP_STATELESS=1 \
+            -e MCP_AUTH_TOKEN=official-client-ci-token \
+            -e HA_URL=http://unreachable.invalid:8123 -e HA_TOKEN=ci-backend-token \
+            -e HA_CONFIG_PATH=/config \
+            ha-mcp-readonly:official-${GITHUB_SHA}
+          for _ in $(seq 1 100); do
+            if python - <<'PY'
+          import socket
+          try:
+              with socket.create_connection(('127.0.0.1', 9092), timeout=.2):
+                  pass
+          except OSError:
+              raise SystemExit(1)
+          PY
+            then break; fi
+            sleep .2
+          done
+      - name: Official-client Streamable HTTP verification
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        run: |
+          /tmp/official-client/bin/python scripts/verify_official_mcp_client.py http \
+            --url http://127.0.0.1:9092/mcp --token official-client-ci-token
+      - name: Verify HTTP hardening boundaries
+        run: |
+          python - <<'PY'
+          import json
+          import urllib.error
+          import urllib.request
+
+          url = 'http://127.0.0.1:9092/mcp'
+          request = urllib.request.Request(
+              url,
+              data=json.dumps({'jsonrpc':'2.0','id':1,'method':'initialize'}).encode(),
+              headers={'Content-Type':'application/json'},
+              method='POST',
+          )
+          try:
+              urllib.request.urlopen(request, timeout=5)
+          except urllib.error.HTTPError as exc:
+              assert exc.code == 401, exc.code
+          else:
+              raise AssertionError('unauthenticated MCP request was accepted')
+
+          oversized = urllib.request.Request(
+              url,
+              data=b'x' * (1024 * 1024 + 1),
+              headers={
+                  'Authorization':'Bearer official-client-ci-token',
+                  'Content-Type':'application/json',
+              },
+              method='POST',
+          )
+          try:
+              urllib.request.urlopen(oversized, timeout=5)
+          except urllib.error.HTTPError as exc:
+              assert exc.code == 413, exc.code
+          else:
+              raise AssertionError('oversized MCP request was accepted')
+          PY
+      - name: Container diagnostics
+        if: always()
+        run: docker logs ha-mcp-official || true
+      - name: Stop container
+        if: always()
+        run: docker stop ha-mcp-official || true
