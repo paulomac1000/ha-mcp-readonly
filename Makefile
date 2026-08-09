@@ -38,7 +38,7 @@ docker-build-run:
 	docker compose -f docker-compose.build.yml up -d
 
 docs-check:
-	python3 /var/apps/ai-skills/skills/afds-doc-writer/docs_validate.py --config afds_config.yaml docs/
+	python3 scripts/vendor/afds_validate_c6dc6b13.py AGENTS.md CONTRIBUTING.md SECURITY.md docs/documentation.md docs/testing-guidelines.md docs/ai-skills-adoption.md
 
 clean:
 	find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true

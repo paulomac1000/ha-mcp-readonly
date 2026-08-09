@@ -956,7 +956,7 @@
     ],
     "extensions": {
       "tool_version": "1.6.0",
-      "timeout_ms": 30000,
+      "timeout_ms": 45000,
       "data_classification": "internal",
       "target_binding": {
         "kind": "deployment-resource",
@@ -2058,7 +2058,7 @@
     ],
     "extensions": {
       "tool_version": "1.6.0",
-      "timeout_ms": 15000,
+      "timeout_ms": 45000,
       "data_classification": "internal",
       "target_binding": {
         "kind": "deployment-resource",
@@ -2464,7 +2464,7 @@
     ],
     "extensions": {
       "tool_version": "1.6.0",
-      "timeout_ms": 15000,
+      "timeout_ms": 30000,
       "data_classification": "internal",
       "target_binding": {
         "kind": "deployment-resource",
@@ -8148,7 +8148,7 @@
     ],
     "extensions": {
       "tool_version": "1.6.0",
-      "timeout_ms": 15000,
+      "timeout_ms": 60000,
       "data_classification": "sensitive",
       "target_binding": {
         "kind": "deployment-resource",

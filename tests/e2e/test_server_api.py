@@ -38,8 +38,10 @@ class TestRESTAdapter:
         response = requests.get(f"{REST_API_URL}/health", timeout=5)
         assert response.status_code == 200
         payload = response.json()
-        assert payload["status"] == "ready"
-        assert payload["tool_count"] > 100
+        assert payload["status"] in {"ready", "live"}
+        assert payload["version"]
+        details = _get("/api/health/details", timeout=5).json()
+        assert details["tool_count"] > 100
 
     def test_anonymous_catalog_is_rejected(self):
         response = requests.get(f"{REST_API_URL}/api/tools", timeout=5)

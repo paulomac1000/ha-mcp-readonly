@@ -8,6 +8,8 @@ owners: [repository-maintainers]
 verification: Run the complete local quality, unit, protocol, package, and runtime gates documented in this file.
 ---
 
+<!-- agents-md: waive context-budget reason="This file is the repository operating contract for a large read-only MCP server and must keep security, HA API, coverage, and gate rules visible in every session." -->
+
 # Agent Instructions — HA-MCP-Readonly
 
 > **Read before writing any tool, test, or documentation.**
@@ -78,8 +80,8 @@ Before writing any tool that calls the HA REST API:
    ```
    If it returns `404` or `401`, the endpoint is NOT accessible via LLAT.
 3. **Write unit tests** (mocked) in `tests/unit/` — minimum 80% coverage for new code
-4. **Add a smoke test** in `tests/smoke/` for basic functional verification
-5. **Add an integration test** in `tests/integration/` for real HA validation
+4. **Add a smoke test** in `tests/smoke/test_critical_tools.py` for basic functional verification
+5. **Add an integration test** in `tests/integration/test_integration.py` for real HA validation
 
 ### The `get_automation_traces` Incident (v1.1.0)
 
@@ -108,7 +110,9 @@ Home Assistant has **two separate authentication scopes** for its REST API:
 ### Before Implementing Any New HA API Tool
 
 1. **Verify the endpoint in official docs** first:
-   - [HA REST API docs](https://developers.home-assistant.io/docs/api/rest/)
+   - [HA REST API docs](https://developers.home-assistant.io/docs/api/rest/) — consult this
+     reference before implementing any tool that calls the HA REST API; it decides
+     whether an endpoint is public and therefore usable with a long-lived token.
    - If the endpoint is NOT listed there, it is **not a public REST API endpoint**
 
 2. **Test the endpoint with curl BEFORE writing any code:**
@@ -214,7 +218,7 @@ context_generator/
 - `.env` is gitignored — never commit credentials
 - `BLOCKED_REGISTRIES` prevents loading `auth`, `auth_provider.*`, `onboarding` registries
 - `sanitize_log_line()` redacts JWTs, tokens, passwords, IPs from log output
-- Path traversal blocked in `filesystem_explorer.py` — `..` and `~` rejected
+- Path traversal blocked in `tools/filesystem_explorer.py` — `..` and `~` rejected
 
 ### Risk Prefix (L2+)
 
@@ -237,8 +241,8 @@ context_generator/
 
 - All documentation files in `docs/` conform to AI-First Documentation Standard.
 - `afds_config.yaml` — project-specific validator configuration in repository root.
-- Validate docs: `python3 /var/apps/ai-skills/skills/afds-doc-writer/docs_validate.py --config afds_config.yaml docs/`
-- Reference: `/var/apps/ai-skills/skills/afds-doc-writer/docs_standards.md`
+- Validate docs: `python3 scripts/vendor/afds_validate_c6dc6b13.py AGENTS.md CONTRIBUTING.md SECURITY.md docs/documentation.md docs/testing-guidelines.md docs/ai-skills-adoption.md`
+- Reference: `scripts/vendor/afds_validate_c6dc6b13.py` (vendored validator pinned to the ai-skills revision in `ai-skills.lock.yaml`)
 
 ---
 
@@ -274,19 +278,44 @@ The context generator produces a comprehensive Markdown snapshot of the HA insta
 
 3. **`list_automations` response:** Must include `id` field (unique_id from automations.yaml) so clients can call `get_automation_code`.
 
-4. **Fixture resolution:** Pytest auto-discovers only `conftest.py` files, NOT `__init__.py`. Put test fixtures in `conftest.py`.
+4. **Fixture resolution:** Pytest auto-discovers only `conftest.py` files, not package
+   init markers. Put test fixtures in `conftest.py`.
 
-5. **Mock MCP pattern:** Unit tests use `MagicMock` with a custom `tool` decorator that stores tools in `mcp._tools[func.__name__]`. Tools are called via `await mock_mcp._tools["tool_name"](args)`.
+5. **Mock MCP pattern:** Unit tests use `MagicMock` with a custom `tool` decorator that stores tools in `mcp._tools[func.__name__]`. Tools are called by awaiting the stored tool with the arguments dict passed as keyword arguments.
 
 6. **Response format:** Every tool MUST return `{"success": True/False, ...}`. Some older tools (get_lovelace_dashboards, get_persons, get_zones, get_hacs_data, trigger_health_report) historically returned plain JSON — always verify with curl after writing a new tool.
 
 7. **Parameter naming consistency:** Use snake_case for all parameters. `read_file` uses `file_path` (not `path`), matching `read_config_file(file_path=...)`. Keep parameter names consistent between similar tools.
 
-8. **UI-created automations:** `_load_automations()` only reads `automations.yaml`. UI-created automations exist only in HA state engine. Tools like `get_automation_usage_stats` must fall back to searching `/api/states` for `automation.*` entities.
+8. **UI-created automations:** `_load_automations()` only reads the HA automations
+   YAML file. UI-created automations exist only in HA state engine. Tools like
+   `get_automation_usage_stats` must fall back to searching `/api/states` for
+   `automation.*` entities.
 
-9. **Smoke test response format check:** `tests/smoke/test_response_format.py` iterates all tools and verifies `success` field. New tools with required parameters must be added to `_REQUIRES_PARAMS` set or the test will fail.
+9. **Smoke test response format check:** `tests/smoke/test_response_format.py` iterates all tools and verifies the `success` field. Tools that require parameters return HTTP 400 `INVALID_ARGUMENTS` and are skipped automatically; heavy environment-dependent tools are listed in `_KNOWN_ENV_FAIL`.
 
 10. **Integration conftest:** New tool modules must be registered in `tests/integration/conftest.py` (import + `register_*_tools()` call) or integration tests won't find them.
+
+---
+
+## Definition of Done
+
+A change is complete only when:
+
+- Every new tool has a registered manifest, unit tests, and a smoke test, and the
+  manifest validates against the pinned canonical schema.
+- `ruff check .`, `ruff format --check .`, `mypy server.py tools/ --strict`,
+  and `bandit -r server.py tools/ context_generator/ ha_graph/ -ll` all pass.
+- `pytest tests/unit/ tests/protocol/ -q` passes and no test in the same process
+  depends on state mutated by another test.
+- Backend suites were executed against the running deployment when credentials and
+  a server are available: `pytest tests/smoke/ -q`, `pytest tests/e2e/ -q`,
+  `pytest tests/integration/ -q`.
+- `pre-commit run --all-files` passes without skips, and `CHANGELOG.md` records the
+  change under the unreleased section.
+
+Report the exact revision, the gates that were executed, skipped checks, and any
+residual risk before completion.
 
 ---
 

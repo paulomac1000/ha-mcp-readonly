@@ -11,7 +11,8 @@ verification: Compare the pinned revision with CI configuration and generate pro
 # ai-skills adoption status
 
 The repository currently targets the exact `paulomac1000/ai-skills` revision
-`c6dc6b13b2dd40b6e087140cd071b45067d75b39` for compatibility work. This is an
+`c5ba4091cd8a3043fe4ba9715a3bda96d62a05e4` (HEAD of the
+`fix/unified-contract-release-hardening` branch) for compatibility work. This is an
 immutable implementation target, not an approval claim. The upstream branch was
 not treated as a final acceptance authority while its own exact-head validation
 remained unresolved.

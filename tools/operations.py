@@ -128,7 +128,7 @@ def _augment_result(result: Any, tool_name: str, start: float) -> Any:
             KERNEL.enforce_final_result_size(tool_name, result)
             return result
         if isinstance(parsed, dict):
-            parsed["_meta"] = build_meta(tool_name, start)
+            parsed["_meta"] = _merged_meta(parsed.get("_meta"), build_meta(tool_name, start))
             encoded = json.dumps(parsed, indent=2, ensure_ascii=False)
             KERNEL.enforce_final_result_size(tool_name, encoded)
             return encoded
@@ -136,8 +136,22 @@ def _augment_result(result: Any, tool_name: str, start: float) -> Any:
         return result
     if isinstance(result, dict):
         enriched = dict(result)
-        enriched["_meta"] = build_meta(tool_name, start)
+        enriched["_meta"] = _merged_meta(result.get("_meta"), build_meta(tool_name, start))
         KERNEL.enforce_final_result_size(tool_name, enriched)
         return enriched
     KERNEL.enforce_final_result_size(tool_name, result)
     return result
+
+
+def _merged_meta(tool_meta: Any, envelope: dict[str, Any]) -> dict[str, Any]:
+    """Merge the invocation envelope with tool-provided metadata.
+
+    Tools may attach their own ``_meta`` (for example pagination truncation
+    markers). The envelope fields win on conflict, but tool fields such as
+    ``truncated`` and ``total_count`` must survive the augmentation.
+    """
+    if isinstance(tool_meta, dict):
+        merged = dict(tool_meta)
+        merged.update(envelope)
+        return merged
+    return envelope

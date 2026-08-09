@@ -23,10 +23,7 @@ def _list_tools():
 # Tools known to be slow or environment-dependent on a real HA instance.
 # They are exercised by dedicated tests; the envelope check skips them so a
 # single 504 in one heavy tool does not mask envelope regressions elsewhere.
-_KNOWN_ENV_FAIL = {
-    "diagnose_automation_aliases",
-    "diagnose_category_alias_mismatch",
-}
+_KNOWN_ENV_FAIL: set[str] = set()
 
 
 def _call_tool_safe(tool_name, **params):

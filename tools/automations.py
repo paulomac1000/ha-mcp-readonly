@@ -1870,7 +1870,7 @@ def _do_diagnose_automation_aliases(
                 "impact": impact,
             }
 
-            _compute_overlap(dup_entry, entries, yaml_by_alias.get(alias), config_path)
+            _compute_overlap(dup_entry, entries, yaml_by_alias.get(alias), config_path, yaml_autos)
             duplicates.append(dup_entry)
 
     result["duplicates"] = duplicates
@@ -1883,6 +1883,7 @@ def _compute_overlap(
     entries: list[dict[str, Any]],
     yaml_auto: dict[str, Any] | None,
     config_path: str,
+    yaml_autos: list[dict[str, Any]] | None = None,
 ) -> None:
     """Enrich a duplicate group with overlap score, trigger/action overlap, and stale detection."""
     if not yaml_auto:
@@ -1935,7 +1936,7 @@ def _compute_overlap(
     other_trigger_entities: set[str] = set()
     other_action_entities: set[str] = set()
 
-    other_autos = _load_automations(config_path)
+    other_autos = yaml_autos if yaml_autos is not None else _load_automations(config_path)
     for other in other_autos:
         other_alias = other.get("alias", "")
         if other_alias != dup_entry.get("alias"):

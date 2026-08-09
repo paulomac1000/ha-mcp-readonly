@@ -146,7 +146,13 @@ class TestContextGeneratorE2E:
         main()
         size2 = os.path.getsize(tmp_output_path)
 
-        assert abs(size1 - size2) < 500
+        # Live HA state changes between runs, so sizes naturally differ. The
+        # overwrite contract is that the document header appears exactly once;
+        # an append bug would duplicate it.
+        with open(tmp_output_path) as f:
+            content = f.read()
+        assert content.count("Home Assistant Context for AI") == 1
+        assert size1 > 0 and size2 > 0
 
     def test_empty_config_path_does_not_crash(self, tmp_output_path):
         """Empty config path should still generate without crashing."""

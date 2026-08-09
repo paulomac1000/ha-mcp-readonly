@@ -158,7 +158,7 @@ Tools are organized by category (75 shown in table below). All are **read-only**
 - **Registry pagination**: `limit` and `offset` parameters added to `get_entity_registry`, `get_device_registry`, `get_area_registry`, and `get_config_entries` for efficient scanning of large registries
 - **`data_quality` field**: Composite diagnostic tools (`investigate_entity`, `get_area_diagnostic`, `get_entity_with_automations`) now include a `data_quality` assessment flagging stale sensors, missing entities, and unavailable devices
 - **New pre-commit hooks**: `mypy strict`, `Bandit`, `Semgrep`, and AFDS documentation validation added to the pre-commit pipeline
-- **Test infrastructure**: 67 integration tests and 158 E2E tests for expanded real-HA and end-to-end coverage
+- **Test infrastructure**: 272 integration tests, 174 E2E tool-smoke cases, and 86 smoke tests for expanded real-HA and end-to-end coverage
 
 ## Client configuration
 

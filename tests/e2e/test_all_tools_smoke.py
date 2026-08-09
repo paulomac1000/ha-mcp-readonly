@@ -40,17 +40,7 @@ def _list_tools():
 # Marked xfail because the tool logic is correct but HA state / logs /
 # history API is not in the expected condition.
 # ---------------------------------------------------------------------------
-_TOOLS_ENV_FAIL = {
-    "diagnose_automation_aliases": "Full automation scan exceeds 120s timeout",
-}
-
-# ---------------------------------------------------------------------------
-# Tools that are inherently slow (>60s) on a real HA instance.
-# ---------------------------------------------------------------------------
-_TOOLS_SLOW = {
-    "diagnose_automation_aliases",
-    "diagnose_category_alias_mismatch",
-}
+_TOOLS_ENV_FAIL: dict[str, str] = {}
 
 # ---------------------------------------------------------------------------
 # Tools whose parameters require an entity/device that only exists on

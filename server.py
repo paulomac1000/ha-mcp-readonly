@@ -112,6 +112,22 @@ def _set_health_component(name: str, status: str, **details: Any) -> None:
         HEALTH_STATE["status"] = "ready" if HEALTH_STATE["ready"] else "not_ready"
 
 
+def _probe_backend() -> dict[str, Any]:
+    """Probe the Home Assistant API and return component detail entries."""
+    try:
+        import requests
+
+        response = requests.get(
+            f"{HA_URL.rstrip('/')}/api/",
+            headers={"Authorization": f"Bearer {HA_TOKEN}"},
+            timeout=2,
+        )
+        response.raise_for_status()
+    except Exception as exc:
+        return {"configured": True, "reachable": False, "reason": type(exc).__name__}
+    return {"configured": True, "reachable": True}
+
+
 def _initialize_runtime_health() -> None:
     config_root = Path(HA_CONFIG_PATH)
     filesystem_status = "ready" if config_root.is_dir() else "failed"
@@ -126,29 +142,24 @@ def _initialize_runtime_health() -> None:
         }
         _refresh_active_catalog()
         return
-    try:
-        import requests
-
-        response = requests.get(
-            f"{HA_URL.rstrip('/')}/api/",
-            headers={"Authorization": f"Bearer {HA_TOKEN}"},
-            timeout=2,
-        )
-        response.raise_for_status()
-    except Exception as exc:
-        _set_health_component(
-            "backend",
-            "degraded",
-            configured=True,
-            reachable=False,
-            reason=type(exc).__name__,
-        )
+    # The startup probe is bounded but retried: a container or network that is
+    # still warming up can fail a single two-second probe, and a one-shot
+    # failure must not permanently degrade every Home Assistant capability.
+    deadline = time.monotonic() + 10
+    detail = {"configured": True, "reachable": False, "reason": "startup probe not completed"}
+    while time.monotonic() < deadline:
+        detail = _probe_backend()
+        if detail["reachable"]:
+            break
+        time.sleep(1)
+    if detail["reachable"]:
+        _set_health_component("backend", "ready", **detail)
+        HEALTH_STATE.pop("capability_degradation", None)
+    else:
+        _set_health_component("backend", "degraded", **detail)
         HEALTH_STATE["capability_degradation"] = {
             "ha.read": "Home Assistant backend is unavailable"
         }
-    else:
-        _set_health_component("backend", "ready", configured=True, reachable=True)
-        HEALTH_STATE.pop("capability_degradation", None)
     _refresh_active_catalog()
 
 
@@ -972,6 +983,22 @@ def _probe_network_transport() -> None:
     _set_health_component("transport", "failed", port=MCP_PORT)
 
 
+def _reconcile_backend_health() -> None:
+    """Re-probe a degraded Home Assistant backend until it becomes reachable."""
+    interval = 15
+    while HEALTH_STATE.get("components", {}).get("backend") != "ready":
+        time.sleep(interval)
+        if not HA_TOKEN:
+            return
+        detail = _probe_backend()
+        if detail["reachable"]:
+            _set_health_component("backend", "ready", **detail)
+            HEALTH_STATE.pop("capability_degradation", None)
+            _refresh_active_catalog()
+            return
+        _set_health_component("backend", "degraded", **detail)
+
+
 def main() -> None:
     validate_runtime_config()
     # Build the registered catalog first, then evaluate dependency health so
@@ -980,6 +1007,10 @@ def main() -> None:
     _initialize_runtime_health()
     if not HA_TOKEN:
         _logger.warning("HA_TOKEN is not set; Home Assistant API operations will fail closed")
+    if HEALTH_STATE.get("components", {}).get("backend") == "degraded":
+        threading.Thread(
+            target=_reconcile_backend_health, daemon=True, name="backend-health-reconcile"
+        ).start()
     if RUN_TESTS_ON_STARTUP and not run_startup_tests():
         raise SystemExit("Startup tests failed")
     if HEALTH_SERVER_ENABLED:

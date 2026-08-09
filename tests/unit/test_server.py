@@ -66,7 +66,9 @@ def test_rest_invocation_uses_wrapped_kernel(client: TestClient) -> None:
     result = payload["result"]
     if isinstance(result, str):
         result = json.loads(result)
-    assert result["_meta"]["tool_version"] == "1.6.0"
+    from version import __version__
+
+    assert result["_meta"]["tool_version"] == __version__
 
 
 def test_rest_rejects_invalid_json_and_arguments(client: TestClient) -> None:
@@ -133,7 +135,7 @@ def test_sync_rest_tool_runs_off_event_loop(client: TestClient) -> None:
 
 def test_every_registered_tool_has_metadata_and_openapi_path(client: TestClient) -> None:
     names = sorted(server.get_all_tools())
-    assert len(names) == 145
+    assert len(names) == server.get_tool_count()
     for name in names:
         manifest = client.get(f"/api/tools/{name}/manifest", headers=AUTH)
         schema = client.get(f"/api/tools/{name}/schema", headers=AUTH)

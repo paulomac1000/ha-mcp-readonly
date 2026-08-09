@@ -9,6 +9,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+import tools.manifests as manifests_module
 from tests.fixtures import (
     MOCK_AREA_REGISTRY,
     MOCK_CONFIG_ENTRIES,
@@ -16,6 +17,26 @@ from tests.fixtures import (
     MOCK_ENTITY_REGISTRY,
     MOCK_SAMPLE_STATES,
 )
+
+
+@pytest.fixture(autouse=True)
+def _restore_manifest_state():
+    """Restore global manifest and active-profile state after every unit test.
+
+    Unit tests register synthetic manifests and mutate the active tool set
+    through ``tools.manifests`` module globals. Without restoration those
+    mutations leak into later tests in the same process (for example the
+    protocol suite), breaking counts and activation assertions.
+    """
+    snapshot = {
+        "_TOOL_MANIFESTS": dict(manifests_module._TOOL_MANIFESTS),
+        "_ACTIVE_TOOL_NAMES": manifests_module._ACTIVE_TOOL_NAMES,
+        "_INACTIVE_REASONS": dict(manifests_module._INACTIVE_REASONS),
+    }
+    yield
+    manifests_module._TOOL_MANIFESTS = snapshot["_TOOL_MANIFESTS"]
+    manifests_module._ACTIVE_TOOL_NAMES = snapshot["_ACTIVE_TOOL_NAMES"]
+    manifests_module._INACTIVE_REASONS = snapshot["_INACTIVE_REASONS"]
 
 
 @pytest.fixture

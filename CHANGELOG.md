@@ -10,34 +10,67 @@ verification: Confirm release entries against signed tags, package metadata, and
 
 # Changelog
 
-## [Unreleased]
+## [1.7.0] - 2026-08-09
+
+### Added — ai-skills Standard Alignment
+- Added `ai-skills.lock.yaml` binding this repository to the pinned
+  `paulomac1000/ai-skills` revision `c5ba4091` with per-skill content digests.
+- Re-pinned the CI documentation validator and the adoption target to the current
+  `fix/unified-contract-release-hardening` revision; the capability-manifest schema
+  and AFDS validator are unchanged between the old and new pins.
+- AGENTS.md now passes the `agents-md-architect` strict validation: explicit
+  completion contract (Definition of Done), reasoned context-budget waiver,
+  repository-relative references, and no path-like code spans.
+- Added a recorded real-Home-Assistant cassette test
+  (`tests/protocol/cassettes/recorded_ha_upstream.json`) that replays sanitized
+  real REST and WebSocket payloads through the snapshot collector, satisfying the
+  AGENTS.md requirement for recorded (not hand-crafted) upstream data.
+
+### Fixed — Real-Instance Defects Found by the Live Test Run
+- `diagnose_automation_aliases` no longer reloads the full automations file once
+  per duplicate group; it passes the already-loaded automations into
+  `_compute_overlap`. On a live 131-automation instance this cut the tool from
+  >120 seconds (where it silently starved the shared invocation pool) to ~4.5s.
+- `_augment_result` now merges the invocation envelope into tool-provided `_meta`
+  instead of overwriting it, preserving pagination markers such as `truncated`
+  and `total_count` on `get_entity_registry` and friends.
+- The backend health probe now retries for up to 10 seconds at startup and a
+  background reconciliation thread re-probes a degraded backend, so a transient
+  startup failure no longer permanently disables every `ha.read` capability.
+- `search_files`, `get_area_automation_summary`, `diagnose_energy_setup`,
+  `get_automation_conflicts` received realistic deadlines matching measured
+  cold latency on a live instance (5480-file config scans).
+- `Dockerfile` copied the built wheel to a directory instead of a filename,
+  fixing `Invalid wheel filename` when building the development image.
 
 ### Changed
-
-- Added a fail-closed explicit capability manifest catalog and shared invocation policy for every exposed tool.
-- Made local stdio the default and authenticated Streamable HTTP the supported network transport.
-- Disabled the REST compatibility adapter and developer tools by default.
-- Hardened filesystem and artifact path containment, symlink handling, sensitive Home Assistant files, and atomic context publication.
-- Added official-client protocol tests, wheel inspection, clean-install smoke tests, and container construction from the tested wheel.
-- Switched the container to a non-root user and removed host-control socket assumptions.
-- Pinned CI tooling and the ai-skills documentation validator to immutable revisions.
-
-### Fixed
-
-- Generic filesystem tools now honor the configured `HA_CONFIG_PATH` instead of a hardcoded `/config` root; `.storage` and sensitive files remain blocked.
-- `search_config_by_params` gained a raw-text pre-filter and a realistic deadline, cutting large-config searches from ~23s to under 1s.
-- `get_blueprint_usage_summary` now collects blueprint instances in a single pass (9s → ~1.5s) and no longer exceeds its deadline under load.
-- `graph_entity_impact` and `graph_get_neighbors` now return stable shapes (`risk`, `depth`, `direction`) for entities and nodes absent from the graph index.
+- Integration tests now build the MCP server through the production composition
+  root (`server.create_mcp_server()`) instead of hand-registering tools on a
+  bare FastMCP instance, exercising the operation registry, fail-closed
+  manifests, and invocation kernel against real Home Assistant.
+- The public `/health` endpoint is deliberately minimal (liveness only); the e2e
+  test now asserts tool counts through `/api/health/details`.
+- The e2e context-generator overwrite test asserts a single document header
+  instead of near-identical file sizes, which are inherently unstable on a live
+  instance.
+- Unit and protocol tests no longer hardcode the tool catalog size and an
+  autouse fixture restores `tools.manifests` global state, removing cross-test
+  pollution between suites.
+- Updated stale test counts in README and the response-format smoke skip set.
 
 ### Tests
 
-- REST smoke/e2e suites now send the required bearer token and resolve parameter identifiers from the live server instead of hardcoded ids.
-- Integration tests drive the supported in-memory FastMCP client instead of private SDK registries, restoring 269+ tests against fastmcp 3.x.
-- Added unit tests for `tools/auth.py`, blueprint instance collection, the config search pre-filter, artifact/output containment, and graph not-found branches.
+- Unit and protocol: 1195 passing, including the recorded-cassette contract test.
+- Smoke: 86 passing against the local container with live Home Assistant.
+- E2E: 174 passing against the local container with live Home Assistant.
+- Integration: 272 passing, 6 skipped (environment-dependent) against live
+  Home Assistant through the composition root.
 
 All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+
+## [1.6.0] - 2026-06-11
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [1.6.0] - 2026-06-11

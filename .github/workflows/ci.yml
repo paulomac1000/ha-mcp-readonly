@@ -61,7 +61,7 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v6
         with:
           repository: paulomac1000/ai-skills
-          ref: c6dc6b13b2dd40b6e087140cd071b45067d75b39
+          ref: c5ba4091cd8a3043fe4ba9715a3bda96d62a05e4
           path: .ai-skills
           persist-credentials: false
       - name: Validate governed documentation

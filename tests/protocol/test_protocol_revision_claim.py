@@ -14,7 +14,7 @@ async def test_negotiated_protocol_revision_is_manifest_claim() -> None:
         negotiated = client.initialize_result.protocolVersion
         tools = await client.list_tools()
     assert negotiated == "2025-11-25"
-    assert len(tools) == 145
+    assert len(tools) == server.get_tool_count()
     registered = {tool.name for tool in tools}
     manifests = get_all_manifests()
     for name in registered:
