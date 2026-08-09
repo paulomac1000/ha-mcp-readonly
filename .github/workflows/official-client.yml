@@ -37,10 +37,10 @@ jobs:
           python -m venv /tmp/ha-server
           /tmp/ha-server/bin/python -m pip install dist/*.whl
           /tmp/ha-server/bin/python -m pip check
-      - name: Install independent official MCP client
+      - name: Install independent official MCP client for the supported 2025-11-25 lane
         run: |
           python -m venv /tmp/official-client
-          /tmp/official-client/bin/python -m pip install 'mcp==2.0.0'
+          /tmp/official-client/bin/python -m pip install 'mcp==1.29.0'
       - name: Official-client stdio verification
         env:
           PYTHONPATH: ${{ github.workspace }}
