@@ -13,6 +13,8 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from mcp.client.streamable_http import streamable_http_client
 
+SUPPORTED_PROTOCOL_REVISION = "2025-11-25"
+
 
 def _is_error(result: Any) -> bool:
     return bool(getattr(result, "is_error", getattr(result, "isError", False)))
@@ -32,7 +34,15 @@ def _json_payload(result: Any) -> dict[str, Any]:
 
 
 async def _verify_session(session: ClientSession) -> None:
-    await session.initialize()
+    initialized = await session.initialize()
+    negotiated = getattr(initialized, "protocolVersion", None)
+    if negotiated is None:
+        negotiated = getattr(initialized, "protocol_version", None)
+    if negotiated != SUPPORTED_PROTOCOL_REVISION:
+        raise AssertionError(
+            f"protocol mismatch: {negotiated!r} != {SUPPORTED_PROTOCOL_REVISION!r}"
+        )
+
     listing = await session.list_tools()
     names = {tool.name for tool in listing.tools}
     if "describe_ha_capabilities" not in names:
@@ -50,8 +60,8 @@ async def _verify_session(session: ClientSession) -> None:
         )
     if payload.get("sdk", {}).get("family") != "fastmcp":
         raise AssertionError(payload.get("sdk"))
-    if not payload.get("protocol_versions"):
-        raise AssertionError("protocol versions missing from capability discovery")
+    if SUPPORTED_PROTOCOL_REVISION not in payload.get("protocol_versions", []):
+        raise AssertionError(payload.get("protocol_versions"))
 
     failure_seen = False
     try:
@@ -92,18 +102,11 @@ async def verify_stdio(command: str, command_args: list[str], config_path: str) 
 
 
 async def verify_http(url: str, token: str) -> None:
-    headers = {"Authorization": f"Bearer {token}"}
-    try:
-        import httpx2 as httpx_client  # type: ignore[import-not-found]
-    except ImportError:
-        import httpx as httpx_client  # type: ignore[no-redef]
+    import httpx
 
-    async with httpx_client.AsyncClient(headers=headers, timeout=20) as http_client:
-        try:
-            transport = streamable_http_client(url, http_client=http_client)
-        except TypeError:
-            transport = streamable_http_client(url, headers=headers)  # type: ignore[call-arg]
-        async with transport as streams:
+    headers = {"Authorization": f"Bearer {token}"}
+    async with httpx.AsyncClient(headers=headers, timeout=20) as http_client:
+        async with streamable_http_client(url, http_client=http_client) as streams:
             read, write = streams[0], streams[1]
             async with ClientSession(read, write) as session:
                 await _verify_session(session)
