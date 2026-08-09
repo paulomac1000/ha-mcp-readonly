@@ -1,0 +1,54 @@
+name: Apply HTTP admission patch once
+
+on:
+  push:
+    branches:
+      - agent/ai-skills-compliance-refactor
+
+permissions:
+  contents: write
+
+concurrency:
+  group: apply-http-admission-patch-once
+  cancel-in-progress: true
+
+jobs:
+  apply:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v6
+        with:
+          ref: agent/ai-skills-compliance-refactor
+          fetch-depth: 0
+          persist-credentials: true
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
+        with:
+          python-version: "3.13"
+          cache: pip
+      - name: Apply patch
+        run: python .github/patch_http_admission.py
+      - name: Install project
+        run: python -m pip install -c constraints-ci.txt '.[dev]'
+      - name: Normalize patch formatting
+        run: |
+          ruff check server.py tools/http_security.py tests/unit/test_http_security.py --fix
+          ruff format server.py tools/http_security.py tests/unit/test_http_security.py
+      - name: Verify patch
+        run: |
+          ruff check server.py tools/http_security.py tests/unit/test_http_security.py
+          ruff format --check server.py tools/http_security.py tests/unit/test_http_security.py
+          mypy server.py tools/http_security.py --strict
+          pytest tests/unit/test_http_security.py -q
+          pytest tests/protocol/test_mcp_protocol.py tests/protocol/test_capability_discovery_contract.py -q
+      - name: Commit source patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git restore --source=HEAD -- .github/workflows/patch-http-admission.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          git commit -m "fix: enforce MCP HTTP admission without Uvicorn resets"
+          git push origin HEAD:agent/ai-skills-compliance-refactor
