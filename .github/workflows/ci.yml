@@ -57,11 +57,24 @@ jobs:
           project = tomllib.loads(Path('pyproject.toml').read_text())['project']
           assert project['version'] == __version__
           PY
+      - name: Verify capability manifest versions
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          from version import __version__
+          manifests = json.loads(Path('tools/tool_manifests.json').read_text())
+          stale = sorted(
+              name for name, manifest in manifests.items()
+              if manifest.get('extensions', {}).get('tool_version') != __version__
+          )
+          assert not stale, f'stale capability versions: {stale}'
+          PY
       - name: Checkout pinned ai-skills validator
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v6
         with:
           repository: paulomac1000/ai-skills
-          ref: c5ba4091cd8a3043fe4ba9715a3bda96d62a05e4
+          ref: b54fc6b27ea80b36a70d5de73445970e17f55789
           path: .ai-skills
           persist-credentials: false
       - name: Validate governed documentation
