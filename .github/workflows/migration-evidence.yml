@@ -47,34 +47,19 @@ jobs:
           bandit -r server.py tools/ context_generator/ ha_graph/ -ll
           pytest tests/unit -q
           pytest tests/protocol -q
-      - name: Build and exercise exact wheel over stdio
+      - name: Build exact wheel and exercise stdio with independent official client
         run: |
           python -m pip install 'build==1.5.0' 'setuptools==83.0.0' 'wheel==0.47.0'
           python -m build --wheel --no-isolation
           python -m venv /tmp/migration-wheel
           /tmp/migration-wheel/bin/python -m pip install dist/*.whl
           /tmp/migration-wheel/bin/python -m pip check
-          /tmp/migration-wheel/bin/python - <<'PY'
-          import asyncio
-          import os
-          from fastmcp import Client
-          from fastmcp.client.transports import StdioTransport
-
-          async def verify():
-              transport = StdioTransport(
-                  command='/tmp/migration-wheel/bin/ha-mcp-readonly',
-                  args=[],
-                  env={**os.environ, 'MCP_TRANSPORT': 'stdio', 'HEALTH_SERVER_ENABLED': '0'},
-              )
-              async with Client(transport, timeout=30) as client:
-                  tools = await client.list_tools()
-                  assert len(tools) == 145
-                  result = await client.call_tool('describe_ha_capabilities', {})
-                  assert not result.is_error
-
-          asyncio.run(verify())
-          PY
-      - name: Correlate exact-head CI and artifact evidence
+          python -m venv /tmp/migration-official-client
+          /tmp/migration-official-client/bin/python -m pip install 'mcp==1.29.0'
+          MCP_EXPECTED_VERSION=2.0.0 \
+            /tmp/migration-official-client/bin/python scripts/verify_official_mcp_client.py stdio \
+              --command /tmp/migration-wheel/bin/ha-mcp-readonly --config-path /tmp
+      - name: Correlate exact-head CI, official-client, and artifact evidence
         shell: bash
         run: |
           set -euo pipefail
@@ -106,24 +91,34 @@ jobs:
               with urllib.request.urlopen(request, timeout=20) as response:
                   return json.load(response)
 
-          deadline = time.monotonic() + 30 * 60
-          ci = None
-          while time.monotonic() < deadline:
-              query = urllib.parse.urlencode({'head_sha': head, 'event': 'pull_request', 'per_page': 50})
-              runs = get(f'/repos/{repo}/actions/runs?{query}').get('workflow_runs', [])
-              matches = [run for run in runs if run.get('name') == 'CI' and int(run.get('id', 0)) != current_run]
-              if matches:
-                  candidate = max(matches, key=lambda run: int(run['id']))
-                  if candidate.get('status') == 'completed':
-                      if candidate.get('conclusion') != 'success':
-                          raise SystemExit(f"correlated CI failed: {candidate.get('html_url')}")
-                      ci = candidate
-                      break
-              time.sleep(10)
-          if ci is None:
-              raise SystemExit('timed out waiting for successful exact-head CI')
-          if ci.get('head_sha') != head:
-              raise SystemExit(f"CI head mismatch: expected {head}, got {ci.get('head_sha')}")
+          def wait_for_workflow(name):
+              deadline = time.monotonic() + 30 * 60
+              while time.monotonic() < deadline:
+                  query = urllib.parse.urlencode(
+                      {'head_sha': head, 'event': 'pull_request', 'per_page': 50}
+                  )
+                  runs = get(f'/repos/{repo}/actions/runs?{query}').get('workflow_runs', [])
+                  matches = [
+                      run for run in runs
+                      if run.get('name') == name and int(run.get('id', 0)) != current_run
+                  ]
+                  if matches:
+                      candidate = max(matches, key=lambda run: int(run['id']))
+                      if candidate.get('status') == 'completed':
+                          if candidate.get('conclusion') != 'success':
+                              raise SystemExit(
+                                  f"correlated {name} failed: {candidate.get('html_url')}"
+                              )
+                          if candidate.get('head_sha') != head:
+                              raise SystemExit(
+                                  f"{name} head mismatch: expected {head}, got {candidate.get('head_sha')}"
+                              )
+                          return candidate
+                  time.sleep(10)
+              raise SystemExit(f'timed out waiting for successful exact-head {name}')
+
+          ci = wait_for_workflow('CI')
+          official = wait_for_workflow('Official MCP client')
 
           jobs = get(f"/repos/{repo}/actions/runs/{ci['id']}/jobs?per_page=100").get('jobs', [])
           expected = {
@@ -140,27 +135,44 @@ jobs:
           missing = sorted(expected - by_name.keys())
           if missing:
               raise SystemExit(f'missing required CI jobs: {missing}')
-          failed = {name: by_name[name].get('conclusion') for name in expected if by_name[name].get('conclusion') != 'success'}
+          failed = {
+              name: by_name[name].get('conclusion')
+              for name in expected
+              if by_name[name].get('conclusion') != 'success'
+          }
           if failed:
               raise SystemExit(f'non-success required CI jobs: {failed}')
 
-          artifacts = get(f"/repos/{repo}/actions/runs/{ci['id']}/artifacts?per_page=100").get('artifacts', [])
-          required_artifact_prefixes = ('python-wheel-', 'container-image-')
+          artifacts = get(f"/repos/{repo}/actions/runs/{ci['id']}/artifacts?per_page=100").get(
+              'artifacts', []
+          )
           selected = [
               artifact for artifact in artifacts
-              if artifact.get('name', '').startswith(required_artifact_prefixes)
+              if artifact.get('name', '').startswith(('python-wheel-', 'container-image-'))
           ]
           if len(selected) < 3:
-              raise SystemExit(f'expected wheel plus two container artifacts, got {[a.get("name") for a in selected]}')
+              raise SystemExit(
+                  f'expected wheel plus two container artifacts, got {[a.get("name") for a in selected]}'
+              )
           for artifact in selected:
               digest = artifact.get('digest')
               if not isinstance(digest, str) or not digest.startswith('sha256:'):
                   raise SystemExit(f'artifact lacks provider digest: {artifact.get("name")}')
 
+          official_jobs = get(
+              f"/repos/{repo}/actions/runs/{official['id']}/jobs?per_page=100"
+          ).get('jobs', [])
+          official_job = next(
+              (job for job in official_jobs if job.get('name') == 'Official client exact artifacts'),
+              None,
+          )
+          if not official_job or official_job.get('conclusion') != 'success':
+              raise SystemExit('official-client exact-artifact job is not successful')
+
           wheel = next(Path('dist').glob('*.whl'))
           wheel_digest = 'sha256:' + hashlib.sha256(wheel.read_bytes()).hexdigest()
           report = {
-              'schema_version': 1,
+              'schema_version': 2,
               'repository': repo,
               'assessed_revision': head,
               'evidence_workflow_run_id': current_run,
@@ -168,7 +180,6 @@ jobs:
                   'run_id': int(ci['id']),
                   'workflow_id': int(ci['workflow_id']),
                   'head_sha': ci['head_sha'],
-                  'event': ci['event'],
                   'conclusion': ci['conclusion'],
                   'jobs': {
                       name: {
@@ -187,22 +198,34 @@ jobs:
                       for artifact in sorted(selected, key=lambda value: value['name'])
                   ],
               },
+              'official_client': {
+                  'distribution': 'mcp',
+                  'version': '1.29.0',
+                  'protocol_revision': '2025-11-25',
+                  'run_id': int(official['id']),
+                  'job_id': int(official_job['id']),
+                  'conclusion': official_job['conclusion'],
+                  'transports': ['stdio', 'streamable-http'],
+              },
               'local_evidence_lane': {
                   'python': '3.13',
                   'quality': 'passed',
                   'unit_protocol': 'passed',
                   'clean_wheel_install': 'passed',
-                  'real_stdio': 'passed',
+                  'official_stdio': 'passed',
                   'wheel_content_digest': wheel_digest,
               },
               'limitations': [
                   'No real HA_URL/HA_TOKEN was available to this public CI lane.',
-                  'This structural evidence is not an independent L3 approval.',
+                  'MCP 2026-07-28 is not claimed for the FastMCP 3.x runtime lane.',
+                  'Canonical provider-backed adoption remains request-changes until live Home Assistant evidence and independent GitHub approval exist for this exact SHA.',
               ],
           }
-          path = Path('evidence/migration-evidence.json')
-          path.write_text(json.dumps(report, indent=2, sort_keys=True) + '\n', encoding='utf-8')
-          digest = hashlib.sha256(path.read_bytes()).hexdigest()
+          report_path = Path('evidence/migration-evidence.json')
+          report_path.write_text(
+              json.dumps(report, indent=2, sort_keys=True) + '\n', encoding='utf-8'
+          )
+          digest = hashlib.sha256(report_path.read_bytes()).hexdigest()
           Path('evidence/migration-evidence.json.sha256').write_text(
               f'{digest}  migration-evidence.json\n', encoding='utf-8'
           )
