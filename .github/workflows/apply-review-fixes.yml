@@ -14,7 +14,6 @@ concurrency:
 
 jobs:
   apply:
-    if: ${{ !contains(github.event.head_commit.message, 'fix: harden 2.0 migration contracts') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 35
     steps:
@@ -31,6 +30,10 @@ jobs:
         run: python .github/apply_review_fixes.py
       - name: Install project
         run: python -m pip install -c constraints-ci.txt '.[dev]'
+      - name: Format generated changes
+        run: |
+          ruff check . --fix
+          ruff format .
       - name: Ruff
         run: |
           ruff check .
