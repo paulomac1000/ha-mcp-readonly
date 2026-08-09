@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-from collections import deque
 import json
-
+from collections import deque
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 
