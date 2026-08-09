@@ -15,6 +15,14 @@ def _env_bool(name: str, default: bool = False) -> bool:
     return value.strip().casefold() in {"1", "true", "yes", "on"}
 
 
+def _env_int(name: str, default: int, *, minimum: int, maximum: int) -> int:
+    raw = os.getenv(name)
+    value = default if raw is None else int(raw)
+    if not minimum <= value <= maximum:
+        raise ValueError(f"{name} must be between {minimum} and {maximum}")
+    return value
+
+
 @dataclass(frozen=True, slots=True)
 class RuntimeSettings:
     ha_url: str
@@ -33,6 +41,12 @@ class RuntimeSettings:
     mcp_auth_token: str
     rest_api_token: str
     cors_allowed_origins: tuple[str, ...]
+    mcp_allowed_hosts: tuple[str, ...]
+    mcp_http_max_body_bytes: int
+    mcp_http_max_header_bytes: int
+    mcp_http_connection_limit: int
+    mcp_http_keepalive_seconds: int
+    mcp_http_stateless: bool
     output_path: str
     context_output_root: str
     log_level: str
@@ -46,9 +60,11 @@ class RuntimeSettings:
             raise ValueError("Legacy SSE transport has been removed; use stdio or Streamable HTTP")
         if transport not in {"stdio", "http"}:
             raise ValueError("MCP_TRANSPORT must be one of: stdio, http")
+
         bind_host = os.getenv("MCP_BIND_HOST", "127.0.0.1").strip()
         if not bind_host:
             raise ValueError("MCP_BIND_HOST cannot be empty")
+
         origins = tuple(
             origin.strip()
             for origin in os.getenv("CORS_ALLOWED_ORIGINS", "http://localhost").split(",")
@@ -56,6 +72,17 @@ class RuntimeSettings:
         )
         if "*" in origins:
             raise ValueError("Wildcard CORS origins are not allowed")
+
+        allowed_hosts = tuple(
+            host.strip()
+            for host in os.getenv("MCP_ALLOWED_HOSTS", "localhost,127.0.0.1,[::1]").split(",")
+            if host.strip()
+        )
+        if not allowed_hosts or "*" in allowed_hosts:
+            raise ValueError("MCP_ALLOWED_HOSTS must contain explicit hosts and cannot use '*'")
+        if bind_host not in {"0.0.0.0", "::"} and bind_host not in allowed_hosts:  # nosec B104 -- comparison only; no socket is bound here
+            allowed_hosts = (*allowed_hosts, bind_host)
+
         output_path = os.getenv("OUTPUT_PATH", "/app/output/ha-ai-context.md")
         return cls(
             ha_url=os.getenv("HA_URL", "http://homeassistant:8123"),
@@ -74,6 +101,20 @@ class RuntimeSettings:
             mcp_auth_token=os.getenv("MCP_AUTH_TOKEN", ""),
             rest_api_token=os.getenv("REST_API_TOKEN", os.getenv("MCP_AUTH_TOKEN", "")),
             cors_allowed_origins=origins,
+            mcp_allowed_hosts=allowed_hosts,
+            mcp_http_max_body_bytes=_env_int(
+                "MCP_HTTP_MAX_BODY_BYTES", 1024 * 1024, minimum=1024, maximum=16 * 1024 * 1024
+            ),
+            mcp_http_max_header_bytes=_env_int(
+                "MCP_HTTP_MAX_HEADER_BYTES", 64 * 1024, minimum=4096, maximum=1024 * 1024
+            ),
+            mcp_http_connection_limit=_env_int(
+                "MCP_HTTP_CONNECTION_LIMIT", 64, minimum=1, maximum=10_000
+            ),
+            mcp_http_keepalive_seconds=_env_int(
+                "MCP_HTTP_KEEPALIVE_SECONDS", 5, minimum=1, maximum=300
+            ),
+            mcp_http_stateless=_env_bool("MCP_HTTP_STATELESS", True),
             output_path=output_path,
             context_output_root=os.getenv("CONTEXT_OUTPUT_ROOT", str(Path(output_path).parent)),
             log_level=os.getenv("LOG_LEVEL", "INFO"),

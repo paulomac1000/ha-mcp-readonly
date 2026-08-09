@@ -13,7 +13,10 @@ from typing import Any
 from tools.invocation import KERNEL
 from tools.manifests import KNOWN_RISK_PREFIXES, get_manifest
 from tools.observability import increment_invocation, start_tool_context
+from tools.redaction import sanitize_response_data
 from tools.utils import build_meta
+
+_BLOCKING_COROUTINE_MODULES = frozenset({"tools.storage"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,13 +63,17 @@ class OperationRegistry:
     @staticmethod
     def _wrap(name: str, raw_fn: Callable[..., Any], description: str) -> Callable[..., Any]:
         if inspect.iscoroutinefunction(raw_fn):
+            blocking_coroutine = raw_fn.__module__ in _BLOCKING_COROUTINE_MODULES
 
             @functools.wraps(raw_fn)
             async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
                 start = time.monotonic()
                 start_tool_context()
                 increment_invocation(name)
-                result = await KERNEL.invoke_async(name, raw_fn, *args, **kwargs)
+                if blocking_coroutine:
+                    result = await KERNEL.invoke_blocking_coroutine(name, raw_fn, *args, **kwargs)
+                else:
+                    result = await KERNEL.invoke_async(name, raw_fn, *args, **kwargs)
                 return _augment_result(result, name, start)
 
             async_wrapper.__doc__ = description
@@ -118,29 +125,34 @@ class OperationMCPAdapter:
 
 
 def _augment_result(result: Any, tool_name: str, start: float) -> Any:
-    """Attach common metadata before enforcing the final serialized size limit."""
+    """Sanitize, attach metadata, then enforce the final serialized size limit."""
     import json
 
     if isinstance(result, str):
         try:
             parsed = json.loads(result)
         except (ValueError, TypeError):
-            KERNEL.enforce_final_result_size(tool_name, result)
-            return result
-        if isinstance(parsed, dict):
-            parsed["_meta"] = _merged_meta(parsed.get("_meta"), build_meta(tool_name, start))
-            encoded = json.dumps(parsed, indent=2, ensure_ascii=False)
+            sanitized_text = sanitize_response_data(result)
+            KERNEL.enforce_final_result_size(tool_name, sanitized_text)
+            return sanitized_text
+        sanitized = sanitize_response_data(parsed)
+        if isinstance(sanitized, dict):
+            sanitized["_meta"] = _merged_meta(sanitized.get("_meta"), build_meta(tool_name, start))
+            encoded = json.dumps(sanitized, indent=2, ensure_ascii=False)
             KERNEL.enforce_final_result_size(tool_name, encoded)
             return encoded
-        KERNEL.enforce_final_result_size(tool_name, result)
-        return result
+        KERNEL.enforce_final_result_size(tool_name, sanitized)
+        return sanitized
     if isinstance(result, dict):
-        enriched = dict(result)
-        enriched["_meta"] = _merged_meta(result.get("_meta"), build_meta(tool_name, start))
-        KERNEL.enforce_final_result_size(tool_name, enriched)
-        return enriched
-    KERNEL.enforce_final_result_size(tool_name, result)
-    return result
+        sanitized = sanitize_response_data(result)
+        if not isinstance(sanitized, dict):
+            raise TypeError("Sanitized dictionary result changed type")
+        sanitized["_meta"] = _merged_meta(sanitized.get("_meta"), build_meta(tool_name, start))
+        KERNEL.enforce_final_result_size(tool_name, sanitized)
+        return sanitized
+    sanitized = sanitize_response_data(result)
+    KERNEL.enforce_final_result_size(tool_name, sanitized)
+    return sanitized
 
 
 def _merged_meta(tool_meta: Any, envelope: dict[str, Any]) -> dict[str, Any]:

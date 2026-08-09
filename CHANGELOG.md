@@ -10,7 +10,24 @@ verification: Confirm release entries against signed tags, package metadata, and
 
 # Changelog
 
-## [1.7.0] - 2026-08-09
+## [2.0.0] - 2026-08-09
+
+
+### Breaking Changes
+- Removed the legacy two-endpoint HTTP+SSE transport. The supported MCP transports are now stdio and Streamable HTTP only.
+- The network MCP deployment now uses an explicit hardened ASGI application with bounded request/header sizes, trusted Host policy, exact-origin CORS policy, connection limits, and explicit stateless/stateful mode.
+- Public capability discovery now separates supported and active transports/components and reports server, SDK, protocol, and deployment-profile identity.
+- The project major version is now 2.0.0 because transport and public health/discovery semantics changed incompatibly from the 1.x line.
+
+### Security Hardening
+- Final tool responses are recursively redacted at the application-owned operation boundary using key-aware credential filtering plus token/JWT/IP pattern sanitization.
+- Blocking coroutine adapters in the storage tool family run through the bounded invocation executor instead of blocking the MCP event loop.
+- Async admission cancellation no longer leaks semaphore permits while a background semaphore acquire is still running.
+- REST and MCP HTTP request bodies and aggregate headers are bounded before application parsing.
+
+### Verification Added
+- Added official `mcp` Python SDK interoperability smoke tests for the exact installed wheel over stdio and the exact container over authenticated Streamable HTTP.
+- Added regression tests for credential redaction, async admission cancellation, blocking-coroutine isolation, JSON-schema generation for unions/generics, HTTP request limits, and manifest/server version consistency.
 
 ### Added — ai-skills Standard Alignment
 - Added `ai-skills.lock.yaml` binding this repository to the pinned

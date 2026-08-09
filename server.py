@@ -23,8 +23,9 @@ from fastmcp.server.middleware import Middleware
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from multiprocessing.connection import Connection
 from pathlib import Path
-from typing import Any, cast, get_type_hints
+from typing import Any, cast
 
+from tools.http_security import RequestLimitsMiddleware
 from tools.invocation import (
     InvocationError,
     Principal,
@@ -41,6 +42,7 @@ from tools.manifests import (
 )
 from tools.observability import RequestIdFilter
 from tools.operations import Operation, OperationMCPAdapter, OperationRegistry
+from tools.schema_utils import signature_to_json_schema
 from tools.security import (
     PathPolicy,
     SecurityBoundaryError,
@@ -61,6 +63,12 @@ HEALTH_SERVER_ENABLED = SETTINGS.health_server_enabled
 LOG_LEVEL = SETTINGS.log_level
 MCP_AUTH_TOKEN = SETTINGS.mcp_auth_token
 MCP_BIND_HOST = SETTINGS.mcp_bind_host
+MCP_ALLOWED_HOSTS = list(SETTINGS.mcp_allowed_hosts)
+MCP_HTTP_MAX_BODY_BYTES = SETTINGS.mcp_http_max_body_bytes
+MCP_HTTP_MAX_HEADER_BYTES = SETTINGS.mcp_http_max_header_bytes
+MCP_HTTP_CONNECTION_LIMIT = SETTINGS.mcp_http_connection_limit
+MCP_HTTP_KEEPALIVE_SECONDS = SETTINGS.mcp_http_keepalive_seconds
+MCP_HTTP_STATELESS = SETTINGS.mcp_http_stateless
 MCP_PORT = SETTINGS.mcp_port
 MCP_TRANSPORT = SETTINGS.mcp_transport
 OUTPUT_PATH = SETTINGS.output_path
@@ -370,40 +378,7 @@ def _extract_desc(tool: Operation) -> str:
 
 
 def _signature_to_json_schema(function: Any) -> dict[str, Any]:
-    signature = inspect.signature(function)
-    try:
-        type_hints = get_type_hints(function)
-    except (NameError, TypeError):
-        type_hints = {}
-    properties: dict[str, Any] = {}
-    required: list[str] = []
-    json_types = {
-        str: "string",
-        int: "integer",
-        float: "number",
-        bool: "boolean",
-        dict: "object",
-        list: "array",
-    }
-    for name, parameter in signature.parameters.items():
-        if name == "self":
-            continue
-        annotation = type_hints.get(name, parameter.annotation)
-        json_type = json_types.get(annotation, "string")
-        property_schema: dict[str, Any] = {"type": json_type}
-        if parameter.default is inspect.Parameter.empty:
-            required.append(name)
-        else:
-            property_schema["default"] = parameter.default
-        properties[name] = property_schema
-    schema: dict[str, Any] = {
-        "type": "object",
-        "properties": properties,
-        "additionalProperties": False,
-    }
-    if required:
-        schema["required"] = required
-    return schema
+    return signature_to_json_schema(function)
 
 
 class HealthHandler(BaseHTTPRequestHandler):
@@ -595,6 +570,7 @@ def create_rest_app(auth_token: str | None = None) -> Any:
     from starlette.middleware import Middleware
     from starlette.middleware.base import BaseHTTPMiddleware
     from starlette.middleware.cors import CORSMiddleware
+    from starlette.middleware.trustedhost import TrustedHostMiddleware
     from starlette.requests import Request
     from starlette.responses import JSONResponse, PlainTextResponse
     from starlette.routing import Route
@@ -907,6 +883,12 @@ def create_rest_app(auth_token: str | None = None) -> Any:
         Route("/api/context/modes", context_modes, methods=["GET"]),
     ]
     middleware = [
+        Middleware(TrustedHostMiddleware, allowed_hosts=[*MCP_ALLOWED_HOSTS, "testserver"]),
+        Middleware(
+            RequestLimitsMiddleware,
+            max_body_bytes=MCP_HTTP_MAX_BODY_BYTES,
+            max_header_bytes=MCP_HTTP_MAX_HEADER_BYTES,
+        ),
         Middleware(BearerAuthMiddleware),
         Middleware(
             CORSMiddleware,
@@ -927,6 +909,51 @@ def create_rest_app(auth_token: str | None = None) -> Any:
                 _set_health_component("rest", "failed")
 
     return Starlette(routes=routes, middleware=middleware, lifespan=lifespan)
+
+
+def run_mcp_http(server: FastMCP) -> None:
+    """Run the authenticated Streamable HTTP app with explicit transport limits."""
+    from starlette.middleware import Middleware
+    from starlette.middleware.cors import CORSMiddleware
+    from starlette.middleware.trustedhost import TrustedHostMiddleware
+
+    import uvicorn
+
+    middleware = [
+        Middleware(TrustedHostMiddleware, allowed_hosts=MCP_ALLOWED_HOSTS),
+        Middleware(
+            RequestLimitsMiddleware,
+            max_body_bytes=MCP_HTTP_MAX_BODY_BYTES,
+            max_header_bytes=MCP_HTTP_MAX_HEADER_BYTES,
+        ),
+        Middleware(
+            CORSMiddleware,
+            allow_origins=CORS_ALLOWED_ORIGINS,
+            allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
+            allow_headers=[
+                "authorization",
+                "content-type",
+                "mcp-protocol-version",
+                "mcp-session-id",
+            ],
+            expose_headers=["mcp-session-id"],
+        ),
+    ]
+    app = server.http_app(
+        path="/mcp",
+        middleware=middleware,
+        stateless_http=MCP_HTTP_STATELESS,
+    )
+    uvicorn.run(
+        app,
+        host=MCP_BIND_HOST,
+        port=MCP_PORT,
+        log_level="warning",
+        access_log=False,
+        limit_concurrency=MCP_HTTP_CONNECTION_LIMIT,
+        timeout_keep_alive=MCP_HTTP_KEEPALIVE_SECONDS,
+        h11_max_incomplete_event_size=MCP_HTTP_MAX_HEADER_BYTES,
+    )
 
 
 def run_rest_api() -> None:
@@ -1042,14 +1069,7 @@ def main() -> None:
     threading.Thread(
         target=_probe_network_transport, daemon=True, name="mcp-transport-probe"
     ).start()
-    network_transport = MCP_TRANSPORT
-    server.run(
-        transport=network_transport,
-        host=MCP_BIND_HOST,
-        port=MCP_PORT,
-        path="/mcp",
-        show_banner=False,
-    )
+    run_mcp_http(server)
 
 
 if __name__ == "__main__":

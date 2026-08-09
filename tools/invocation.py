@@ -240,6 +240,34 @@ class InvocationKernel:
         tool_semaphore.release()
         executor_capacity.release()
 
+    @staticmethod
+    async def _acquire_async_semaphore(
+        semaphore: threading.BoundedSemaphore, timeout: float
+    ) -> bool:
+        """Acquire a threading semaphore without leaking permits on cancellation.
+
+        ``asyncio.to_thread`` cannot cancel an already-running semaphore acquire.
+        Shield the inner task so outer cancellation does not mark it cancelled;
+        if the abandoned acquire later succeeds, its callback returns the permit.
+        """
+        acquire_task = asyncio.create_task(asyncio.to_thread(semaphore.acquire, True, timeout))
+        try:
+            return await asyncio.shield(acquire_task)
+        except asyncio.CancelledError:
+
+            def release_abandoned(completed: asyncio.Task[bool]) -> None:
+                if completed.cancelled():
+                    return
+                try:
+                    acquired = completed.result()
+                except BaseException:
+                    return
+                if acquired:
+                    semaphore.release()
+
+            acquire_task.add_done_callback(release_abandoned)
+            raise
+
     def invoke_sync(
         self,
         tool_name: str,
@@ -316,24 +344,7 @@ class InvocationKernel:
         concurrency_key = self._concurrency_key(tool_name, manifest, target, args, kwargs)
         semaphore = self._semaphore(concurrency_key, int(manifest["concurrency"]["limit"]))
 
-        acquire_task = asyncio.create_task(
-            asyncio.to_thread(semaphore.acquire, True, _remaining(deadline))
-        )
-        try:
-            acquired = await acquire_task
-        except asyncio.CancelledError:
-            # asyncio.to_thread cannot stop the blocking acquire. If it later
-            # obtains the permit, release it from the completion callback.
-            def release_cancelled_acquire(completed: asyncio.Task[bool]) -> None:
-                if (
-                    not completed.cancelled()
-                    and completed.exception() is None
-                    and completed.result()
-                ):
-                    semaphore.release()
-
-            acquire_task.add_done_callback(release_cancelled_acquire)
-            raise
+        acquired = await self._acquire_async_semaphore(semaphore, _remaining(deadline))
         if not acquired:
             raise InvocationError("BUSY", f"Tool '{tool_name}' concurrency limit reached")
 
@@ -363,6 +374,77 @@ class InvocationKernel:
         finally:
             _current_deadline.reset(token)
             if permit_owned:
+                semaphore.release()
+
+    async def invoke_blocking_coroutine(
+        self,
+        tool_name: str,
+        function: Callable[..., Any],
+        *args: Any,
+        **kwargs: Any,
+    ) -> Any:
+        """Run a coroutine containing blocking adapters in the bounded worker pool."""
+        manifest = self._manifest(tool_name)
+        target = self._authorize(tool_name, manifest)
+        timeout = int(manifest["extensions"]["timeout_ms"]) / 1000
+        deadline = time.monotonic() + timeout
+        concurrency_key = self._concurrency_key(tool_name, manifest, target, args, kwargs)
+        semaphore = self._semaphore(concurrency_key, int(manifest["concurrency"]["limit"]))
+
+        acquired = await self._acquire_async_semaphore(semaphore, _remaining(deadline))
+        if not acquired:
+            raise InvocationError("BUSY", f"Tool '{tool_name}' concurrency limit reached")
+
+        tool_permit_owned = True
+        capacity_owned = False
+        try:
+            remaining = _remaining(deadline)
+            if remaining <= 0:
+                raise InvocationError("DEADLINE_EXCEEDED", f"Tool '{tool_name}' timed out")
+            capacity_owned = await self._acquire_async_semaphore(self._executor_capacity, remaining)
+            if not capacity_owned:
+                raise InvocationError("BUSY", "Synchronous invocation queue is full")
+
+            token = _current_deadline.set(deadline)
+            try:
+                context = contextvars.copy_context()
+            finally:
+                _current_deadline.reset(token)
+
+            def run_coroutine() -> Any:
+                return asyncio.run(function(*args, **kwargs))
+
+            try:
+                future = self._executor.submit(context.run, run_coroutine)
+            except Exception:
+                self._executor_capacity.release()
+                capacity_owned = False
+                raise
+
+            future.add_done_callback(
+                lambda completed: self._release_when_done(
+                    completed, semaphore, self._executor_capacity
+                )
+            )
+            tool_permit_owned = False
+            capacity_owned = False
+            wrapped = asyncio.wrap_future(future)
+            try:
+                result = await asyncio.wait_for(
+                    asyncio.shield(wrapped), timeout=_remaining(deadline)
+                )
+            except TimeoutError as exc:
+                future.cancel()
+                raise InvocationError("DEADLINE_EXCEEDED", f"Tool '{tool_name}' timed out") from exc
+            except asyncio.CancelledError:
+                future.cancel()
+                raise
+            self._enforce_result_size(result, int(manifest["max_response_bytes"]))
+            return result
+        finally:
+            if capacity_owned:
+                self._executor_capacity.release()
+            if tool_permit_owned:
                 semaphore.release()
 
 

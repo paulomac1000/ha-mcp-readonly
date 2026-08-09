@@ -10,37 +10,48 @@ verification: Compare the pinned revision with CI configuration and generate pro
 
 # ai-skills adoption status
 
-The repository currently targets the exact `paulomac1000/ai-skills` revision
-`c5ba4091cd8a3043fe4ba9715a3bda96d62a05e4` (HEAD of the
-`fix/unified-contract-release-hardening` branch) for compatibility work. This is an
-immutable implementation target, not an approval claim. The upstream branch was
-not treated as a final acceptance authority while its own exact-head validation
-remained unresolved.
+The repository targets the immutable `paulomac1000/ai-skills` revision
+`b54fc6b27ea80b36a70d5de73445970e17f55789` from the `fix/unified-contract-release-hardening` line.
+The revision immediately follows the previous `c5ba4091` pin and changes only the
+.NET generator lock validation lane; the Python/FastMCP normative entrypoints and
+their recorded content digests are unchanged. The consumer lock, CI checkout, and
+migration evidence must all use the same immutable revision.
 
-The former `migration-assessment.yaml` was removed because it used a superseded
-schema, referenced an older ai-skills revision, and made artifact-promotion claims
-that were not true for the then-current release workflow. Keeping that file would
-have created false compliance evidence.
+This repository implements the reviewed migration code, but implementation is not
+the same thing as provider-backed acceptance. A canonical adoption assessment is
+evidence about an already-existing immutable GitHub revision, so final assessment
+data is generated as a CI/review artifact after the exact commit exists rather than
+attempting to predict the SHA of the commit containing the assessment itself.
 
 ## Evidence policy
 
-A canonical adoption assessment is evidence about an already-existing immutable
-GitHub revision. It therefore belongs in provider-backed CI/review evidence, not in
-a source file that attempts to predict the SHA of the commit containing itself.
-Final acceptance must use the canonical adoption schema and validator from the
-chosen immutable ai-skills revision and bind evidence to the exact assessed
-revision, workflow run, job/check IDs, artifacts/digests, compatibility lanes,
-transport results, residual risks, and independent review.
+Final L3 acceptance must use the canonical adoption schema and validator from the
+pinned ai-skills revision. Evidence must bind the assessed revision, workflow run,
+job/check IDs, exact wheel/container artifacts and digests, official-client transport
+results, live Home Assistant integration results, residual risks, rollback procedure,
+and an independent GitHub review to the same SHA.
 
-Until that provider-backed assessment exists and the upstream acceptance standard
-is itself green, the adoption decision remains **request changes / not certified**.
-This does not weaken the repository's normal CI gates: the pinned canonical
-capability-manifest schema and AFDS validator are executed directly in CI.
+The public CI lanes provide deterministic source, wheel, container, security, and
+official-client evidence without requiring a private Home Assistant instance. Live
+Home Assistant smoke, E2E, and integration evidence remains a separate required lane
+and must be attached before the final decision can become `approve`.
+
+Until that provider-backed assessment and independent review exist, the adoption
+decision remains **request changes / not certified**. This is an evidence-state
+statement, not a claim that the implementation should be rolled back.
+
+## Upstream normative vocabulary conflict
+
+The pinned capability-manifest JSON schema and the narrative capability-manifest
+reference currently use partially different field vocabularies. This consumer treats
+the canonical JSON schema as the executable serialization contract and records the
+narrative-only concepts through reviewed extension fields where possible. The
+discrepancy is an upstream residual risk and must be resolved by ai-skills before a
+final certification claims that the two sources are literally identical.
 
 ## Known residual risk
 
 The new runtime policy surface and context runtime modules are strict-mypy gates.
-The older monolithic context analyzers/formatters/utilities and `ha_graph` still
-contain pre-existing typing debt under a narrowly scoped override. That debt is
-not represented as complete L3 compliance and must be removed before any future
-assessment claims full strict typing of the entire repository.
+Older monolithic context analyzers/formatters/utilities and `ha_graph` still contain
+pre-existing typing debt under a narrowly scoped override. That debt is not represented
+as complete repository-wide strict typing and should be retired incrementally.

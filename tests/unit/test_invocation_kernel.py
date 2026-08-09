@@ -133,3 +133,37 @@ async def test_async_timeout_keeps_permit_until_cancelled_operation_finishes() -
 
 async def _async_ok() -> str:
     return "ok"
+
+
+@pytest.mark.asyncio
+async def test_cancel_while_waiting_for_permit_does_not_leak_capacity() -> None:
+    """Cancelling admission must release a permit acquired later by the worker thread."""
+    import asyncio
+
+    name = "test_kernel_cancelled_admission"
+    _register(
+        name,
+        extensions={**make_manifest(name)["extensions"], "timeout_ms": 1000},
+        concurrency={"scope": "capability", "limit": 1, "queue_limit": 1},
+    )
+    kernel = InvocationKernel(max_workers=1)
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def hold() -> str:
+        started.set()
+        await release.wait()
+        return "held"
+
+    first = asyncio.create_task(kernel.invoke_async(name, hold))
+    await asyncio.wait_for(started.wait(), timeout=1)
+    waiting = asyncio.create_task(kernel.invoke_async(name, _async_ok))
+    await asyncio.sleep(0.03)
+    waiting.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await waiting
+
+    release.set()
+    assert await asyncio.wait_for(first, timeout=1) == "held"
+    await asyncio.sleep(0.05)
+    assert await asyncio.wait_for(kernel.invoke_async(name, _async_ok), timeout=1) == "ok"

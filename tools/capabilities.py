@@ -8,10 +8,12 @@ gap (mcp-server-standards.md, rule 2b, L3+).
 
 import logging
 import re
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as package_version
 from typing import Any
 
 from tools import TOOLS_VERSION
-from tools.constants import REST_API_ENABLED
+from tools.constants import DEV_TOOLS_ENABLED, MCP_TRANSPORT, REST_API_ENABLED
 from tools.manifests import (
     active_profile_initialized,
     get_all_manifests,
@@ -20,10 +22,11 @@ from tools.manifests import (
     register_manifest,
 )
 from tools.utils import _error_response, _success_response
+from version import __version__
 
 _logger = logging.getLogger(__name__)
 
-CAPABILITIES_SCHEMA_VERSION = "1.0"
+CAPABILITIES_SCHEMA_VERSION = "1.1"
 
 # Category assignment rules: (regex_pattern, category_name).
 # Tools are matched in order; first match wins. Unmatched tools fall into "Other".
@@ -83,13 +86,15 @@ def _categorize_tool(name: str) -> str:
     return "Other"
 
 
-def _do_describe_ha_capabilities() -> dict[str, Any]:
-    """Build the supported and active capability catalogs from governed manifests. Zero I/O.
+def _installed_version(distribution: str) -> str:
+    try:
+        return package_version(distribution)
+    except PackageNotFoundError:
+        return "unknown"
 
-    ``tool_count`` remains the compatibility field for the currently advertised
-    MCP catalog. ``supported_tool_count`` names the complete governed catalog,
-    including capabilities disabled by the active deployment profile.
-    """
+
+def _do_describe_ha_capabilities() -> dict[str, Any]:
+    """Build supported and active catalogs without contacting external dependencies."""
     supported_manifests = get_all_manifests(active_only=False)
     initialized = active_profile_initialized()
     active_manifests = get_all_manifests(active_only=True) if initialized else {}
@@ -106,16 +111,14 @@ def _do_describe_ha_capabilities() -> dict[str, Any]:
         if name in inactive_reasons:
             item["inactive_reason"] = inactive_reasons[name]
         tools.append(item)
-    tools.sort(key=lambda m: str(m.get("name", "")))
+    tools.sort(key=lambda manifest: str(manifest.get("name", "")))
 
-    # Group supported tools by category; each entry exposes current activation.
     categories: dict[str, dict[str, Any]] = {}
     for tool in tools:
         name = str(tool.get("name", ""))
-        cat_name = _categorize_tool(name)
-        if cat_name not in categories:
-            categories[cat_name] = {"tool_count": 0, "tools": []}
-        categories[cat_name]["tools"].append(
+        category = _categorize_tool(name)
+        bucket = categories.setdefault(category, {"tool_count": 0, "tools": []})
+        bucket["tools"].append(
             {
                 "name": name,
                 "description": str(tool.get("description", "")),
@@ -123,23 +126,47 @@ def _do_describe_ha_capabilities() -> dict[str, Any]:
                 "inactive_reason": tool.get("inactive_reason"),
             }
         )
-        categories[cat_name]["tool_count"] = len(categories[cat_name]["tools"])
+        bucket["tool_count"] = len(bucket["tools"])
 
-    transports = ["stdio", "streamable-http"]
-    if REST_API_ENABLED:
-        transports.append("authenticated-rest-compatibility")
-
+    supported_transports = ["stdio", "streamable-http"]
+    active_transport = "stdio" if MCP_TRANSPORT == "stdio" else "streamable-http"
+    compatibility_adapters = ["authenticated-rest"] if REST_API_ENABLED else []
+    protocol_versions = sorted(
+        {
+            str(revision)
+            for manifest in tools
+            for revision in manifest.get("protocol_revisions", [])
+            if revision
+        }
+    )
     active_count = len(active_names) if initialized else len(tools)
     return {
         "schema_version": CAPABILITIES_SCHEMA_VERSION,
         "server": "HA-Observer",
+        "server_version": __version__,
         "tools_version": TOOLS_VERSION,
-        "transports": transports,
+        "sdk": {
+            "family": "fastmcp",
+            "distribution": "fastmcp",
+            "version": _installed_version("fastmcp"),
+        },
+        "protocol_versions": protocol_versions,
+        "supported_transports": supported_transports,
+        "active_transports": [active_transport],
+        "compatibility_adapters": compatibility_adapters,
+        "transports": supported_transports + compatibility_adapters,
+        "profile": {
+            "mcp_transport": active_transport,
+            "dev_tools_enabled": DEV_TOOLS_ENABLED,
+            "rest_api_enabled": REST_API_ENABLED,
+        },
         "tool_count": active_count,
         "supported_tool_count": len(tools),
         "active_profile_initialized": initialized,
         "active_tool_count": active_count,
         "inactive_tool_count": len(tools) - active_count if initialized else None,
+        "supported_component_counts": {"tools": len(tools), "resources": 0, "prompts": 0},
+        "active_component_counts": {"tools": active_count, "resources": 0, "prompts": 0},
         "tools": tools,
         "categories": categories,
     }
