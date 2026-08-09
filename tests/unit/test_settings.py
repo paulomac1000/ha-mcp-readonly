@@ -19,6 +19,20 @@ def test_streamable_http_alias_normalizes_to_http(monkeypatch: pytest.MonkeyPatc
     assert settings.mcp_transport == "http"
 
 
+def test_streamable_http_defaults_to_stateful_sessions(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("MCP_TRANSPORT", "http")
+    monkeypatch.delenv("MCP_HTTP_STATELESS", raising=False)
+    settings = RuntimeSettings.from_env()
+    assert settings.mcp_http_stateless is False
+
+
+def test_stateless_http_requires_explicit_opt_in(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("MCP_TRANSPORT", "http")
+    monkeypatch.setenv("MCP_HTTP_STATELESS", "1")
+    settings = RuntimeSettings.from_env()
+    assert settings.mcp_http_stateless is True
+
+
 def test_settings_are_frozen(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("MCP_TRANSPORT", "stdio")
     settings = RuntimeSettings.from_env()
@@ -29,4 +43,10 @@ def test_settings_are_frozen(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_wildcard_cors_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("CORS_ALLOWED_ORIGINS", "*")
     with pytest.raises(ValueError, match="Wildcard CORS"):
+        RuntimeSettings.from_env()
+
+
+def test_wildcard_host_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("MCP_ALLOWED_HOSTS", "*")
+    with pytest.raises(ValueError, match="explicit hosts"):
         RuntimeSettings.from_env()
