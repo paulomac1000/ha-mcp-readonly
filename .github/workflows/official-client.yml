@@ -32,11 +32,17 @@ jobs:
         run: |
           python -m pip install -c constraints-ci.txt build==1.5.0 setuptools==83.0.0 wheel==0.47.0
           python -m build --wheel --no-isolation
-      - name: Install exact server wheel
+      - name: Install exact constrained server wheel
         run: |
           python -m venv /tmp/ha-server
-          /tmp/ha-server/bin/python -m pip install dist/*.whl
+          /tmp/ha-server/bin/python -m pip install -c constraints-ci.txt dist/*.whl
           /tmp/ha-server/bin/python -m pip check
+          /tmp/ha-server/bin/python - <<'PY'
+          import importlib.metadata
+          assert importlib.metadata.version('fastmcp') == '3.4.6'
+          assert importlib.metadata.version('mcp') == '1.29.0'
+          assert importlib.metadata.version('starlette') == '1.4.1'
+          PY
       - name: Install independent official MCP client for the supported 2025-11-25 lane
         run: |
           python -m venv /tmp/official-client
@@ -47,7 +53,7 @@ jobs:
         run: |
           /tmp/official-client/bin/python scripts/verify_official_mcp_client.py stdio \
             --command /tmp/ha-server/bin/ha-mcp-readonly --config-path /tmp
-      - name: Build exact container from the tested wheel
+      - name: Build exact container from constrained runtime
         run: docker build -f Dockerfile.release -t ha-mcp-readonly:official-${GITHUB_SHA} .
       - name: Start hardened Streamable HTTP container
         run: |
@@ -63,7 +69,7 @@ jobs:
             -e MCP_HTTP_STATELESS=0 \
             -e MCP_AUTH_TOKEN=official-client-ci-token \
             -e HA_URL=http://unreachable.invalid:8123 -e HA_TOKEN=ci-backend-token \
-            -e HA_CONFIG_PATH=/config \
+            -e HA_CONFIG_PATH=/config -e LOG_LEVEL=DEBUG \
             ha-mcp-readonly:official-${GITHUB_SHA}
           for _ in $(seq 1 100); do
             if python - <<'PY'
@@ -77,6 +83,42 @@ jobs:
             then break; fi
             sleep .2
           done
+          docker inspect --format '{{.State.Status}} {{.State.Running}} {{.State.ExitCode}}' ha-mcp-official
+      - name: Raw authenticated initialize diagnostic
+        run: |
+          /tmp/official-client/bin/python - <<'PY'
+          import json
+          import urllib.request
+
+          payload = {
+              'jsonrpc': '2.0',
+              'id': 1,
+              'method': 'initialize',
+              'params': {
+                  'protocolVersion': '2025-11-25',
+                  'capabilities': {},
+                  'clientInfo': {'name': 'raw-ci', 'version': '1.0'},
+              },
+          }
+          request = urllib.request.Request(
+              'http://127.0.0.1:9092/mcp',
+              data=json.dumps(payload).encode(),
+              headers={
+                  'Authorization': 'Bearer official-client-ci-token',
+                  'Accept': 'application/json, text/event-stream',
+                  'Content-Type': 'application/json',
+              },
+              method='POST',
+          )
+          with urllib.request.urlopen(request, timeout=10) as response:
+              body = response.read().decode('utf-8', errors='replace')
+              print('status=', response.status)
+              print('session=', response.headers.get('mcp-session-id'))
+              print('content-type=', response.headers.get('content-type'))
+              print('body=', body[:2000])
+              assert response.status == 200
+              assert '2025-11-25' in body
+          PY
       - name: Official-client Streamable HTTP verification
         env:
           PYTHONPATH: ${{ github.workspace }}
@@ -122,7 +164,9 @@ jobs:
           PY
       - name: Container diagnostics
         if: always()
-        run: docker logs ha-mcp-official || true
+        run: |
+          docker inspect --format '{{json .State}}' ha-mcp-official || true
+          docker logs ha-mcp-official || true
       - name: Stop container
         if: always()
         run: docker stop ha-mcp-official || true
