@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections import deque
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
@@ -73,6 +74,34 @@ class StreamingRequestLimitsMiddleware:
             await _reject(send, 413, "Request body exceeds configured limit")
 
 
+class ConnectionLimitMiddleware:
+    """Bound concurrent HTTP request/stream lifetimes without relying on Uvicorn internals."""
+
+    def __init__(self, app: ASGIApp, *, limit: int) -> None:
+        if limit < 1:
+            raise ValueError("HTTP connection limit must be positive")
+        self.app = app
+        self.limit = limit
+        self._active = 0
+        self._guard = asyncio.Lock()
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope.get("type") != "http":
+            await self.app(scope, receive, send)
+            return
+
+        async with self._guard:
+            if self._active >= self.limit:
+                await _reject(send, 503, "HTTP connection limit reached", code="SERVER_BUSY")
+                return
+            self._active += 1
+        try:
+            await self.app(scope, receive, send)
+        finally:
+            async with self._guard:
+                self._active -= 1
+
+
 class RequestLimitsMiddleware:
     """Buffer bounded REST requests before application-level JSON parsing."""
 
@@ -137,10 +166,12 @@ class RequestLimitsMiddleware:
         await self.app(scope, replay_receive, send)
 
 
-async def _reject(send: Send, status: int, message: str) -> None:
-    body = json.dumps(
-        {"success": False, "error": {"code": "REQUEST_TOO_LARGE", "message": message}}
-    ).encode("utf-8")
+async def _reject(
+    send: Send, status: int, message: str, *, code: str = "REQUEST_TOO_LARGE"
+) -> None:
+    body = json.dumps({"success": False, "error": {"code": code, "message": message}}).encode(
+        "utf-8"
+    )
     await send(
         {
             "type": "http.response.start",

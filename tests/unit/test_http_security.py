@@ -2,7 +2,11 @@
 
 import asyncio
 
-from tools.http_security import RequestLimitsMiddleware, StreamingRequestLimitsMiddleware
+from tools.http_security import (
+    ConnectionLimitMiddleware,
+    RequestLimitsMiddleware,
+    StreamingRequestLimitsMiddleware,
+)
 
 
 def _run(
@@ -127,3 +131,38 @@ def test_streaming_middleware_rejects_content_length_before_app() -> None:
     )
     assert called is False
     assert sent[0]["status"] == 413
+
+
+def test_connection_limit_rejects_overlapping_request() -> None:
+    async def scenario() -> None:
+        entered = asyncio.Event()
+        release = asyncio.Event()
+        first_sent: list[dict] = []
+        second_sent: list[dict] = []
+
+        async def app(scope, receive, send):
+            entered.set()
+            await release.wait()
+            await send({"type": "http.response.start", "status": 200, "headers": []})
+            await send({"type": "http.response.body", "body": b"ok"})
+
+        async def receive():
+            return {"type": "http.request", "body": b"", "more_body": False}
+
+        async def first_send(message):
+            first_sent.append(message)
+
+        async def second_send(message):
+            second_sent.append(message)
+
+        middleware = ConnectionLimitMiddleware(app, limit=1)
+        scope = {"type": "http", "method": "POST", "path": "/mcp", "headers": []}
+        first = asyncio.create_task(middleware(scope, receive, first_send))
+        await asyncio.wait_for(entered.wait(), timeout=1)
+        await middleware(scope, receive, second_send)
+        assert second_sent[0]["status"] == 503
+        release.set()
+        await asyncio.wait_for(first, timeout=1)
+        assert first_sent[0]["status"] == 200
+
+    asyncio.run(scenario())

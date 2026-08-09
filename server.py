@@ -25,7 +25,11 @@ from multiprocessing.connection import Connection
 from pathlib import Path
 from typing import Any, cast
 
-from tools.http_security import RequestLimitsMiddleware, StreamingRequestLimitsMiddleware
+from tools.http_security import (
+    ConnectionLimitMiddleware,
+    RequestLimitsMiddleware,
+    StreamingRequestLimitsMiddleware,
+)
 from tools.invocation import (
     InvocationError,
     Principal,
@@ -921,6 +925,7 @@ def run_mcp_http(server: FastMCP) -> None:
 
     middleware = [
         Middleware(TrustedHostMiddleware, allowed_hosts=MCP_ALLOWED_HOSTS),
+        Middleware(ConnectionLimitMiddleware, limit=MCP_HTTP_CONNECTION_LIMIT),
         Middleware(
             StreamingRequestLimitsMiddleware,
             max_body_bytes=MCP_HTTP_MAX_BODY_BYTES,
@@ -950,7 +955,6 @@ def run_mcp_http(server: FastMCP) -> None:
         port=MCP_PORT,
         log_level=LOG_LEVEL.lower(),
         access_log=LOG_LEVEL.upper() == "DEBUG",
-        limit_concurrency=MCP_HTTP_CONNECTION_LIMIT,
         timeout_keep_alive=MCP_HTTP_KEEPALIVE_SECONDS,
         h11_max_incomplete_event_size=MCP_HTTP_MAX_HEADER_BYTES,
     )
