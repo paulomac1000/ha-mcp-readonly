@@ -60,7 +60,7 @@ jobs:
             -p 127.0.0.1:9092:9092 \
             -e MCP_TRANSPORT=http -e MCP_BIND_HOST=0.0.0.0 \
             -e MCP_ALLOWED_HOSTS=127.0.0.1,localhost \
-            -e MCP_HTTP_STATELESS=1 \
+            -e MCP_HTTP_STATELESS=0 \
             -e MCP_AUTH_TOKEN=official-client-ci-token \
             -e HA_URL=http://unreachable.invalid:8123 -e HA_TOKEN=ci-backend-token \
             -e HA_CONFIG_PATH=/config \
