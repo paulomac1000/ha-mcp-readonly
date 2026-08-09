@@ -81,9 +81,7 @@ def test_streaming_middleware_preserves_receive_lifecycle() -> None:
     async def send(message):
         sent.append(message)
 
-    middleware = StreamingRequestLimitsMiddleware(
-        app, max_body_bytes=8, max_header_bytes=64
-    )
+    middleware = StreamingRequestLimitsMiddleware(app, max_body_bytes=8, max_header_bytes=64)
     asyncio.run(
         middleware(
             {
@@ -114,9 +112,7 @@ def test_streaming_middleware_rejects_content_length_before_app() -> None:
     async def send(message):
         sent.append(message)
 
-    middleware = StreamingRequestLimitsMiddleware(
-        app, max_body_bytes=8, max_header_bytes=64
-    )
+    middleware = StreamingRequestLimitsMiddleware(app, max_body_bytes=8, max_header_bytes=64)
     asyncio.run(
         middleware(
             {
