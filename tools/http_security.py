@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from collections import deque
+
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 
@@ -43,10 +44,12 @@ class RequestLimitsMiddleware:
 
         buffered: deque[Message] = deque()
         consumed = 0
+        saw_disconnect = False
         while True:
             message = await receive()
             buffered.append(message)
             if message.get("type") == "http.disconnect":
+                saw_disconnect = True
                 break
             if message.get("type") != "http.request":
                 continue
@@ -62,7 +65,12 @@ class RequestLimitsMiddleware:
         async def replay_receive() -> Message:
             if buffered:
                 return buffered.popleft()
-            return {"type": "http.disconnect"}
+            if saw_disconnect:
+                return {"type": "http.disconnect"}
+            # Streamable HTTP implementations may keep reading after the request
+            # body to observe an actual client disconnect while streaming the
+            # response. Do not manufacture a disconnect after replaying the body.
+            return await receive()
 
         await self.app(scope, replay_receive, send)
 
