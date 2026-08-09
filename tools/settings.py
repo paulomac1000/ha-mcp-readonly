@@ -52,7 +52,7 @@ class RuntimeSettings:
     log_level: str
 
     @classmethod
-    def from_env(cls) -> "RuntimeSettings":
+    def from_env(cls) -> RuntimeSettings:
         transport = os.getenv("MCP_TRANSPORT", "stdio").strip().casefold()
         if transport == "streamable-http":
             transport = "http"
