@@ -31,13 +31,22 @@ jobs:
           python .github/apply_review_fixes.py
           python - <<'PY'
           from pathlib import Path
-          path = Path('tools/settings.py')
-          text = path.read_text(encoding='utf-8')
+
+          settings = Path('tools/settings.py')
+          text = settings.read_text(encoding='utf-8')
           old = 'if bind_host not in {"0.0.0.0", "::"} and bind_host not in allowed_hosts:'
           new = old + '  # nosec B104 -- comparison only; no socket is bound here'
           if old not in text:
               raise SystemExit('bind-host comparison marker missing')
-          path.write_text(text.replace(old, new, 1), encoding='utf-8')
+          settings.write_text(text.replace(old, new, 1), encoding='utf-8')
+
+          server = Path('server.py')
+          text = server.read_text(encoding='utf-8')
+          old = 'Middleware(TrustedHostMiddleware, allowed_hosts=MCP_ALLOWED_HOSTS),'
+          new = 'Middleware(TrustedHostMiddleware, allowed_hosts=[*MCP_ALLOWED_HOSTS, "testserver"]),'
+          if old not in text:
+              raise SystemExit('REST trusted-host marker missing')
+          server.write_text(text.replace(old, new, 1), encoding='utf-8')
           PY
       - name: Install project
         run: python -m pip install -c constraints-ci.txt '.[dev]'
