@@ -1,0 +1,64 @@
+name: Apply review hardening once
+
+on:
+  push:
+    branches:
+      - agent/ai-skills-compliance-refactor
+
+permissions:
+  contents: write
+
+concurrency:
+  group: apply-review-hardening-once
+  cancel-in-progress: true
+
+jobs:
+  apply:
+    if: ${{ !contains(github.event.head_commit.message, 'fix: harden 2.0 migration contracts') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v6
+        with:
+          ref: agent/ai-skills-compliance-refactor
+          fetch-depth: 0
+          persist-credentials: true
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
+        with:
+          python-version: "3.13"
+          cache: pip
+      - name: Apply reviewed fixes
+        run: python .github/apply_review_fixes.py
+      - name: Install project
+        run: python -m pip install -c constraints-ci.txt '.[dev]'
+      - name: Ruff
+        run: |
+          ruff check .
+          ruff format --check .
+      - name: Type checking
+        run: >-
+          mypy server.py tools/ context_generator/core.py context_generator/config.py
+          context_generator/runtime.py context_generator/provenance.py context_generator/snapshot.py
+          scripts/verify_runtime_endpoints.py --strict
+      - name: Security lint
+        run: bandit -r server.py tools/ context_generator/ ha_graph/ -ll
+      - name: Unit and protocol tests
+        run: |
+          pytest tests/unit -q
+          pytest tests/protocol -q
+      - name: Runtime contract self-check
+        run: python scripts/verify_runtime_endpoints.py --self-check
+      - name: Build wheel
+        run: |
+          python -m build --wheel --no-isolation
+          python -m pip check
+      - name: Commit and push final hardening
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          git commit -m "fix: harden 2.0 migration contracts"
+          git push origin HEAD:agent/ai-skills-compliance-refactor
