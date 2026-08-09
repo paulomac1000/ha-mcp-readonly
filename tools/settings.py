@@ -52,7 +52,7 @@ class RuntimeSettings:
     log_level: str
 
     @classmethod
-    def from_env(cls) -> RuntimeSettings:
+    def from_env(cls) -> "RuntimeSettings":
         transport = os.getenv("MCP_TRANSPORT", "stdio").strip().casefold()
         if transport == "streamable-http":
             transport = "http"
@@ -114,7 +114,10 @@ class RuntimeSettings:
             mcp_http_keepalive_seconds=_env_int(
                 "MCP_HTTP_KEEPALIVE_SECONDS", 5, minimum=1, maximum=300
             ),
-            mcp_http_stateless=_env_bool("MCP_HTTP_STATELESS", True),
+            # FastMCP 3.x is the session-based 2025-11-25 protocol lane. Stateful
+            # HTTP is the conservative default; stateless mode remains an explicit
+            # operator opt-in and needs its own exact-client evidence before use.
+            mcp_http_stateless=_env_bool("MCP_HTTP_STATELESS", False),
             output_path=output_path,
             context_output_root=os.getenv("CONTEXT_OUTPUT_ROOT", str(Path(output_path).parent)),
             log_level=os.getenv("LOG_LEVEL", "INFO"),
