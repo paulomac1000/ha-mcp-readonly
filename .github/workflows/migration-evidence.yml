@@ -47,13 +47,19 @@ jobs:
           bandit -r server.py tools/ context_generator/ ha_graph/ -ll
           pytest tests/unit -q
           pytest tests/protocol -q
-      - name: Build exact wheel and exercise stdio with independent official client
+      - name: Build exact constrained wheel runtime and exercise stdio with independent official client
         run: |
           python -m pip install 'build==1.5.0' 'setuptools==83.0.0' 'wheel==0.47.0'
           python -m build --wheel --no-isolation
           python -m venv /tmp/migration-wheel
-          /tmp/migration-wheel/bin/python -m pip install dist/*.whl
+          /tmp/migration-wheel/bin/python -m pip install -c constraints-ci.txt dist/*.whl
           /tmp/migration-wheel/bin/python -m pip check
+          /tmp/migration-wheel/bin/python - <<'PY'
+          import importlib.metadata
+          assert importlib.metadata.version('fastmcp') == '3.4.6'
+          assert importlib.metadata.version('mcp') == '1.29.0'
+          assert importlib.metadata.version('starlette') == '1.4.1'
+          PY
           python -m venv /tmp/migration-official-client
           /tmp/migration-official-client/bin/python -m pip install 'mcp==1.29.0'
           MCP_EXPECTED_VERSION=2.0.0 \
