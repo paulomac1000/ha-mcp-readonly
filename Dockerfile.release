@@ -12,9 +12,11 @@ RUN groupadd --gid 10001 haobserver \
     && mkdir -p /app/output /config \
     && chown -R haobserver:haobserver /app /config
 WORKDIR /app
+COPY constraints-ci.txt /tmp/runtime-constraints.txt
 COPY dist/*.whl /tmp/
-RUN python -m pip install --no-cache-dir /tmp/*.whl \
-    && rm /tmp/*.whl
+RUN python -m pip install --no-cache-dir -c /tmp/runtime-constraints.txt /tmp/*.whl \
+    && python -m pip check \
+    && rm /tmp/*.whl /tmp/runtime-constraints.txt
 USER 10001:10001
 EXPOSE 9091 9092
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
