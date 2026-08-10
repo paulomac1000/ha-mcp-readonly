@@ -37,6 +37,7 @@ jobs:
         run: |
           python -m venv .venv
           .venv/bin/python -m pip install -c constraints-ci.txt '.[dev]'
+          .venv/bin/python -m pip install 'pre-commit==4.3.0'
       - name: Format and lint
         run: |
           .venv/bin/ruff format .
