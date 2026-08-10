@@ -71,19 +71,49 @@ jobs:
             -e HA_URL=http://unreachable.invalid:8123 -e HA_TOKEN=ci-backend-token \
             -e HA_CONFIG_PATH=/config -e LOG_LEVEL=DEBUG \
             ha-mcp-readonly:official-${GITHUB_SHA}
-          for _ in $(seq 1 100); do
-            if python - <<'PY'
-          import socket
-          try:
-              with socket.create_connection(('127.0.0.1', 9092), timeout=.2):
-                  pass
-          except OSError:
-              raise SystemExit(1)
+          python - <<'PY'
+          import json
+          import time
+          import urllib.error
+          import urllib.request
+
+          payload = json.dumps({
+              "jsonrpc": "2.0",
+              "id": 1,
+              "method": "initialize",
+              "params": {
+                  "protocolVersion": "2025-11-25",
+                  "capabilities": {},
+                  "clientInfo": {"name": "readiness-probe", "version": "1"},
+              },
+          }).encode()
+          deadline = time.monotonic() + 30
+          last = "no response"
+          while time.monotonic() < deadline:
+              request = urllib.request.Request(
+                  "http://127.0.0.1:9092/mcp",
+                  data=payload,
+                  method="POST",
+                  headers={
+                      "Accept": "application/json, text/event-stream",
+                      "Content-Type": "application/json",
+                  },
+              )
+              try:
+                  urllib.request.urlopen(request, timeout=1)
+              except urllib.error.HTTPError as exc:
+                  if exc.code == 401:
+                      break
+                  last = f"HTTP {exc.code}"
+              except (OSError, urllib.error.URLError) as exc:
+                  last = type(exc).__name__
+              else:
+                  last = "anonymous initialize unexpectedly succeeded"
+              time.sleep(0.2)
+          else:
+              raise SystemExit(f"MCP HTTP stack did not become ready: {last}")
           PY
-            then break; fi
-            sleep .2
-          done
-          docker inspect --format '{{.State.Status}} {{.State.Running}} {{.State.ExitCode}}' ha-mcp-official
+          docker inspect --format '{{.State.Status}}' ha-mcp-official | grep -qx running
       - name: Raw authenticated initialize diagnostic
         run: |
           /tmp/official-client/bin/python - <<'PY'
@@ -136,7 +166,10 @@ jobs:
           request = urllib.request.Request(
               url,
               data=json.dumps({'jsonrpc':'2.0','id':1,'method':'initialize'}).encode(),
-              headers={'Content-Type':'application/json'},
+              headers={
+                  'Content-Type':'application/json',
+                  'Accept':'application/json, text/event-stream',
+              },
               method='POST',
           )
           try:
