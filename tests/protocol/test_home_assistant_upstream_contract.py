@@ -99,14 +99,7 @@ class _RecordedWebSocket:
     def __exit__(self, *args: object) -> None:
         return None
 
-    def send(self, raw: str) -> None:
-        message = json.loads(raw)
-        if message.get("type") == "auth":
-            assert message["access_token"] == "upstream-contract-token"
-            self.queue.append(json.dumps({"type": "auth_ok"}))
-            return
-        request_id = message["id"]
-        command = message["type"]
+    def _result_for(self, command: str) -> Any:
         results: dict[str, Any] = {
             "config/area_registry/list": [{"area_id": "contract", "name": "Contract"}],
             "config/device_registry/list": [{"id": "device-contract", "name": "Contract"}],
@@ -125,6 +118,18 @@ class _RecordedWebSocket:
             "system_health/info": {"homeassistant": {"version": "2026.8.0"}},
             "todo/item/list": {"items": [{"uid": "one", "summary": "Contract task"}]},
         }
+        if command not in results:
+            raise AssertionError(f"recorded contract has no response for command: {command}")
+        return results[command]
+
+    def send(self, raw: str) -> None:
+        message = json.loads(raw)
+        if message.get("type") == "auth":
+            assert message["access_token"] == "upstream-contract-token"
+            self.queue.append(json.dumps({"type": "auth_ok"}))
+            return
+        request_id = message["id"]
+        command = message["type"]
         if command == "weather/subscribe_forecast":
             self._forecast_subscription = request_id
             self.queue.append(
@@ -156,15 +161,14 @@ class _RecordedWebSocket:
             )
             self._forecast_subscription = None
             return
-        if command not in results:
-            raise AssertionError(f"recorded contract has no response for command: {command}")
+        result = self._result_for(command)
         self.queue.append(
             json.dumps(
                 {
                     "id": request_id,
                     "type": "result",
                     "success": True,
-                    "result": results[command],
+                    "result": result,
                 }
             )
         )
@@ -259,51 +263,10 @@ class _CassetteWebSocket(_RecordedWebSocket):
         super().__init__()
         self._cassette = _CASSETTE["websocket"]
 
-    def send(self, raw: str) -> None:
-        message = json.loads(raw)
-        if message.get("type") == "auth":
-            assert message["access_token"] == "upstream-contract-token"
-            self.queue.append(json.dumps({"type": "auth_ok"}))
-            return
-        request_id = message["id"]
-        command = message["type"]
-        if command == "weather/subscribe_forecast":
-            self._forecast_subscription = request_id
-            self.queue.append(
-                json.dumps({"id": request_id, "type": "result", "success": True, "result": None})
-            )
-            self.queue.append(
-                json.dumps(
-                    {
-                        "id": request_id,
-                        "type": "event",
-                        "event": {"forecast": [{"datetime": "2026-08-09T00:00:00+00:00"}]},
-                    }
-                )
-            )
-            return
-        if command == "unsubscribe_events":
-            if self._forecast_subscription is not None:
-                self.queue.append(
-                    json.dumps(
-                        {
-                            "id": self._forecast_subscription,
-                            "type": "event",
-                            "event": {"forecast": []},
-                        }
-                    )
-                )
-            self.queue.append(
-                json.dumps({"id": request_id, "type": "result", "success": True, "result": None})
-            )
-            self._forecast_subscription = None
-            return
+    def _result_for(self, command: str) -> Any:
         if command not in self._cassette:
             raise AssertionError(f"recorded cassette has no response for command: {command}")
-        result = self._cassette[command]
-        self.queue.append(
-            json.dumps({"id": request_id, "type": "result", "success": True, "result": result})
-        )
+        return self._cassette[command]
 
 
 def test_recorded_real_home_assistant_rest_and_websocket_contract(
