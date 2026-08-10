@@ -54,6 +54,17 @@ def test_in_root_symlink_is_rejected(tmp_path: Path) -> None:
         policy.resolve(root / "linked" / "data.yaml", require_file=True)
 
 
+@pytest.mark.parametrize("component", ["..", "~"])
+def test_ambiguous_path_components_are_rejected_before_resolution(
+    tmp_path: Path, component: str
+) -> None:
+    root = tmp_path / "config"
+    root.mkdir()
+    policy = PathPolicy.from_paths([root])
+    with pytest.raises(SecurityBoundaryError, match="ambiguous path components"):
+        policy.resolve(root / component / "configuration.yaml", require_exists=False)
+
+
 def test_artifact_output_is_confined_and_typed(tmp_path: Path) -> None:
     root = tmp_path / "artifacts"
     root.mkdir()

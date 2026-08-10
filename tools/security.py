@@ -118,7 +118,10 @@ class PathPolicy:
         text = os.fspath(raw_path)
         if not text or "\x00" in text:
             raise SecurityBoundaryError("Invalid path")
-        candidate = Path(text).expanduser()
+        raw_candidate = Path(text)
+        if any(part in {"..", "~"} for part in raw_candidate.parts):
+            raise SecurityBoundaryError("Access denied: ambiguous path components are not allowed")
+        candidate = raw_candidate.expanduser()
         if not candidate.is_absolute():
             if len(self.roots) != 1:
                 raise SecurityBoundaryError("Relative paths require exactly one configured root")
