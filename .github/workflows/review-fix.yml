@@ -1,0 +1,64 @@
+name: Review fix validation
+
+on:
+  push:
+    branches: [agent/ai-skills-compliance-refactor]
+    paths:
+      - .github/workflows/review-fix.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch-and-validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v6
+        with:
+          ref: agent/ai-skills-compliance-refactor
+          fetch-depth: 1
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
+        with:
+          python-version: "3.13"
+          cache: pip
+      - name: Create isolated environment
+        run: |
+          python -m venv .venv-review-fix
+          .venv-review-fix/bin/python -m pip install -c constraints-ci.txt '.[dev]'
+      - name: Apply verified review fixes
+        run: |
+          .venv-review-fix/bin/python -m py_compile .github/review-fix.py
+          .venv-review-fix/bin/python .github/review-fix.py
+          .venv-review-fix/bin/ruff check . --fix
+          .venv-review-fix/bin/ruff format .
+      - name: Validate source and tests
+        run: |
+          .venv-review-fix/bin/ruff check .
+          .venv-review-fix/bin/ruff format --check .
+          .venv-review-fix/bin/mypy server.py tools/ context_generator/core.py context_generator/config.py \
+            context_generator/runtime.py context_generator/provenance.py context_generator/snapshot.py \
+            scripts/verify_runtime_endpoints.py --strict
+          .venv-review-fix/bin/pytest tests/unit tests/protocol -q \
+            --cov=tools \
+            --cov=context_generator.core \
+            --cov=context_generator.config \
+            --cov=context_generator.runtime \
+            --cov=context_generator.provenance \
+            --cov=context_generator.snapshot \
+            --cov-report=term-missing
+          .venv-review-fix/bin/python -m compileall -q server.py tools context_generator ha_graph
+      - name: Commit validated non-workflow changes
+        env:
+          BRANCH: agent/ai-skills-compliance-refactor
+        run: |
+          git config user.name "openai-review-fix"
+          git config user.email "openai-review-fix@users.noreply.github.com"
+          git add -A
+          git reset -- .github/review-fix.py .github/workflows/review-fix.yml
+          if git diff --cached --quiet; then
+            echo "No validated source changes to commit"
+            exit 0
+          fi
+          git commit -m "fix: address remaining PR review findings"
+          git push origin "HEAD:$BRANCH"
