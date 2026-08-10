@@ -74,6 +74,41 @@ jobs:
           if [ "$first_status" -ne 0 ]; then
             PATH="$PWD/.venv/bin:$PATH" .venv/bin/pre-commit run --all-files
           fi
+      - name: Create validated workflow blobs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python - <<'PY'
+          import base64
+          import json
+          import os
+          import urllib.request
+          from pathlib import Path
+
+          repo = os.environ['GITHUB_REPOSITORY']
+          token = os.environ['GH_TOKEN']
+          for path in ('.github/workflows/ci.yml', '.github/workflows/publish.yml'):
+              raw = Path(path).read_bytes()
+              assert raw.endswith(b'\n'), f'{path} still lacks final newline'
+              payload = json.dumps({
+                  'content': base64.b64encode(raw).decode('ascii'),
+                  'encoding': 'base64',
+              }).encode('utf-8')
+              request = urllib.request.Request(
+                  f'https://api.github.com/repos/{repo}/git/blobs',
+                  data=payload,
+                  method='POST',
+                  headers={
+                      'Authorization': f'Bearer {token}',
+                      'Accept': 'application/vnd.github+json',
+                      'X-GitHub-Api-Version': '2022-11-28',
+                      'Content-Type': 'application/json',
+                  },
+              )
+              with urllib.request.urlopen(request, timeout=20) as response:
+                  blob = json.load(response)
+              print(f'VALIDATED_BLOB {path} {blob["sha"]}')
+          PY
       - name: Compile gate
         run: .venv/bin/python -m compileall -q server.py tools context_generator scripts tests
       - name: Commit validated source changes
