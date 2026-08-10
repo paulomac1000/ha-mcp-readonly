@@ -19,6 +19,7 @@ env:
   MCP_TRANSPORT: stdio
   MCP_DEV_TOOLS_ENABLED: "0"
   HA_CONFIG_PATH: /tmp
+  ASSESSED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
 
 jobs:
   quality:
@@ -28,6 +29,7 @@ jobs:
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v6
         with:
+          ref: ${{ env.ASSESSED_SHA }}
           persist-credentials: false
       - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
         with:
@@ -115,6 +117,7 @@ jobs:
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v6
         with:
+          ref: ${{ env.ASSESSED_SHA }}
           persist-credentials: false
       - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
         with:
@@ -151,6 +154,7 @@ jobs:
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v6
         with:
+          ref: ${{ env.ASSESSED_SHA }}
           persist-credentials: false
       - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
         with:
@@ -220,7 +224,7 @@ jobs:
           PY
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
         with:
-          name: python-wheel-${{ github.sha }}
+          name: python-wheel-${{ env.ASSESSED_SHA }}
           path: dist/*.whl
           if-no-files-found: error
           retention-days: 7
@@ -237,10 +241,11 @@ jobs:
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v6
         with:
+          ref: ${{ env.ASSESSED_SHA }}
           persist-credentials: false
       - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
         with:
-          name: python-wheel-${{ github.sha }}
+          name: python-wheel-${{ env.ASSESSED_SHA }}
           path: dist
       - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
         if: matrix.arch == 'amd64'
@@ -258,7 +263,7 @@ jobs:
           context: .
           file: Dockerfile.release
           platforms: linux/${{ matrix.arch }}
-          tags: ha-mcp-readonly:${{ github.sha }}-${{ matrix.arch }}
+          tags: ha-mcp-readonly:${{ env.ASSESSED_SHA }}-${{ matrix.arch }}
           outputs: type=docker,dest=/tmp/ha-mcp-${{ matrix.arch }}.tar
           cache-from: type=gha,scope=${{ matrix.arch }}
           cache-to: type=gha,mode=max,scope=${{ matrix.arch }}
@@ -266,7 +271,7 @@ jobs:
         run: docker load --input /tmp/ha-mcp-${{ matrix.arch }}.tar
       - name: Verify non-root image and catalog
         run: |
-          IMAGE=ha-mcp-readonly:${GITHUB_SHA}-${{ matrix.arch }}
+          IMAGE=ha-mcp-readonly:${ASSESSED_SHA}-${{ matrix.arch }}
           test "$(docker run --rm --platform linux/${{ matrix.arch }} --entrypoint=id "$IMAGE" -u)" = "10001"
           docker run --rm --platform linux/${{ matrix.arch }} --entrypoint=python \
             -e MCP_TRANSPORT=stdio -e MCP_DEV_TOOLS_ENABLED=0 \
@@ -274,7 +279,7 @@ jobs:
       - name: Verify default image health configuration
         run: |
           set -euo pipefail
-          IMAGE=ha-mcp-readonly:${GITHUB_SHA}-${{ matrix.arch }}
+          IMAGE=ha-mcp-readonly:${ASSESSED_SHA}-${{ matrix.arch }}
           NAME=ha-mcp-default-${{ matrix.arch }}
           docker run -dit --rm --platform linux/${{ matrix.arch }} \
             --name "$NAME" -e HA_CONFIG_PATH=/tmp "$IMAGE"
@@ -302,7 +307,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          IMAGE=ha-mcp-readonly:${GITHUB_SHA}-amd64
+          IMAGE=ha-mcp-readonly:${ASSESSED_SHA}-amd64
           CONFIG_ROOT="$RUNNER_TEMP/ha-config"
           mkdir -p "$CONFIG_ROOT/.storage"
           cat > "$CONFIG_ROOT/configuration.yaml" <<'YAML'
@@ -357,12 +362,12 @@ jobs:
             python scripts/verify_runtime_endpoints.py --strict
       - name: Record exact image evidence
         run: |
-          IMAGE=ha-mcp-readonly:${GITHUB_SHA}-${{ matrix.arch }}
+          IMAGE=ha-mcp-readonly:${ASSESSED_SHA}-${{ matrix.arch }}
           docker image inspect --format '{{.Id}}' "$IMAGE" > /tmp/image-${{ matrix.arch }}.id
           (cd /tmp && sha256sum ha-mcp-${{ matrix.arch }}.tar > ha-mcp-${{ matrix.arch }}.tar.sha256)
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
         with:
-          name: container-image-${{ github.sha }}-${{ matrix.arch }}
+          name: container-image-${{ env.ASSESSED_SHA }}-${{ matrix.arch }}
           path: |
             /tmp/ha-mcp-${{ matrix.arch }}.tar
             /tmp/ha-mcp-${{ matrix.arch }}.tar.sha256
