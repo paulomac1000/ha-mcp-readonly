@@ -19,14 +19,20 @@ import yaml
 
 FRONTMATTER = re.compile(r"\A---\s*\n(.*?)\n---\s*\n", re.S)
 HEADING = re.compile(r"^(#{1,6})\s+(.+?)\s*$", re.M)
-FENCE_OPENER = re.compile(r"^(?P<indent>[ \t]*)(?P<fence>`{3,}|~{3,})(?P<info>[^\r\n]*)$")
+FENCE_OPENER = re.compile(
+    r"^(?P<indent>[ \t]*)(?P<fence>`{3,}|~{3,})(?P<info>[^\r\n]*)$"
+)
 REFERENCE_DEFINITION = re.compile(
     r"^(?P<indent>[ ]{0,3})\[(?P<label>[^\]\n]+)\]:[ \t]*(?P<raw>[^\r\n]+)$",
     re.M,
 )
-REFERENCE_LINK = re.compile(r"(?<!\!)\[(?P<label>(?:\\.|[^\]\n])+)\]\[(?P<reference>[^\]\n]*)\]")
+REFERENCE_LINK = re.compile(
+    r"(?<!\!)\[(?P<label>(?:\\.|[^\]\n])+)\]\[(?P<reference>[^\]\n]*)\]"
+)
 BRACKETED_LABEL = re.compile(r"\[(?P<label>(?:\\.|[^\]\n])+)\]")
-DOC_ID = re.compile(r"^(workflow|reference|system|guide|decision|contract)\.[a-z0-9][a-z0-9.-]*$")
+DOC_ID = re.compile(
+    r"^(workflow|reference|system|guide|decision|contract)\.[a-z0-9][a-z0-9.-]*$"
+)
 COMMON_REQUIRED = {"description", "doc_id", "type", "status", "rigor", "owners"}
 VALID_TYPES = {"workflow", "reference", "system", "guide", "decision", "contract"}
 VALID_STATUS = {"draft", "active", "evolving", "deprecated", "archived"}
@@ -371,7 +377,9 @@ def _typed_verification_finding(metadata: Mapping[str, Any]) -> str | None:
     kind = verification.get("kind")
     value = verification.get("value")
     if kind not in VALID_VERIFICATION_KINDS:
-        return "verification.kind must be command, ci-job, manual-review, or observable"
+        return (
+            "verification.kind must be command, ci-job, manual-review, or observable"
+        )
     if not isinstance(value, str) or not value.strip():
         return "verification.value must be a non-empty string"
     return None
@@ -435,7 +443,9 @@ def _load_governance(path: Path) -> Governance:
         for key in DEFAULT_PROFILES["governed"]:
             candidate = value[key]
             if type(candidate) is not bool:
-                raise ValueError(f"profile {name!r} option {key!r} must be boolean")
+                raise ValueError(
+                    f"profile {name!r} option {key!r} must be boolean"
+                )
             profile_options[key] = candidate
         profiles[name] = profile_options
     default_profile = raw.get("default_profile", "governed")
@@ -447,7 +457,9 @@ def _load_governance(path: Path) -> Governance:
     assignments: list[tuple[str, str]] = []
     for entry in raw_assignments:
         if not isinstance(entry, dict) or set(entry) != {"match", "profile"}:
-            raise ValueError("each governance document entry needs only match and profile")
+            raise ValueError(
+                "each governance document entry needs only match and profile"
+            )
         pattern = entry["match"]
         profile = entry["profile"]
         if (
@@ -456,7 +468,9 @@ def _load_governance(path: Path) -> Governance:
             or pattern.startswith("/")
             or "\\" in pattern
         ):
-            raise ValueError("governance match must be a safe repository-relative POSIX glob")
+            raise ValueError(
+                "governance match must be a safe repository-relative POSIX glob"
+            )
         if any(part == ".." for part in PurePosixPath(pattern).parts):
             raise ValueError("governance match must not contain parent traversal")
         if profile not in profiles:
@@ -472,7 +486,9 @@ def _profile_for(
 ) -> Mapping[str, bool]:
     if governance is None:
         return DEFAULT_PROFILES["governed"]
-    relative = path.resolve(strict=False).relative_to(repository_root.resolve()).as_posix()
+    relative = path.resolve(strict=False).relative_to(
+        repository_root.resolve()
+    ).as_posix()
     selected = governance.default_profile
     for pattern, profile in governance.assignments:
         if fnmatch.fnmatchcase(relative, pattern):
@@ -589,7 +605,9 @@ def _validate_links(
     anchor_cache: dict[Path, set[str]] = {}
     for destination in iter_link_destinations(body):
         decoded = unquote(destination)
-        if re.match(r"^[a-z][a-z0-9+.-]*:", decoded, re.I) or decoded.startswith("//"):
+        if re.match(r"^[a-z][a-z0-9+.-]*:", decoded, re.I) or decoded.startswith(
+            "//"
+        ):
             continue
         raw_path, separator, fragment = decoded.partition("#")
         display = decoded
@@ -602,7 +620,9 @@ def _validate_links(
                 repository_root,
             )
             if unsafe:
-                findings.append(Finding(path, f"unsafe relative link: {raw_path}: {unsafe}"))
+                findings.append(
+                    Finding(path, f"unsafe relative link: {raw_path}: {unsafe}")
+                )
                 continue
             if target_path is None:
                 findings.append(Finding(path, f"broken relative link: {raw_path}"))
@@ -614,11 +634,15 @@ def _validate_links(
                     _anchors(target_path.read_text(encoding="utf-8")),
                 )
             except (OSError, UnicodeDecodeError):
-                findings.append(Finding(path, f"cannot inspect relative anchor: {display}"))
+                findings.append(
+                    Finding(path, f"cannot inspect relative anchor: {display}")
+                )
                 continue
             normalized_fragment = _github_anchor(fragment)
             if normalized_fragment not in anchors:
-                findings.append(Finding(path, f"broken relative anchor: {display}"))
+                findings.append(
+                    Finding(path, f"broken relative anchor: {display}")
+                )
     return findings
 
 
@@ -650,7 +674,9 @@ def _metadata_findings(
         )
     missing = sorted(field for field in COMMON_REQUIRED if not metadata.get(field))
     if missing:
-        findings.append(Finding(path, f"missing required fields: {', '.join(missing)}"))
+        findings.append(
+            Finding(path, f"missing required fields: {', '.join(missing)}")
+        )
     description = metadata.get("description")
     if not isinstance(description, str) or not description.strip():
         findings.append(Finding(path, "description must be a non-empty string"))
@@ -660,7 +686,9 @@ def _metadata_findings(
         and owners
         and all(isinstance(owner, str) and owner.strip() for owner in owners)
     ):
-        findings.append(Finding(path, "owners must be a non-empty list of role or team names"))
+        findings.append(
+            Finding(path, "owners must be a non-empty list of role or team names")
+        )
 
     doc_type = metadata.get("type")
     doc_id = metadata.get("doc_id")
@@ -682,7 +710,9 @@ def _metadata_findings(
         findings.append(Finding(path, f"invalid rigor: {rigor}"))
     authored = sorted(AUTOMATION_FIELDS.intersection(metadata))
     if authored:
-        findings.append(Finding(path, f"automation-owned fields: {', '.join(authored)}"))
+        findings.append(
+            Finding(path, f"automation-owned fields: {', '.join(authored)}")
+        )
     if require_verification_by_rigor:
         clean_body = strip_inline_code_spans(strip_fenced_blocks(body))
         findings.extend(
@@ -789,10 +819,17 @@ def validate(
         headings = HEADING.findall(structural_body)
         if sum(level == "#" for level, _ in headings) != 1:
             findings.append(Finding(path, "expected exactly one H1"))
-        normalized = [re.sub(r"[^a-z0-9]+", " ", title.lower()).strip() for _, title in headings]
-        duplicates = sorted({title for title in normalized if normalized.count(title) > 1})
+        normalized = [
+            re.sub(r"[^a-z0-9]+", " ", title.lower()).strip()
+            for _, title in headings
+        ]
+        duplicates = sorted(
+            {title for title in normalized if normalized.count(title) > 1}
+        )
         if duplicates:
-            findings.append(Finding(path, f"duplicate headings: {', '.join(duplicates)}"))
+            findings.append(
+                Finding(path, f"duplicate headings: {', '.join(duplicates)}")
+            )
     if selected.get("check_links", True):
         findings.extend(
             _validate_links(
@@ -822,14 +859,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
     root = args.repository_root.resolve()
-    governance_path = args.governance or root / "skills/afds-doc-writer/governance.yaml"
+    governance_path = (
+        args.governance or root / "skills/afds-doc-writer/governance.yaml"
+    )
     governance: Governance | None = None
     findings: list[Finding] = []
     if governance_path.exists():
         try:
             governance = _load_governance(governance_path)
         except (OSError, ValueError, yaml.YAMLError) as exc:
-            findings.append(Finding(governance_path, f"invalid governance: {exc}"))
+            findings.append(
+                Finding(governance_path, f"invalid governance: {exc}")
+            )
     paths, input_findings = collect_files(args.inputs)
     findings.extend(input_findings)
     findings.extend(
