@@ -6,6 +6,7 @@ from dataclasses import dataclass
 
 import pytest
 
+from tests.unit.manifest_helpers import register_test_manifest as _register
 from tools.invocation import LOCAL_PRINCIPAL, InvocationError, principal_scope
 from tools.manifests import (
     _inject_meta_envelope,
@@ -25,14 +26,6 @@ from tools.manifests import (
 class FakeTool:
     fn: object
     description: str = ""
-
-
-def _register(name: str, **updates: object) -> None:
-    manifest = make_manifest(name)
-    manifest.update(updates)
-    active = set(get_all_manifests(active_only=True))
-    register_manifest(name, manifest)
-    set_active_tools(active | {name})
 
 
 def test_read_manifest_declares_enforced_policy() -> None:

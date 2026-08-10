@@ -22,10 +22,7 @@ from tools.utils import make_ha_request
 
 def test_empty_active_catalog_stays_empty() -> None:
     set_active_tools(set())
-    try:
-        assert get_all_manifests(active_only=True) == {}
-    finally:
-        set_active_tools(set(get_all_manifests()))
+    assert get_all_manifests(active_only=True) == {}
 
 
 def test_inactive_operation_is_not_executable() -> None:
@@ -37,13 +34,10 @@ def test_inactive_operation_is_not_executable() -> None:
         capabilities=frozenset({"ha.read"}),
         targets=frozenset({"home_assistant"}),
     )
-    try:
-        with principal_scope(principal), pytest.raises(InvocationError) as exc:
-            kernel.invoke_sync("get_all_states", lambda: {"ok": True})
-        assert exc.value.code == "UNAVAILABLE_DEPENDENCY"
-        assert "backend unavailable" in str(exc.value)
-    finally:
-        set_active_tools(set(get_all_manifests()))
+    with principal_scope(principal), pytest.raises(InvocationError) as exc:
+        kernel.invoke_sync("get_all_states", lambda: {"ok": True})
+    assert exc.value.code == "UNAVAILABLE_DEPENDENCY"
+    assert "backend unavailable" in str(exc.value)
 
 
 def test_kernel_enforces_declared_target_authorization() -> None:

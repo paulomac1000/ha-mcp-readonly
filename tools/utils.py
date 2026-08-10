@@ -145,7 +145,10 @@ def make_ha_request(
         }
     if retries < 1:
         raise ValueError("retries must be at least 1")
-    if method.upper() == "POST" and retries != 1:
+    normalized_method = method.upper()
+    if normalized_method not in {"GET", "POST"}:
+        raise ValueError(f"Unsupported HTTP method: {method}")
+    if normalized_method == "POST" and retries != 1:
         raise ValueError(
             "POST retries require operation-specific handling and are not supported here"
         )
@@ -176,7 +179,7 @@ def make_ha_request(
             }
         request_timeout = timeout if remaining is None else max(0.001, min(timeout, remaining))
         try:
-            if method == "POST":
+            if normalized_method == "POST":
                 response = requests.post(url, headers=headers, json=data, timeout=request_timeout)
             else:
                 response = requests.get(url, headers=headers, timeout=request_timeout)

@@ -251,10 +251,20 @@ class TestContextGeneratorUtils:
         result = validate_yaml_syntax("key: value: bad\n\n")
         assert result["syntax_valid"] is False
 
-    def test_make_ha_request(self):
+    def test_make_ha_request(self, tmp_path):
+        from context_generator.provenance import ProvenanceTracker
+        from context_generator.runtime import GenerationRuntime, generation_scope
         from context_generator.utils import make_ha_request
 
-        with patch("context_generator.utils.requests.get") as mock_get:
+        config = GenerationConfig(
+            config_path=tmp_path,
+            output_path=tmp_path / "out.md",
+            ha_url="http://ha:8123",
+            ha_token="token",
+            mode="online",
+        )
+        runtime = GenerationRuntime(config=config, provenance=ProvenanceTracker())
+        with patch("context_generator.utils.requests.get") as mock_get, generation_scope(runtime):
             mock_response = MagicMock()
             mock_response.json.return_value = {"data": "ok"}
             mock_response.raise_for_status = MagicMock()
@@ -262,6 +272,9 @@ class TestContextGeneratorUtils:
 
             result = make_ha_request("/api/states")
             assert result["success"] is True
+            mock_get.assert_called_once()
+            assert mock_get.call_args.args[0] == "http://ha:8123/api/states"
+            assert mock_get.call_args.kwargs["headers"]["Authorization"] == "Bearer token"
 
     def test_slugify(self):
         from context_generator.utils import slugify
@@ -1058,6 +1071,18 @@ class TestProvenanceAndComprehensiveSnapshot:
             def send(self, value):
                 request = json.loads(value)
                 self.sent.append(request)
+                if request["type"] == "unsubscribe_events":
+                    self.responses.append(
+                        json.dumps(
+                            {
+                                "id": request["id"],
+                                "type": "result",
+                                "success": True,
+                                "result": None,
+                            }
+                        )
+                    )
+                    return
                 self.responses.extend(
                     [
                         json.dumps(
@@ -1111,8 +1136,14 @@ class TestProvenanceAndComprehensiveSnapshot:
 
         next_id = collector._collect_weather_forecasts(ws, 20)
 
-        assert next_id == 22
-        assert [item["forecast_type"] for item in ws.sent] == ["daily", "hourly"]
+        assert next_id == 24
+        subscribe_requests = [
+            item for item in ws.sent if item["type"] == "weather/subscribe_forecast"
+        ]
+        unsubscribe_requests = [item for item in ws.sent if item["type"] == "unsubscribe_events"]
+        assert [item["forecast_type"] for item in subscribe_requests] == ["daily", "hourly"]
+        assert [item["id"] for item in unsubscribe_requests] == [21, 23]
+        assert [item["subscription"] for item in unsubscribe_requests] == [20, 22]
         forecasts = collector.data["websocket"]["weather_forecasts"]["weather.home"]
         assert set(forecasts) == {"daily", "hourly"}
         assert forecasts["daily"][0]["condition"] == "sunny"

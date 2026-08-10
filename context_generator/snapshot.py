@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode
 
@@ -38,6 +40,11 @@ _REST_SOURCES: tuple[tuple[str, str], ...] = (
     ("energy_dashboard_api", "/api/energy/dashboard"),
     ("error_log_api", "/api/error_log"),
 )
+
+
+class WebSocketProtocolError(RuntimeError):
+    """The websocket stream can no longer be safely correlated by request id."""
+
 
 _WS_SOURCES: tuple[tuple[str, str, dict[str, Any]], ...] = (
     ("areas_ws", "config/area_registry/list", {}),
@@ -291,7 +298,7 @@ class ComprehensiveSnapshotCollector:
         ws.send(json.dumps({"id": request_id, "type": command, **extra}))
         response = self._ws_recv_json(ws)
         if response.get("id") != request_id or response.get("type") != "result":
-            raise RuntimeError("unexpected websocket command response")
+            raise WebSocketProtocolError("unexpected websocket command response")
         if response.get("success") is not True:
             error = response.get("error")
             raise RuntimeError(str(error or "websocket command failed"))
@@ -321,6 +328,8 @@ class ComprehensiveSnapshotCollector:
                 for key, command, extra in _WS_SOURCES:
                     try:
                         result = self._ws_command(ws, request_id, command, extra)
+                    except WebSocketProtocolError:
+                        raise
                     except Exception as exc:
                         self._unavailable(
                             "websocket",
@@ -429,11 +438,15 @@ class ComprehensiveSnapshotCollector:
                 if not feature_mask & bit:
                     continue
                 source = f"weather_forecast:{entity_id}:{forecast_type}"
+                subscription_id = request_id
+                unsubscribe_id = request_id + 1
+                request_id += 2
+                subscribed = False
                 try:
                     ws.send(
                         json.dumps(
                             {
-                                "id": request_id,
+                                "id": subscription_id,
                                 "type": "weather/subscribe_forecast",
                                 "entity_id": entity_id,
                                 "forecast_type": forecast_type,
@@ -441,11 +454,42 @@ class ComprehensiveSnapshotCollector:
                         )
                     )
                     ack = self._ws_recv_json(ws)
-                    if ack.get("id") != request_id or ack.get("success") is not True:
+                    if ack.get("id") != subscription_id or ack.get("type") != "result":
+                        raise WebSocketProtocolError("unexpected forecast subscription response")
+                    if ack.get("success") is not True:
                         raise RuntimeError("forecast subscription failed")
+                    subscribed = True
                     event = self._ws_recv_json(ws)
-                    forecast = event.get("event", {}).get("forecast", [])
+                    if event.get("id") != subscription_id or event.get("type") != "event":
+                        raise WebSocketProtocolError("unexpected forecast subscription event")
+                    event_payload = event.get("event")
+                    if not isinstance(event_payload, dict):
+                        raise WebSocketProtocolError("forecast event payload is invalid")
+                    forecast = event_payload.get("forecast", [])
                     safe, redactions = redact_sensitive(forecast)
+                    self._ws_command(
+                        ws,
+                        unsubscribe_id,
+                        "unsubscribe_events",
+                        {"subscription": subscription_id},
+                    )
+                    subscribed = False
+                except WebSocketProtocolError:
+                    raise
+                except Exception as exc:
+                    if subscribed:
+                        raise WebSocketProtocolError(
+                            "weather forecast subscription stream became unsafe"
+                        ) from exc
+                    per_entity[forecast_type] = None
+                    self.provenance.record(
+                        source,
+                        method="websocket",
+                        status="unavailable",
+                        reason=type(exc).__name__,
+                        requested="weather/subscribe_forecast",
+                    )
+                else:
                     per_entity[forecast_type] = safe
                     count = record_count(safe)
                     total += count
@@ -458,16 +502,6 @@ class ComprehensiveSnapshotCollector:
                         redacted_fields=redactions,
                         requested="weather/subscribe_forecast",
                     )
-                except Exception as exc:
-                    per_entity[forecast_type] = None
-                    self.provenance.record(
-                        source,
-                        method="websocket",
-                        status="unavailable",
-                        reason=type(exc).__name__,
-                        requested="weather/subscribe_forecast",
-                    )
-                request_id += 1
             if per_entity:
                 forecasts[entity_id] = per_entity
         self.data["websocket"]["weather_forecasts"] = forecasts
@@ -491,80 +525,92 @@ class ComprehensiveSnapshotCollector:
             )
             return
 
-        for path in sorted(root.rglob("*")):
-            try:
-                relative = path.relative_to(root)
-            except ValueError:
-                continue
-            if any(part.casefold() in _BLOCKED_DIRS for part in relative.parts):
-                continue
-            if path.is_symlink() or not path.is_file():
-                continue
-            name = path.name.casefold()
-            if name in _BLOCKED_NAMES or any(
-                name.startswith(prefix) for prefix in _BLOCKED_PREFIXES
-            ):
-                self.provenance.record(
-                    f"file:{relative.as_posix()}",
-                    method="filesystem",
-                    status="skipped",
-                    reason="policy: credential-bearing source blocked",
-                )
-                continue
-            if path.suffix.casefold() not in _TEXT_SUFFIXES and ".storage" not in relative.parts:
-                continue
-            try:
-                size = path.stat().st_size
-            except OSError:
-                continue
-            if (
-                size > self.config.max_source_bytes
-                or total_bytes + size > self.config.max_source_bytes
-            ):
-                self.provenance.record(
-                    f"file:{relative.as_posix()}",
-                    method="filesystem",
-                    status="partial",
-                    size_bytes=size,
-                    reason="aggregate source-size limit reached",
-                )
-                continue
-            try:
-                raw = path.read_text(encoding="utf-8")
-            except (OSError, UnicodeError):
-                continue
-            value: Any = raw
-            if path.suffix.casefold() == ".json" or ".storage" in relative.parts:
+        for current_root, dirnames, filenames in os.walk(root, topdown=True, followlinks=False):
+            current = Path(current_root)
+            safe_dirs: list[str] = []
+            for dirname in sorted(dirnames):
+                candidate = current / dirname
+                if dirname.casefold() in _BLOCKED_DIRS or candidate.is_symlink():
+                    continue
+                safe_dirs.append(dirname)
+            dirnames[:] = safe_dirs
+
+            for filename in sorted(filenames):
+                path = current / filename
                 try:
-                    value = json.loads(raw)
-                except json.JSONDecodeError:
-                    value = raw
-            if ".storage" in relative.parts:
-                projected = sanitize_model_visible_storage(path.name, value)
-                if projected is None:
+                    relative = path.relative_to(root)
+                except ValueError:
+                    continue
+                if path.is_symlink() or not path.is_file():
+                    continue
+                name = path.name.casefold()
+                if name in _BLOCKED_NAMES or any(
+                    name.startswith(prefix) for prefix in _BLOCKED_PREFIXES
+                ):
                     self.provenance.record(
                         f"file:{relative.as_posix()}",
                         method="filesystem",
                         status="skipped",
-                        size_bytes=size,
-                        reason=(
-                            "policy: .storage schema is not on the positive model-visible allowlist; "
-                            f"allowed={','.join(sorted(SAFE_STORAGE_SANITIZERS))}"
-                        ),
+                        reason="policy: credential-bearing source blocked",
                     )
                     continue
-                value = projected
-            safe, redactions = redact_sensitive(value)
-            output[relative.as_posix()] = safe
-            total_bytes += size
-            self.provenance.record(
-                f"file:{relative.as_posix()}",
-                method="filesystem",
-                status="complete",
-                records=record_count(safe),
-                size_bytes=self._encoded_size(safe),
-                redacted_fields=redactions,
-            )
+                if (
+                    path.suffix.casefold() not in _TEXT_SUFFIXES
+                    and ".storage" not in relative.parts
+                ):
+                    continue
+                try:
+                    size = path.stat().st_size
+                except OSError:
+                    continue
+                if (
+                    size > self.config.max_source_bytes
+                    or total_bytes + size > self.config.max_source_bytes
+                ):
+                    self.provenance.record(
+                        f"file:{relative.as_posix()}",
+                        method="filesystem",
+                        status="partial",
+                        size_bytes=size,
+                        reason="aggregate source-size limit reached",
+                    )
+                    continue
+                try:
+                    raw = path.read_text(encoding="utf-8")
+                except (OSError, UnicodeError):
+                    continue
+                value: Any = raw
+                if path.suffix.casefold() == ".json" or ".storage" in relative.parts:
+                    try:
+                        value = json.loads(raw)
+                    except json.JSONDecodeError:
+                        value = raw
+                if ".storage" in relative.parts:
+                    projected = sanitize_model_visible_storage(path.name, value)
+                    if projected is None:
+                        self.provenance.record(
+                            f"file:{relative.as_posix()}",
+                            method="filesystem",
+                            status="skipped",
+                            size_bytes=size,
+                            reason=(
+                                "policy: .storage schema is not on the positive model-visible allowlist; "
+                                f"allowed={','.join(sorted(SAFE_STORAGE_SANITIZERS))}"
+                            ),
+                        )
+                        continue
+                    value = projected
+                safe, redactions = redact_sensitive(value)
+                output[relative.as_posix()] = safe
+                total_bytes += size
+                self.provenance.record(
+                    f"file:{relative.as_posix()}",
+                    method="filesystem",
+                    status="complete",
+                    records=record_count(safe),
+                    size_bytes=self._encoded_size(safe),
+                    redacted_fields=redactions,
+                )
         self.data["files"]["config_tree"] = output
         self.provenance.record(
             "filesystem_snapshot",

@@ -4,7 +4,7 @@ doc_id: reference.ha-mcp-security-policy
 type: reference
 status: active
 rigor: normative
-owners: [repository-maintainers]
+owner: [repository-maintainers]
 verification: Run the security-boundary unit tests, Bandit, authenticated runtime checks, and context redaction tests.
 ---
 
@@ -66,7 +66,7 @@ This project is intentionally read-only. It **cannot**:
 - Release images are pushed first to an isolated quarantine repository and identified by an exact registry digest.
 - The protected publisher does not check out, build, load, or run candidate source or images; it only promotes the already tested digest and verifies that the promoted digest is identical.
 - Every published architecture (`linux/amd64`, `linux/arm64`) is smoke-tested from the exact quarantined manifest before promotion.
-- Quarantine write credentials and protected release credentials must be distinct and scoped to their respective repositories/environments.
+- Candidate quarantine-write credentials and the protected promotion credential must be distinct. Because source and destination both use `ghcr.io`, the protected promotion credential is a single package-scoped credential with **read-only** access to the quarantine package and **write** access to the release package; it must not be exposed to candidate build/test jobs.
 
 ## Dependencies
 

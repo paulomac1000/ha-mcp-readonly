@@ -8,6 +8,7 @@ import contextvars
 import json
 import threading
 import time
+import weakref
 from collections.abc import Callable, Iterator
 from concurrent.futures import Future, ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeoutError
@@ -76,6 +77,14 @@ def _remaining(deadline: float) -> float:
     return max(0.0, deadline - time.monotonic())
 
 
+class _KeyedSemaphore(threading.BoundedSemaphore):
+    """Semaphore carrying the manifest limit for conflict validation."""
+
+    def __init__(self, limit: int) -> None:
+        super().__init__(limit)
+        self.declared_limit = limit
+
+
 class InvocationKernel:
     """Enforce manifests, authorization, deadlines, concurrency and output bounds."""
 
@@ -89,7 +98,11 @@ class InvocationKernel:
         # ThreadPoolExecutor itself has an unbounded queue. This semaphore bounds
         # running plus queued synchronous invocations.
         self._executor_capacity = threading.BoundedSemaphore(max_workers + queue_capacity)
-        self._locks: dict[str, tuple[int, threading.BoundedSemaphore]] = {}
+        # In-flight invocations and callbacks retain a strong reference; idle
+        # user-derived keys disappear when no operation references the semaphore.
+        self._locks: weakref.WeakValueDictionary[str, _KeyedSemaphore] = (
+            weakref.WeakValueDictionary()
+        )
         self._locks_guard = threading.Lock()
 
     def _manifest(self, tool_name: str) -> dict[str, Any]:
@@ -196,13 +209,12 @@ class InvocationKernel:
 
     def _semaphore(self, key: str, limit: int) -> threading.BoundedSemaphore:
         with self._locks_guard:
-            existing = self._locks.get(key)
-            if existing is None:
-                semaphore = threading.BoundedSemaphore(limit)
-                self._locks[key] = (limit, semaphore)
+            semaphore = self._locks.get(key)
+            if semaphore is None:
+                semaphore = _KeyedSemaphore(limit)
+                self._locks[key] = semaphore
                 return semaphore
-            existing_limit, semaphore = existing
-            if existing_limit != limit:
+            if semaphore.declared_limit != limit:
                 raise InvocationError(
                     "MANIFEST_INVALID",
                     f"Concurrency key '{key}' is declared with conflicting limits",

@@ -132,7 +132,24 @@ class TestStreamableHTTPTransport:
 
     def test_mcp_endpoint_rejects_anonymous_requests(self):
         mcp_port = int(os.getenv("MCP_PORT", "9092"))
-        response = requests.get(f"http://localhost:{mcp_port}/mcp", timeout=5)
+        response = requests.post(
+            f"http://localhost:{mcp_port}/mcp",
+            json={
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2025-11-25",
+                    "capabilities": {},
+                    "clientInfo": {"name": "anonymous-auth-probe", "version": "1"},
+                },
+            },
+            headers={
+                "Accept": "application/json, text/event-stream",
+                "Content-Type": "application/json",
+            },
+            timeout=5,
+        )
         assert response.status_code in (401, 403)
 
     def test_mcp_port_is_listening(self):

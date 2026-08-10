@@ -131,6 +131,11 @@ class _RecordedWebSocket:
                 )
             )
             return
+        if command == "unsubscribe_events":
+            self.queue.append(
+                json.dumps({"id": request_id, "type": "result", "success": True, "result": None})
+            )
+            return
         self.queue.append(
             json.dumps(
                 {
@@ -258,6 +263,11 @@ class _CassetteWebSocket(_RecordedWebSocket):
                         "event": {"forecast": [{"datetime": "2026-08-09T00:00:00+00:00"}]},
                     }
                 )
+            )
+            return
+        if command == "unsubscribe_events":
+            self.queue.append(
+                json.dumps({"id": request_id, "type": "result", "success": True, "result": None})
             )
             return
         result = self._cassette.get(command, [])

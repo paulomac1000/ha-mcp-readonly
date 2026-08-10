@@ -110,6 +110,10 @@ class OperationMCPAdapter:
         self._server = server
         self._registry = registry
 
+    def names(self) -> set[str]:
+        """Return names exposed by this deployment's application registry."""
+        return self._registry.names()
+
     def tool(
         self, *decorator_args: Any, **decorator_kwargs: Any
     ) -> Callable[[Callable[..., Any]], Any]:

@@ -30,6 +30,7 @@ HA_TOKEN = os.getenv("HA_TOKEN", "")
 
 # The REST compatibility adapter requires a bearer token when enabled.
 REST_API_TOKEN = os.getenv("REST_API_TOKEN") or os.getenv("MCP_AUTH_TOKEN", "")
+REST_AUTH_CONFIGURED = bool(REST_API_TOKEN)
 REST_HEADERS = {"Authorization": f"Bearer {REST_API_TOKEN}"}
 
 

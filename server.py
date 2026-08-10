@@ -154,16 +154,11 @@ def _initialize_runtime_health() -> None:
         }
         _refresh_active_catalog()
         return
-    # The startup probe is bounded but retried: a container or network that is
-    # still warming up can fail a single two-second probe, and a one-shot
-    # failure must not permanently degrade every Home Assistant capability.
-    deadline = time.monotonic() + 10
-    detail = {"configured": True, "reachable": False, "reason": "startup probe not completed"}
-    while time.monotonic() < deadline:
-        detail = _probe_backend()
-        if detail["reachable"]:
-            break
-        time.sleep(1)
+    # One bounded probe establishes the initial capability profile without
+    # delaying MCP/REST transport startup for an unreachable backend. The
+    # background reconciler performs subsequent retries and promotes tools when
+    # Home Assistant becomes reachable.
+    detail = _probe_backend()
     if detail["reachable"]:
         _set_health_component("backend", "ready", **detail)
         HEALTH_STATE.pop("capability_degradation", None)
@@ -576,7 +571,7 @@ def create_rest_app(auth_token: str | None = None) -> Any:
     from starlette.middleware.cors import CORSMiddleware
     from starlette.middleware.trustedhost import TrustedHostMiddleware
     from starlette.requests import Request
-    from starlette.responses import JSONResponse, PlainTextResponse
+    from starlette.responses import FileResponse, JSONResponse
     from starlette.routing import Route
 
     token = REST_API_TOKEN if auth_token is None else auth_token
@@ -801,9 +796,15 @@ def create_rest_app(auth_token: str | None = None) -> Any:
                 str(params.get("mode", "hybrid")),
                 current_principal().subject,
             )
-        except (ValueError, SecurityBoundaryError) as exc:
+        except (ValueError, SecurityBoundaryError):
             return JSONResponse(
-                {"success": False, "error": {"code": "INVALID_PATH", "message": str(exc)}},
+                {
+                    "success": False,
+                    "error": {
+                        "code": "INVALID_PATH",
+                        "message": "Invalid or disallowed context path",
+                    },
+                },
                 status_code=400,
             )
         except RuntimeError as exc:
@@ -831,7 +832,6 @@ def create_rest_app(auth_token: str | None = None) -> Any:
     async def context_download(request: Request) -> Any:
         try:
             output = _CONTEXT_TASKS.output_for(current_principal().subject)
-            content = output.read_text(encoding="utf-8")
         except (FileNotFoundError, OSError, SecurityBoundaryError):
             return JSONResponse(
                 {
@@ -841,14 +841,20 @@ def create_rest_app(auth_token: str | None = None) -> Any:
                 status_code=404,
             )
         if request.query_params.get("format") == "json":
+            try:
+                content = output.read_text(encoding="utf-8")
+            except (OSError, UnicodeError):
+                return JSONResponse(
+                    {
+                        "success": False,
+                        "error": {"code": "NOT_FOUND", "message": "Context artifact not available"},
+                    },
+                    status_code=404,
+                )
             return JSONResponse(
                 {"success": True, "content": content, "size_bytes": len(content.encode())}
             )
-        return PlainTextResponse(
-            content,
-            media_type="text/markdown",
-            headers={"Content-Disposition": f'attachment; filename="{output.name}"'},
-        )
+        return FileResponse(output, media_type="text/markdown", filename=output.name)
 
     async def context_modes(request: Request) -> JSONResponse:
         return JSONResponse({"modes": ["offline", "online", "hybrid"]})
@@ -973,9 +979,13 @@ def run_rest_api() -> None:
 
 
 def run_startup_tests() -> bool:
+    tests_dir = Path(__file__).resolve().parent / "tests" / "unit"
+    if not tests_dir.is_dir():
+        _logger.warning("Startup tests requested but unit tests are not installed; skipping")
+        return True
     try:
         result = subprocess.run(
-            [sys.executable, "-m", "pytest", "tests/unit", "-q", "-p", "no:cacheprovider"],
+            [sys.executable, "-m", "pytest", str(tests_dir), "-q", "-p", "no:cacheprovider"],
             check=False,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE,

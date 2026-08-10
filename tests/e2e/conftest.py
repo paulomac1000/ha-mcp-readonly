@@ -28,6 +28,7 @@ REST_API_PORT = int(os.getenv("REST_API_PORT", "9093"))
 REST_API_URL = f"http://localhost:{REST_API_PORT}"
 
 REST_API_TOKEN = os.getenv("REST_API_TOKEN") or os.getenv("MCP_AUTH_TOKEN", "")
+REST_AUTH_CONFIGURED = bool(REST_API_TOKEN)
 REST_HEADERS = {"Authorization": f"Bearer {REST_API_TOKEN}"}
 
 
@@ -112,7 +113,9 @@ def discover_live_context() -> dict:
 
     person = _first_item("get_persons", "persons")
     if person:
-        context["person_entity_id"] = f"person.{person.get('id')}"
+        person_id = person.get("id")
+        if person_id:
+            context["person_entity_id"] = f"person.{person_id}"
 
     domains = _first_item("list_config_entry_domains", "domains")
     if domains:

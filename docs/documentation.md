@@ -4,7 +4,7 @@ doc_id: reference.ha-mcp-operator-architecture
 type: reference
 status: active
 rigor: operational
-owners: [repository-maintainers]
+owner: [repository-maintainers]
 verification: Run `pytest tests/unit tests/protocol -q`, build and inspect the wheel, and execute the container job in `.github/workflows/ci.yml`.
 ---
 

@@ -3,12 +3,12 @@
 import pytest
 import requests
 
-from .conftest import HA_TOKEN, REST_API_URL, REST_HEADERS, _server_running
+from .conftest import HA_TOKEN, REST_API_URL, REST_AUTH_CONFIGURED, REST_HEADERS, _server_running
 
 pytestmark = pytest.mark.skipif(
     not _server_running()
     or not HA_TOKEN
-    or not REST_HEADERS["Authorization"].startswith("Bearer ")
+    or not REST_AUTH_CONFIGURED
     or HA_TOKEN in ("", "your_long_lived_access_token_here"),
     reason="MCP server not running or HA_TOKEN not configured",
 )

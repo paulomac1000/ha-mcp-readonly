@@ -4,7 +4,7 @@ doc_id: guide.ha-mcp-testing
 type: guide
 status: active
 rigor: operational
-owners: [repository-maintainers]
+owner: [repository-maintainers]
 verification: Run `pytest tests/unit tests/protocol -q`, build the wheel, install it in a clean environment, and execute the container smoke test from `.github/workflows/ci.yml`.
 ---
 

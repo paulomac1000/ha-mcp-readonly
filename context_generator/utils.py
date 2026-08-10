@@ -45,7 +45,7 @@ def _config_path() -> Path:
 def _network_settings() -> tuple[str, str, bool, str]:
     config = current_config()
     if config is None:
-        return constants.HA_URL, constants.HA_TOKEN, True, "legacy"
+        return "", "", False, "unconfigured"
     return config.ha_url, config.ha_token, config.network_enabled, config.mode
 
 
@@ -197,47 +197,43 @@ def make_ha_request(
     # Context collection follows the same conservative no-automatic-retry
     # contract as public READ operations. A failed source is recorded in the
     # provenance matrix rather than being retried implicitly.
-    for attempt in range(1):
+    normalized_method = method.upper()
+    try:
+        if normalized_method == "GET":
+            response = requests.get(f"{ha_url}{endpoint}", headers=headers, timeout=timeout)
+        elif normalized_method == "POST":
+            response = requests.post(
+                f"{ha_url}{endpoint}", headers=headers, json=data, timeout=timeout
+            )
+        else:
+            return {"success": False, "error": f"Unsupported method: {method}"}
+
+        response.raise_for_status()
         try:
-            if method == "GET":
-                response = requests.get(f"{ha_url}{endpoint}", headers=headers, timeout=timeout)
-            elif method == "POST":
-                response = requests.post(
-                    f"{ha_url}{endpoint}", headers=headers, json=data, timeout=timeout
-                )
-            else:
-                return {"success": False, "error": f"Unsupported method: {method}"}
+            payload: Any = response.json()
+        except ValueError:
+            payload = response.text
+        _record_source(source, method="rest", status="complete", data=payload, requested=endpoint)
+        return {"success": True, "data": payload}
 
-            response.raise_for_status()
-            try:
-                payload: Any = response.json()
-            except ValueError:
-                payload = response.text
-            _record_source(
-                source, method="rest", status="complete", data=payload, requested=endpoint
-            )
-            return {"success": True, "data": payload}
-
-        except requests.exceptions.HTTPError as e:
-            reason = f"HTTP {e.response.status_code}: {str(e)}"
-            _record_source(
-                source, method="rest", status="unavailable", reason=reason, requested=endpoint
-            )
-            return {"success": False, "error": reason}
-        except requests.exceptions.Timeout:
-            reason = "Request timeout"
-            _record_source(
-                source, method="rest", status="unavailable", reason=reason, requested=endpoint
-            )
-            return {"success": False, "error": reason}
-        except Exception as e:
-            reason = type(e).__name__
-            _record_source(
-                source, method="rest", status="unavailable", reason=reason, requested=endpoint
-            )
-            return {"success": False, "error": str(e)}
-
-    return {"success": False, "error": "Request failed"}
+    except requests.exceptions.HTTPError as e:
+        reason = f"HTTP {e.response.status_code}: {str(e)}"
+        _record_source(
+            source, method="rest", status="unavailable", reason=reason, requested=endpoint
+        )
+        return {"success": False, "error": reason}
+    except requests.exceptions.Timeout:
+        reason = "Request timeout"
+        _record_source(
+            source, method="rest", status="unavailable", reason=reason, requested=endpoint
+        )
+        return {"success": False, "error": reason}
+    except Exception as e:
+        reason = type(e).__name__
+        _record_source(
+            source, method="rest", status="unavailable", reason=reason, requested=endpoint
+        )
+        return {"success": False, "error": str(e)}
 
 
 def load_yaml_file(filepath: str) -> Any:

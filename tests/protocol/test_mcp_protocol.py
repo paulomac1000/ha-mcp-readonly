@@ -20,7 +20,11 @@ def test_handshake_list_and_call() -> None:
             assert result.is_error is False
             payload = json.loads(result.content[0].text)
             assert payload["success"] is True
-            assert payload["tool_count"] == expected
+            assert payload["supported_tool_count"] == expected
+            assert len(payload["tools"]) == expected
+            assert {item["name"] for item in payload["tools"]} == {tool.name for tool in tools}
+            assert payload["tool_count"] == payload["active_tool_count"]
+            assert 0 < payload["active_tool_count"] <= expected
             assert payload["transports"] == ["stdio", "streamable-http"]
 
     asyncio.run(verify())

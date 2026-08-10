@@ -93,13 +93,24 @@ def _installed_version(distribution: str) -> str:
         return "unknown"
 
 
-def _do_describe_ha_capabilities() -> dict[str, Any]:
+def _do_describe_ha_capabilities(
+    supported_names: set[str] | None = None,
+) -> dict[str, Any]:
     """Build supported and active catalogs without contacting external dependencies."""
-    supported_manifests = get_all_manifests(active_only=False)
+    declared_manifests = get_all_manifests(active_only=False)
+    supported_manifests = (
+        declared_manifests
+        if supported_names is None
+        else {
+            name: manifest
+            for name, manifest in declared_manifests.items()
+            if name in supported_names
+        }
+    )
     initialized = active_profile_initialized()
     active_manifests = get_all_manifests(active_only=True) if initialized else {}
     inactive_reasons = get_inactive_reasons() if initialized else {}
-    active_names = set(active_manifests)
+    active_names = set(active_manifests) & set(supported_manifests)
     tools = []
     for manifest in supported_manifests.values():
         item = dict(manifest)
@@ -199,7 +210,9 @@ def register_capability_tools(mcp: Any) -> None:
             supported and active catalog counts plus per-tool manifests.
         """
         try:
-            return _success_response(_do_describe_ha_capabilities())
+            names = getattr(mcp, "names", None)
+            supported_names = names() if callable(names) else None
+            return _success_response(_do_describe_ha_capabilities(supported_names=supported_names))
         except Exception as exc:
             _logger.error("describe_ha_capabilities failed: %s", exc)
             return _error_response(str(exc))

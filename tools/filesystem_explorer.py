@@ -254,8 +254,13 @@ def _do_search_files(pattern: str, search_path: str, max_results: int) -> dict[s
 
     results: list[dict[str, Any]] = []
     files_searched = 0
+    truncated = False
 
     for root, dirs, files in os.walk(target, followlinks=False):
+        if len(results) >= max_results:
+            truncated = True
+            dirs[:] = []
+            break
         if root.count(os.sep) - str(target).count(os.sep) > SECURITY_CONTEXT.max_depth:
             dirs[:] = []
             continue
@@ -269,8 +274,9 @@ def _do_search_files(pattern: str, search_path: str, max_results: int) -> dict[s
         dirs[:] = safe_dirs
 
         for filename in files:
-            files_searched += 1
             if len(results) >= max_results:
+                truncated = True
+                dirs[:] = []
                 break
 
             filepath = Path(root) / filename
@@ -289,25 +295,26 @@ def _do_search_files(pattern: str, search_path: str, max_results: int) -> dict[s
             try:
                 with open(filepath, encoding="utf-8", errors="ignore") as f:
                     content = f.read()
-                    if re.search(re.escape(pattern), content, re.IGNORECASE):
-                        matches: list[dict[str, Any]] = []
-                        for match in re.finditer(re.escape(pattern), content, re.IGNORECASE):
-                            start = max(0, match.start() - 30)
-                            end = min(len(content), match.end() + 30)
-                            context = content[start:end].replace("\n", " ").strip()
-                            matches.append({"position": match.start(), "context": context})
-                            if len(matches) >= 3:
-                                break
-                        results.append(
-                            {
-                                "path": str(filepath.relative_to(target)),
-                                "absolute_path": str(filepath),
-                                "matches_count": len(matches),
-                                "sample_matches": matches[:3],
-                            }
-                        )
             except Exception:
                 continue
+            files_searched += 1
+            if re.search(re.escape(pattern), content, re.IGNORECASE):
+                matches: list[dict[str, Any]] = []
+                for match in re.finditer(re.escape(pattern), content, re.IGNORECASE):
+                    match_start = max(0, match.start() - 30)
+                    match_end = min(len(content), match.end() + 30)
+                    context = content[match_start:match_end].replace("\n", " ").strip()
+                    matches.append({"position": match.start(), "context": context})
+                    if len(matches) >= 3:
+                        break
+                results.append(
+                    {
+                        "path": str(filepath.relative_to(target)),
+                        "absolute_path": str(filepath),
+                        "matches_count": len(matches),
+                        "sample_matches": matches[:3],
+                    }
+                )
 
     return {
         "success": True,
@@ -315,8 +322,8 @@ def _do_search_files(pattern: str, search_path: str, max_results: int) -> dict[s
         "search_path": str(target),
         "files_searched": files_searched,
         "results_count": len(results),
-        "results": results[:max_results],
-        "truncated": len(results) > max_results,
+        "results": results,
+        "truncated": truncated,
     }
 
 

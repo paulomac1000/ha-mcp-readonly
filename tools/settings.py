@@ -88,9 +88,9 @@ class RuntimeSettings:
             ha_url=os.getenv("HA_URL", "http://homeassistant:8123"),
             ha_token=os.getenv("HA_TOKEN", ""),
             ha_config_path=os.getenv("HA_CONFIG_PATH", "/config"),
-            health_check_port=int(os.getenv("HEALTH_CHECK_PORT", "9091")),
-            mcp_port=int(os.getenv("MCP_PORT", "9092")),
-            rest_api_port=int(os.getenv("REST_API_PORT", "9093")),
+            health_check_port=_env_int("HEALTH_CHECK_PORT", 9091, minimum=1, maximum=65535),
+            mcp_port=_env_int("MCP_PORT", 9092, minimum=1, maximum=65535),
+            rest_api_port=_env_int("REST_API_PORT", 9093, minimum=1, maximum=65535),
             mcp_transport=transport,  # type: ignore[arg-type]
             rest_api_enabled=_env_bool("REST_API_ENABLED", False),
             dev_tools_enabled=_env_bool("MCP_DEV_TOOLS_ENABLED", False),

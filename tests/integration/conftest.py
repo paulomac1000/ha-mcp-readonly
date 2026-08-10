@@ -98,6 +98,8 @@ class MCPWrapper:
 
     def call_tool(self, name, *args, **kwargs):
         """Execute a tool through the supported FastMCP client."""
+        if args:
+            raise TypeError("MCPWrapper.call_tool accepts keyword tool arguments only")
         from fastmcp import Client
 
         async def _call():
