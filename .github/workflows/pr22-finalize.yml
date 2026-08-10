@@ -25,7 +25,11 @@ jobs:
         with:
           python-version: "3.13"
       - name: Apply reviewed fixes
-        run: python scripts/pr22_finalize.py
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/pr22_finalize.py
+          python scripts/pr22_lastmile.py
       - name: Verify in isolated virtual environment
         shell: bash
         run: |
@@ -38,12 +42,16 @@ jobs:
             context_generator/snapshot.py context_generator/utils.py tests/unit/conftest.py \
             tests/unit/manifest_helpers.py tests/unit/test_manifests.py tests/unit/test_invocation_kernel.py \
             tests/unit/test_compliance_hardening.py tests/unit/test_review_regressions.py \
-            tests/e2e/conftest.py tests/e2e/test_server_api.py tests/e2e/test_all_tools_smoke.py \
-            tests/integration/conftest.py tests/smoke/conftest.py tests/smoke/test_critical_tools.py \
-            tests/smoke/test_input_validation.py tests/smoke/test_response_format.py \
-            scripts/pr22_finalize.py scripts/pr22_review_fix.py
+            tests/unit/test_context_generator.py tests/protocol/test_home_assistant_upstream_contract.py \
+            tests/protocol/test_mcp_protocol.py tests/e2e/conftest.py tests/e2e/test_server_api.py \
+            tests/e2e/test_all_tools_smoke.py tests/integration/conftest.py tests/smoke/conftest.py \
+            tests/smoke/test_critical_tools.py tests/smoke/test_input_validation.py \
+            tests/smoke/test_response_format.py scripts/pr22_finalize.py scripts/pr22_review_fix.py \
+            scripts/pr22_lastmile.py
           .venv/bin/ruff check --fix \
-            scripts/pr22_finalize.py tests/unit/test_manifests.py tests/unit/test_invocation_kernel.py
+            scripts/pr22_finalize.py scripts/pr22_lastmile.py tests/unit/test_manifests.py \
+            tests/unit/test_invocation_kernel.py tests/unit/test_context_generator.py \
+            tests/protocol/test_home_assistant_upstream_contract.py tests/protocol/test_mcp_protocol.py
           .venv/bin/ruff check .
           .venv/bin/ruff format --check .
           .venv/bin/mypy server.py tools/ context_generator/core.py context_generator/config.py \
@@ -59,7 +67,8 @@ jobs:
             .github/workflows/pr22-review-fix-runner.yml \
             .github/workflows/pr22-finalize.yml \
             scripts/pr22_review_fix.py \
-            scripts/pr22_finalize.py
+            scripts/pr22_finalize.py \
+            scripts/pr22_lastmile.py
           git diff --check
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
