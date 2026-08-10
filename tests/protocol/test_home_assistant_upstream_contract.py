@@ -18,7 +18,10 @@ from context_generator.runtime import GenerationRuntime, generation_scope
 from context_generator.snapshot import ComprehensiveSnapshotCollector
 
 _CASSETTE = json.loads(
-    Path(__file__).with_name("cassettes").joinpath("recorded_ha_upstream.json").read_text()
+    Path(__file__)
+    .with_name("cassettes")
+    .joinpath("recorded_ha_upstream.json")
+    .read_text(encoding="utf-8")
 )
 
 
