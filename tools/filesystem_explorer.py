@@ -314,23 +314,23 @@ def _do_search_files(
             except Exception:
                 continue
             files_searched += 1
-            if re.search(re.escape(pattern), content, re.IGNORECASE):
-                matches: list[dict[str, Any]] = []
-                for match in re.finditer(re.escape(pattern), content, re.IGNORECASE):
-                    match_start = max(0, match.start() - 30)
-                    match_end = min(len(content), match.end() + 30)
-                    match_context = content[match_start:match_end].replace("\n", " ").strip()
-                    matches.append({"position": match.start(), "context": match_context})
-                    if len(matches) >= 3:
-                        break
+            matches: list[dict[str, Any]] = []
+            matches_count = 0
+            for match in re.finditer(re.escape(pattern), content, re.IGNORECASE):
+                matches_count += 1
+                if len(matches) >= 3:
+                    continue
+                match_start = max(0, match.start() - 30)
+                match_end = min(len(content), match.end() + 30)
+                match_context = content[match_start:match_end].replace("\n", " ").strip()
+                matches.append({"position": match.start(), "context": match_context})
+            if matches_count:
                 results.append(
                     {
                         "path": relative_path.as_posix(),
                         "absolute_path": str(filepath),
-                        "matches_count": len(
-                            list(re.finditer(re.escape(pattern), content, re.IGNORECASE))
-                        ),
-                        "sample_matches": matches[:3],
+                        "matches_count": matches_count,
+                        "sample_matches": matches,
                     }
                 )
 
