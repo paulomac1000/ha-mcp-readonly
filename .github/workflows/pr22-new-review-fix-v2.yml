@@ -6,6 +6,7 @@ on:
     paths:
       - scripts/pr22_new_review_fix_launcher.py
       - scripts/pr22_new_review_post_fix.py
+      - scripts/pr22_trigger_final.py
 
 permissions:
   contents: write
