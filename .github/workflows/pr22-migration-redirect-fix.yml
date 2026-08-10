@@ -1,4 +1,4 @@
-name: PR22 Migration Redirect Fix
+name: PR22 Review Fix Validator
 
 on:
   push:
@@ -9,139 +9,125 @@ on:
 permissions:
   contents: write
 
+env:
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+  MCP_TRANSPORT: stdio
+  MCP_DEV_TOOLS_ENABLED: "0"
+  HA_CONFIG_PATH: /tmp
+
 jobs:
-  patch:
+  fix-and-test:
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           ref: agent/ai-skills-compliance-refactor
           fetch-depth: 1
-      - name: Patch artifact downloader and create blob
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: "3.13"
+      - name: Apply source review fixes
+        shell: bash
         run: |
+          set -euo pipefail
+          curl -fsSL \
+            https://raw.githubusercontent.com/paulomac1000/ai-skills/b54fc6b27ea80b36a70d5de73445970e17f55789/skills/afds-doc-writer/validate.py \
+            -o scripts/vendor/afds_validate_b54fc6b2.py
           python - <<'PY'
-          import base64
-          import json
-          import os
-          import urllib.request
           from pathlib import Path
 
-          path = Path('.github/workflows/migration-evidence.yml')
-          text = path.read_text(encoding='utf-8')
-          old = '''          def request_bytes(url):
-              request = urllib.request.Request(
-                  url,
-                  headers={
-                      'Authorization': f'Bearer {token}',
-                      'Accept': 'application/vnd.github+json',
-                      'X-GitHub-Api-Version': '2022-11-28',
-                  },
-              )
-              last_error = None
-              for attempt in range(5):
-                  try:
-                      with urllib.request.urlopen(request, timeout=20) as response:
-                          return response.read()
-                  except urllib.error.HTTPError as error:
-                      if error.code not in {403, 429, 500, 502, 503, 504}:
-                          raise
-                      last_error = error
-                  except (urllib.error.URLError, TimeoutError) as error:
-                      last_error = error
-                  if attempt < 4:
-                      time.sleep(2 ** attempt)
-              raise SystemExit(f'GitHub API request failed for {url}: {last_error}')
+          cassette = Path('tests/protocol/test_home_assistant_upstream_contract.py')
+          text = cassette.read_text(encoding='utf-8')
+          old = 'Path(__file__).with_name("cassettes").joinpath("recorded_ha_upstream.json").read_text()'
+          new = 'Path(__file__).with_name("cassettes").joinpath("recorded_ha_upstream.json").read_text(encoding="utf-8")'
+          if old not in text:
+              raise SystemExit('cassette read_text pattern not found')
+          cassette.write_text(text.replace(old, new, 1), encoding='utf-8')
 
-          def get(path):
-              return json.loads(request_bytes(api + path))
+          fs = Path('tools/filesystem_explorer.py')
+          text = fs.read_text(encoding='utf-8')
+          old = '''            if re.search(re.escape(pattern), content, re.IGNORECASE):
+                matches: list[dict[str, Any]] = []
+                for match in re.finditer(re.escape(pattern), content, re.IGNORECASE):
+                    match_start = max(0, match.start() - 30)
+                    match_end = min(len(content), match.end() + 30)
+                    match_context = content[match_start:match_end].replace("\\n", " ").strip()
+                    matches.append({"position": match.start(), "context": match_context})
+                    if len(matches) >= 3:
+                        break
+                results.append(
+                    {
+                        "path": relative_path.as_posix(),
+                        "absolute_path": str(filepath),
+                        "matches_count": len(
+                            list(re.finditer(re.escape(pattern), content, re.IGNORECASE))
+                        ),
+                        "sample_matches": matches[:3],
+                    }
+                )
 '''
-          new = '''          class _NoRedirect(urllib.request.HTTPRedirectHandler):
-              def redirect_request(self, req, fp, code, msg, headers, newurl):
-                  return None
-
-          def request_bytes(url):
-              request = urllib.request.Request(
-                  url,
-                  headers={
-                      'Authorization': f'Bearer {token}',
-                      'Accept': 'application/vnd.github+json',
-                      'X-GitHub-Api-Version': '2022-11-28',
-                  },
-              )
-              last_error = None
-              for attempt in range(5):
-                  try:
-                      with urllib.request.urlopen(request, timeout=20) as response:
-                          return response.read()
-                  except urllib.error.HTTPError as error:
-                      if error.code not in {403, 429, 500, 502, 503, 504}:
-                          raise
-                      last_error = error
-                  except (urllib.error.URLError, TimeoutError) as error:
-                      last_error = error
-                  if attempt < 4:
-                      time.sleep(2 ** attempt)
-              raise SystemExit(f'GitHub API request failed for {url}: {last_error}')
-
-          def download_artifact_archive(url):
-              request = urllib.request.Request(
-                  url,
-                  headers={
-                      'Authorization': f'Bearer {token}',
-                      'Accept': 'application/vnd.github+json',
-                      'X-GitHub-Api-Version': '2022-11-28',
-                  },
-              )
-              opener = urllib.request.build_opener(_NoRedirect)
-              try:
-                  with opener.open(request, timeout=20) as response:
-                      if response.status == 200:
-                          return response.read()
-                      location = response.headers.get('Location')
-              except urllib.error.HTTPError as error:
-                  if error.code not in {301, 302, 303, 307, 308}:
-                      raise
-                  location = error.headers.get('Location')
-              if not location:
-                  raise SystemExit('artifact download endpoint did not return a signed storage URL')
-              # The redirect target is already signed. Do not forward the GitHub token
-              # to the storage host.
-              with urllib.request.urlopen(location, timeout=60) as response:
-                  return response.read()
-
-          def get(path):
-              return json.loads(request_bytes(api + path))
+          new = '''            matches: list[dict[str, Any]] = []
+            matches_count = 0
+            for match in re.finditer(re.escape(pattern), content, re.IGNORECASE):
+                matches_count += 1
+                if len(matches) >= 3:
+                    continue
+                match_start = max(0, match.start() - 30)
+                match_end = min(len(content), match.end() + 30)
+                match_context = content[match_start:match_end].replace("\\n", " ").strip()
+                matches.append({"position": match.start(), "context": match_context})
+            if matches_count:
+                results.append(
+                    {
+                        "path": relative_path.as_posix(),
+                        "absolute_path": str(filepath),
+                        "matches_count": matches_count,
+                        "sample_matches": matches,
+                    }
+                )
 '''
           if old not in text:
-              raise SystemExit('migration request_bytes block not found')
-          text = text.replace(old, new, 1)
-          text = text.replace(
-              'wheel_zip = zipfile.ZipFile(io.BytesIO(request_bytes(archive_url)))',
-              'wheel_zip = zipfile.ZipFile(io.BytesIO(download_artifact_archive(archive_url)))',
-              1,
-          )
-          path.write_text(text, encoding='utf-8')
-
-          repo = os.environ['GITHUB_REPOSITORY']
-          payload = json.dumps({
-              'content': base64.b64encode(path.read_bytes()).decode('ascii'),
-              'encoding': 'base64',
-          }).encode()
-          request = urllib.request.Request(
-              f'https://api.github.com/repos/{repo}/git/blobs',
-              data=payload,
-              method='POST',
-              headers={
-                  'Authorization': f'Bearer {os.environ["GH_TOKEN"]}',
-                  'Accept': 'application/vnd.github+json',
-                  'X-GitHub-Api-Version': '2022-11-28',
-                  'Content-Type': 'application/json',
-              },
-          )
-          with urllib.request.urlopen(request, timeout=20) as response:
-              blob = json.load(response)
-          print(f'VALIDATED_BLOB .github/workflows/migration-evidence.yml {blob["sha"]}')
+              raise SystemExit('filesystem match-count block not found')
+          fs.write_text(text.replace(old, new, 1), encoding='utf-8')
           PY
+      - name: Verify exact pinned validator
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsSL \
+            https://raw.githubusercontent.com/paulomac1000/ai-skills/b54fc6b27ea80b36a70d5de73445970e17f55789/skills/afds-doc-writer/validate.py \
+            -o /tmp/afds-validate-upstream.py
+          cmp -s scripts/vendor/afds_validate_b54fc6b2.py /tmp/afds-validate-upstream.py
+          sha256sum scripts/vendor/afds_validate_b54fc6b2.py /tmp/afds-validate-upstream.py
+      - name: Fresh venv and full source gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m venv .venv-review
+          . .venv-review/bin/activate
+          python -m pip install -c constraints-ci.txt '.[dev]'
+          ruff check .
+          ruff format --check .
+          mypy server.py tools/ context_generator/core.py context_generator/config.py \
+            context_generator/runtime.py context_generator/provenance.py context_generator/snapshot.py \
+            scripts/verify_runtime_endpoints.py --strict
+          pytest tests/unit tests/protocol -q
+          make docs-check
+          python -m compileall -q server.py tools context_generator ha_graph scripts
+      - name: Commit verified source fixes
+        shell: bash
+        run: |
+          set -euo pipefail
+          git add scripts/vendor/afds_validate_b54fc6b2.py \
+            tests/protocol/test_home_assistant_upstream_contract.py \
+            tools/filesystem_explorer.py
+          git diff --cached --check
+          if git diff --cached --quiet; then
+            echo 'No source changes to commit.'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'fix: address latest review findings'
+          git push origin HEAD:agent/ai-skills-compliance-refactor
