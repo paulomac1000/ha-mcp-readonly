@@ -1,0 +1,77 @@
+name: PR22 New Review Fix
+
+on:
+  push:
+    branches: [agent/ai-skills-compliance-refactor]
+    paths:
+      - scripts/pr22_new_review_fix.py
+
+permissions:
+  contents: write
+
+jobs:
+  fix-and-validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: agent/ai-skills-compliance-refactor
+          fetch-depth: 1
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: '3.13'
+      - name: Apply reviewed source changes
+        run: python scripts/pr22_new_review_fix.py
+      - name: Vendor exact pinned AFDS validator
+        run: |
+          curl --fail --silent --show-error --location \
+            --connect-timeout 10 --max-time 60 \
+            https://raw.githubusercontent.com/paulomac1000/ai-skills/b54fc6b27ea80b36a70d5de73445970e17f55789/skills/afds-doc-writer/validate.py \
+            -o scripts/vendor/afds_validate_b54fc6b2.py
+          rm -f scripts/vendor/afds_validate_c6dc6b13.py
+      - name: Build isolated validation environment
+        run: |
+          python -m venv .venv
+          .venv/bin/python -m pip install -c constraints-ci.txt '.[dev]'
+      - name: Format and lint
+        run: |
+          .venv/bin/ruff format .
+          .venv/bin/ruff check . --fix
+          .venv/bin/ruff format --check .
+          .venv/bin/ruff check .
+      - name: Strict type gate
+        run: >-
+          .venv/bin/mypy server.py tools/ context_generator/core.py context_generator/config.py
+          context_generator/runtime.py context_generator/provenance.py context_generator/snapshot.py
+          scripts/verify_runtime_endpoints.py --strict
+      - name: Unit and protocol gate
+        run: |
+          .venv/bin/pytest tests/unit tests/protocol -q \
+            --cov=tools \
+            --cov=context_generator.core \
+            --cov=context_generator.config \
+            --cov=context_generator.runtime \
+            --cov=context_generator.provenance \
+            --cov=context_generator.snapshot \
+            --cov-report=term-missing \
+            --cov-fail-under=85
+      - name: Canonical documentation gate
+        run: |
+          PATH="$PWD/.venv/bin:$PATH" make docs-check
+      - name: Full pre-commit gate
+        run: |
+          PATH="$PWD/.venv/bin:$PATH" .venv/bin/pre-commit run --all-files
+      - name: Compile gate
+        run: .venv/bin/python -m compileall -q server.py tools context_generator scripts tests
+      - name: Commit validated source changes
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          if git diff --cached --quiet; then
+            echo 'No source changes to commit'
+            exit 0
+          fi
+          git commit -m 'fix: address latest PR review findings'
+          git push origin HEAD:agent/ai-skills-compliance-refactor
