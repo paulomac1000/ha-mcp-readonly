@@ -44,7 +44,13 @@ jobs:
           new_probe_decl = '''old_probe = \'\'\'          for _ in $(seq 1 100); do\n            if python - <<'PY'\n          import socket\n          try:\n              with socket.create_connection(('127.0.0.1', 9092), timeout=.2):\n                  pass\n          except OSError:\n              raise SystemExit(1)\n          PY\n            then break; fi\n            sleep .2\n          done\n          docker inspect --format '{{.State.Status}} {{.State.Running}} {{.State.ExitCode}}' ha-mcp-official\n\'\'\'\n'''
           if text.count(old_probe_decl) != 1:
               raise SystemExit('official-client probe declaration patch target missing')
-          path.write_text(text.replace(old_probe_decl, new_probe_decl, 1), encoding='utf-8')
+          text = text.replace(old_probe_decl, new_probe_decl, 1)
+
+          old_newline = r'context = content[match_start:match_end].replace("\n", " ").strip()'
+          new_newline = r'context = content[match_start:match_end].replace("\\n", " ").strip()'
+          if text.count(old_newline) != 1:
+              raise SystemExit('filesystem generated newline patch target missing')
+          path.write_text(text.replace(old_newline, new_newline, 1), encoding='utf-8')
           PY
           python scripts/pr22_review_fix.py
       - name: Verify in isolated virtual environment
