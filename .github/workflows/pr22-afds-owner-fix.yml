@@ -52,6 +52,8 @@ jobs:
           ref: b54fc6b27ea80b36a70d5de73445970e17f55789
           path: .ai-skills
           persist-credentials: false
+      - name: Install validator dependency
+        run: python -m pip install -c constraints-ci.txt PyYAML
       - name: Run AFDS validator
         run: >-
           python .ai-skills/skills/afds-doc-writer/validate.py
