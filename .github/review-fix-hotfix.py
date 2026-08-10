@@ -14,7 +14,7 @@ if text.count(old) != 3:
     raise RuntimeError(f"expected three SECURITY_CONTEXT segment rewrites, got {text.count(old)}")
 text = text.replace(old, new)
 old_path = '            parsed.append(Path(file_path).name)\n'
-new_path = '            parsed.append(str(file_path).replace("\\\\", "/").rsplit("/", 1)[-1])\n'
+new_path = '            parsed.append(str(file_path).rsplit("/", 1)[-1])\n'
 if text.count(old_path) != 1:
     raise RuntimeError("test_config recorder patch site changed")
 text = text.replace(old_path, new_path)
