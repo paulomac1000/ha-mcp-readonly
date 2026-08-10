@@ -10,7 +10,6 @@ permissions:
 
 jobs:
   correct-and-validate:
-    if: github.event.head_commit.message == 'chore: run AFDS owner correction'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -20,7 +19,7 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
         with:
-          python-version: '3.13'
+          python-version: "3.13"
       - name: Restore current AFDS owners field
         shell: bash
         run: |
@@ -29,24 +28,24 @@ jobs:
           from pathlib import Path
 
           paths = [
-              'AGENTS.md',
-              'CHANGELOG.md',
-              'CONTRIBUTING.md',
-              'SECURITY.md',
-              'docs/documentation.md',
-              'docs/testing-guidelines.md',
+              "AGENTS.md",
+              "CHANGELOG.md",
+              "CONTRIBUTING.md",
+              "SECURITY.md",
+              "docs/documentation.md",
+              "docs/testing-guidelines.md",
           ]
           for raw in paths:
               path = Path(raw)
-              text = path.read_text(encoding='utf-8')
-              if '\nowners:' in text:
+              text = path.read_text(encoding="utf-8")
+              if "\nowners:" in text:
                   continue
-              if '\nowner:' not in text:
-                  raise SystemExit(f'{raw}: missing owner/owners frontmatter field')
-              path.write_text(text.replace('\nowner:', '\nowners:', 1), encoding='utf-8')
+              if "\nowner:" not in text:
+                  raise SystemExit(f"{raw}: missing owner/owners frontmatter field")
+              path.write_text(text.replace("\nowner:", "\nowners:", 1), encoding="utf-8")
           PY
           git diff --check
-      - name: Validate against exact pinned ai-skills validator
+      - name: Checkout exact pinned ai-skills validator
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v6
         with:
           repository: paulomac1000/ai-skills
@@ -62,8 +61,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          if git diff --quiet -- AGENTS.md CHANGELOG.md CONTRIBUTING.md SECURITY.md docs/documentation.md docs/testing-guidelines.md; then
+            echo "No documentation correction required."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add AGENTS.md CHANGELOG.md CONTRIBUTING.md SECURITY.md docs/documentation.md docs/testing-guidelines.md
-          git commit -m 'fix: align AFDS ownership metadata with pinned validator'
+          git commit -m "fix: align AFDS ownership metadata with pinned validator"
           git push origin HEAD:agent/ai-skills-compliance-refactor
