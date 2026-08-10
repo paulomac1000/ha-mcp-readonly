@@ -30,6 +30,18 @@ jobs:
         with:
           python-version: "3.13"
           cache: pip
+      - name: Generate ephemeral verification credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import os
+          import secrets
+
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as output:
+              output.write(f"MCP_AUTH_TOKEN={secrets.token_urlsafe(32)}\n")
+              output.write(f"HA_TOKEN={secrets.token_urlsafe(32)}\n")
+          PY
       - name: Build exact wheel
         run: |
           python -m pip install -c constraints-ci.txt build==1.5.0 setuptools==83.0.0 wheel==0.47.0
@@ -58,7 +70,9 @@ jobs:
       - name: Build exact container from constrained runtime
         run: docker build -f Dockerfile.release -t ha-mcp-readonly:official-${ASSESSED_SHA} .
       - name: Start hardened Streamable HTTP container
+        shell: bash
         run: |
+          set -euo pipefail
           mkdir -p /tmp/ha-config/.storage
           printf 'homeassistant:\n  name: CI Home\n' > /tmp/ha-config/configuration.yaml
           docker run -d --rm --name ha-mcp-official \
@@ -69,8 +83,8 @@ jobs:
             -e MCP_TRANSPORT=http -e MCP_BIND_HOST=0.0.0.0 \
             -e MCP_ALLOWED_HOSTS=127.0.0.1,localhost \
             -e MCP_HTTP_STATELESS=0 \
-            -e MCP_AUTH_TOKEN=official-client-ci-token \
-            -e HA_URL=http://unreachable.invalid:8123 -e HA_TOKEN=ci-backend-token \
+            -e "MCP_AUTH_TOKEN=$MCP_AUTH_TOKEN" \
+            -e HA_URL=http://unreachable.invalid:8123 -e "HA_TOKEN=$HA_TOKEN" \
             -e HA_CONFIG_PATH=/config -e LOG_LEVEL=DEBUG \
             ha-mcp-readonly:official-${ASSESSED_SHA}
           python - <<'PY'
@@ -120,6 +134,7 @@ jobs:
         run: |
           /tmp/official-client/bin/python - <<'PY'
           import json
+          import os
           import urllib.request
 
           payload = {
@@ -136,7 +151,7 @@ jobs:
               'http://127.0.0.1:9092/mcp',
               data=json.dumps(payload).encode(),
               headers={
-                  'Authorization': 'Bearer official-client-ci-token',
+                  'Authorization': f'Bearer {os.environ["MCP_AUTH_TOKEN"]}',
                   'Accept': 'application/json, text/event-stream',
                   'Content-Type': 'application/json',
               },
@@ -156,11 +171,12 @@ jobs:
           PYTHONPATH: ${{ github.workspace }}
         run: |
           /tmp/official-client/bin/python scripts/verify_official_mcp_client.py http \
-            --url http://127.0.0.1:9092/mcp --token official-client-ci-token
+            --url http://127.0.0.1:9092/mcp
       - name: Verify HTTP hardening boundaries
         run: |
           python - <<'PY'
           import json
+          import os
           import urllib.error
           import urllib.request
 
@@ -185,7 +201,7 @@ jobs:
               url,
               data=b'x' * (1024 * 1024 + 1),
               headers={
-                  'Authorization':'Bearer official-client-ci-token',
+                  'Authorization': f'Bearer {os.environ["MCP_AUTH_TOKEN"]}',
                   'Content-Type':'application/json',
               },
               method='POST',
