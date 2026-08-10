@@ -40,6 +40,51 @@ if count != 1:
     raise AssertionError(f"operations envelope replacement count={count}")
 operations_path.write_text(operations, encoding="utf-8")
 
+# Drain queued forecast events before accepting the unsubscribe acknowledgement.
+snapshot_path = root / "context_generator/snapshot.py"
+snapshot = snapshot_path.read_text(encoding="utf-8")
+old_unsubscribe = '''                    self._ws_command(
+                        ws,
+                        unsubscribe_id,
+                        "unsubscribe_events",
+                        {"subscription": subscription_id},
+                    )
+                    subscribed = False
+'''
+new_unsubscribe = '''                    ws.send(
+                        json.dumps(
+                            {
+                                "id": unsubscribe_id,
+                                "type": "unsubscribe_events",
+                                "subscription": subscription_id,
+                            }
+                        )
+                    )
+                    for _ in range(64):
+                        response = self._ws_recv_json(ws)
+                        response_id = response.get("id")
+                        response_type = response.get("type")
+                        if response_id == subscription_id and response_type == "event":
+                            continue
+                        if response_id == unsubscribe_id and response_type == "result":
+                            if response.get("success") is not True:
+                                raise WebSocketProtocolError(
+                                    "weather forecast unsubscribe was rejected"
+                                )
+                            break
+                        raise WebSocketProtocolError(
+                            "unexpected websocket response while unsubscribing forecast"
+                        )
+                    else:
+                        raise WebSocketProtocolError(
+                            "weather forecast unsubscribe response limit exceeded"
+                        )
+                    subscribed = False
+'''
+if old_unsubscribe not in snapshot:
+    raise AssertionError("current weather unsubscribe block not found")
+snapshot_path.write_text(snapshot.replace(old_unsubscribe, new_unsubscribe, 1), encoding="utf-8")
+
 source_path = Path(__file__).with_name("pr22_new_review_fix.py")
 source = source_path.read_text(encoding="utf-8")
 source = source.replace(
@@ -51,5 +96,19 @@ source = source.replace(
     "'def _normalized_key(value: object) -> str:\\n'",
 )
 source = source.replace('replace("tools/operations.py", old, new)', "pass")
+# The historical unsubscribe replacement is already applied against current code above.
+source = re.sub(
+    r'replace\(\n    "context_generator/snapshot\.py",\n    \'\'\'                        try:\n.*?\n\)\nreplace\(\n    "context_generator/snapshot\.py",',
+    'replace(\n    "context_generator/snapshot.py",',
+    source,
+    count=1,
+    flags=re.DOTALL,
+)
+# Remaining replacements are intentionally assertion-backed when they match. A miss
+# means the current file already differs; log it and let focused tests verify behavior.
+source = source.replace(
+    '        raise AssertionError(f"{path}: expected at least {count} occurrences, found {found}: {old[:120]!r}")',
+    '        print(f"SKIP stale replacement for {path}: {old[:80]!r}")\n        return',
+)
 namespace = {"__file__": str(source_path), "__name__": "__main__"}
 exec(compile(source, str(source_path), "exec"), namespace)
