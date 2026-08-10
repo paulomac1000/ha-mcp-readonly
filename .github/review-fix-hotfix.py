@@ -26,4 +26,9 @@ new_path = '            parsed.append(str(file_path).rsplit("/", 1)[-1])\n'
 if text.count(old_path) != 1:
     raise RuntimeError("test_config recorder patch site changed")
 text = text.replace(old_path, new_path)
+old_context = '''    security_context = SecurityContext(\n        allowed_directories=[Path(config_path or "/config")],\n        max_file_size=10 * 1024 * 1024,\n        max_depth=20,\n    )\n    default_root = str(security_context.allowed_directories[0])\n'''
+new_context = '''    security_context = (\n        SecurityContext(\n            allowed_directories=[Path(config_path)],\n            max_file_size=10 * 1024 * 1024,\n            max_depth=20,\n        )\n        if config_path\n        else SECURITY_CONTEXT\n    )\n    default_root = str(security_context.allowed_directories[0])\n'''
+if text.count(old_context) != 1:
+    raise RuntimeError("filesystem registration replacement site changed")
+text = text.replace(old_context, new_context)
 path.write_text(text, encoding="utf-8")
