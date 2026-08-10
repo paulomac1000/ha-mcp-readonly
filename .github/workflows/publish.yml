@@ -84,6 +84,8 @@ jobs:
           python-version: "3.13"
           cache: pip
       - name: Test exact release source and build wheel
+        env:
+          RELEASE_SHA: ${{ steps.revision.outputs.sha }}
         run: |
           python -m pip install -c constraints-ci.txt '.[dev]'
           ruff check .
@@ -93,7 +95,7 @@ jobs:
             scripts/verify_runtime_endpoints.py --strict
           pytest tests/unit tests/protocol -q
           python -m build --wheel --no-isolation
-          test "$(git rev-parse HEAD)" = "${{ steps.revision.outputs.sha }}"
+          test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
       - uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4
       - uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4
       - name: Log in only to isolated quarantine registry
@@ -129,6 +131,7 @@ jobs:
         run: |
           set -euo pipefail
           image_ref="${QUARANTINE_REF%:*}@${QUARANTINE_DIGEST}"
+          trap 'docker rm -f ha-mcp-quarantine-amd64 ha-mcp-quarantine-arm64 2>/dev/null || true' EXIT
           for arch in amd64 arm64; do
             docker run --rm --platform "linux/$arch" --entrypoint=id "$image_ref" -u | grep -qx '10001'
             docker run --rm --platform "linux/$arch" --entrypoint=python \
@@ -136,7 +139,6 @@ jobs:
               "$image_ref" -c 'import server; assert server.get_tool_count() == 145'
             name="ha-mcp-quarantine-$arch"
             docker run -dit --rm --platform "linux/$arch" --name "$name" "$image_ref"
-            trap 'docker rm -f ha-mcp-quarantine-amd64 ha-mcp-quarantine-arm64 2>/dev/null || true' EXIT
             for attempt in $(seq 1 60); do
               state="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{end}}' "$name")"
               [[ "$state" == healthy ]] && break
