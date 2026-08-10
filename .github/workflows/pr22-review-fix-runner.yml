@@ -21,7 +21,19 @@ jobs:
         with:
           python-version: "3.13"
       - name: Apply reviewed fixes
-        run: python scripts/pr22_review_fix.py
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('scripts/pr22_review_fix.py')
+          text = path.read_text(encoding='utf-8')
+          old = '''    updated, count = re.subn(r"(?m)^owners:", "owner:", text, count=1)\n    if count != 1:\n        raise SystemExit(f"{doc}: expected one owners frontmatter key, found {count}")\n    write(doc, updated)\n'''
+          new = '''    updated, count = re.subn(r"(?m)^owners:", "owner:", text, count=1)\n    if count == 0 and re.search(r"(?m)^owner:", text):\n        continue\n    if count != 1:\n        raise SystemExit(f"{doc}: expected one owner/owners frontmatter key, found {count}")\n    write(doc, updated)\n'''
+          if text.count(old) != 1:
+              raise SystemExit('owner patch target missing')
+          path.write_text(text.replace(old, new, 1), encoding='utf-8')
+          PY
+          python scripts/pr22_review_fix.py
       - name: Verify in isolated virtual environment
         shell: bash
         run: |
