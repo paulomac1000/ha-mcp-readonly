@@ -62,13 +62,18 @@ jobs:
             scripts/verify_runtime_endpoints.py --strict
           .venv/bin/pytest tests/unit tests/protocol -q
           .venv/bin/python -m compileall -q server.py tools context_generator
-      - name: Commit and push tested fixes
+      - name: Commit and push tested source changes
         shell: bash
         run: |
           set -euo pipefail
+          # Workflow files are published separately through the GitHub connector because
+          # Actions' GITHUB_TOKEN cannot update workflows. Keep the verified source/test/docs
+          # patch here while restoring workflow paths to the remote head for this commit.
+          git checkout -- \
+            .github/workflows/official-client.yml \
+            .github/workflows/migration-evidence.yml \
+            .github/workflows/publish.yml
           git rm -f \
-            .github/workflows/pr22-review-fix-runner.yml \
-            .github/workflows/pr22-finalize.yml \
             scripts/pr22_review_fix.py \
             scripts/pr22_finalize.py \
             scripts/pr22_lastmile.py \
@@ -77,5 +82,5 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
-          git commit -m "fix: address PR22 review and CI blockers"
+          git commit -m "fix: address PR22 review and runtime blockers"
           git push origin HEAD:agent/ai-skills-compliance-refactor
