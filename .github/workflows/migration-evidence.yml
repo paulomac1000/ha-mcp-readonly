@@ -49,7 +49,7 @@ jobs:
           pytest tests/protocol -q
       - name: Build exact constrained wheel runtime and exercise stdio with independent official client
         run: |
-          python -m pip install 'build==1.5.0' 'setuptools==83.0.0' 'wheel==0.47.0'
+          python -m pip install -c constraints-ci.txt 'build==1.5.0' 'setuptools==83.0.0' 'wheel==0.47.0'
           python -m build --wheel --no-isolation
           python -m venv /tmp/migration-wheel
           /tmp/migration-wheel/bin/python -m pip install -c constraints-ci.txt dist/*.whl
@@ -152,13 +152,16 @@ jobs:
           artifacts = get(f"/repos/{repo}/actions/runs/{ci['id']}/artifacts?per_page=100").get(
               'artifacts', []
           )
-          selected = [
-              artifact for artifact in artifacts
-              if artifact.get('name', '').startswith(('python-wheel-', 'container-image-'))
-          ]
-          if len(selected) < 3:
+          expected_artifacts = {
+              f'python-wheel-{head}',
+              f'container-image-{head}-amd64',
+              f'container-image-{head}-arm64',
+          }
+          selected = [artifact for artifact in artifacts if artifact.get('name') in expected_artifacts]
+          selected_names = {artifact.get('name') for artifact in selected}
+          if selected_names != expected_artifacts or len(selected) != len(expected_artifacts):
               raise SystemExit(
-                  f'expected wheel plus two container artifacts, got {[a.get("name") for a in selected]}'
+                  f'expected exact CI artifacts {sorted(expected_artifacts)}, got {sorted(str(name) for name in selected_names)}'
               )
           for artifact in selected:
               digest = artifact.get('digest')
@@ -175,6 +178,15 @@ jobs:
           if not official_job or official_job.get('conclusion') != 'success':
               raise SystemExit('official-client exact-artifact job is not successful')
 
+          def check_run_id(job):
+              url = job.get('check_run_url')
+              if not isinstance(url, str) or '/check-runs/' not in url:
+                  raise SystemExit(f"job lacks check_run_url: {job.get('name')}")
+              try:
+                  return int(url.rstrip('/').rsplit('/', 1)[-1])
+              except ValueError as exc:
+                  raise SystemExit(f"invalid check_run_url for {job.get('name')}: {url}") from exc
+
           wheel = next(Path('dist').glob('*.whl'))
           wheel_digest = 'sha256:' + hashlib.sha256(wheel.read_bytes()).hexdigest()
           report = {
@@ -190,7 +202,7 @@ jobs:
                   'jobs': {
                       name: {
                           'job_id': int(by_name[name]['id']),
-                          'check_run_id': int(by_name[name]['id']),
+                          'check_run_id': check_run_id(by_name[name]),
                           'conclusion': by_name[name]['conclusion'],
                       }
                       for name in sorted(expected)
