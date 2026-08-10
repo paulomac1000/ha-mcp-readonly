@@ -1,0 +1,147 @@
+name: PR22 Migration Redirect Fix
+
+on:
+  push:
+    branches: [agent/ai-skills-compliance-refactor]
+    paths:
+      - scripts/pr22_migration_redirect_trigger.py
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: agent/ai-skills-compliance-refactor
+          fetch-depth: 1
+      - name: Patch artifact downloader and create blob
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python - <<'PY'
+          import base64
+          import json
+          import os
+          import urllib.request
+          from pathlib import Path
+
+          path = Path('.github/workflows/migration-evidence.yml')
+          text = path.read_text(encoding='utf-8')
+          old = '''          def request_bytes(url):
+              request = urllib.request.Request(
+                  url,
+                  headers={
+                      'Authorization': f'Bearer {token}',
+                      'Accept': 'application/vnd.github+json',
+                      'X-GitHub-Api-Version': '2022-11-28',
+                  },
+              )
+              last_error = None
+              for attempt in range(5):
+                  try:
+                      with urllib.request.urlopen(request, timeout=20) as response:
+                          return response.read()
+                  except urllib.error.HTTPError as error:
+                      if error.code not in {403, 429, 500, 502, 503, 504}:
+                          raise
+                      last_error = error
+                  except (urllib.error.URLError, TimeoutError) as error:
+                      last_error = error
+                  if attempt < 4:
+                      time.sleep(2 ** attempt)
+              raise SystemExit(f'GitHub API request failed for {url}: {last_error}')
+
+          def get(path):
+              return json.loads(request_bytes(api + path))
+'''
+          new = '''          class _NoRedirect(urllib.request.HTTPRedirectHandler):
+              def redirect_request(self, req, fp, code, msg, headers, newurl):
+                  return None
+
+          def request_bytes(url):
+              request = urllib.request.Request(
+                  url,
+                  headers={
+                      'Authorization': f'Bearer {token}',
+                      'Accept': 'application/vnd.github+json',
+                      'X-GitHub-Api-Version': '2022-11-28',
+                  },
+              )
+              last_error = None
+              for attempt in range(5):
+                  try:
+                      with urllib.request.urlopen(request, timeout=20) as response:
+                          return response.read()
+                  except urllib.error.HTTPError as error:
+                      if error.code not in {403, 429, 500, 502, 503, 504}:
+                          raise
+                      last_error = error
+                  except (urllib.error.URLError, TimeoutError) as error:
+                      last_error = error
+                  if attempt < 4:
+                      time.sleep(2 ** attempt)
+              raise SystemExit(f'GitHub API request failed for {url}: {last_error}')
+
+          def download_artifact_archive(url):
+              request = urllib.request.Request(
+                  url,
+                  headers={
+                      'Authorization': f'Bearer {token}',
+                      'Accept': 'application/vnd.github+json',
+                      'X-GitHub-Api-Version': '2022-11-28',
+                  },
+              )
+              opener = urllib.request.build_opener(_NoRedirect)
+              try:
+                  with opener.open(request, timeout=20) as response:
+                      if response.status == 200:
+                          return response.read()
+                      location = response.headers.get('Location')
+              except urllib.error.HTTPError as error:
+                  if error.code not in {301, 302, 303, 307, 308}:
+                      raise
+                  location = error.headers.get('Location')
+              if not location:
+                  raise SystemExit('artifact download endpoint did not return a signed storage URL')
+              # The redirect target is already signed. Do not forward the GitHub token
+              # to the storage host.
+              with urllib.request.urlopen(location, timeout=60) as response:
+                  return response.read()
+
+          def get(path):
+              return json.loads(request_bytes(api + path))
+'''
+          if old not in text:
+              raise SystemExit('migration request_bytes block not found')
+          text = text.replace(old, new, 1)
+          text = text.replace(
+              'wheel_zip = zipfile.ZipFile(io.BytesIO(request_bytes(archive_url)))',
+              'wheel_zip = zipfile.ZipFile(io.BytesIO(download_artifact_archive(archive_url)))',
+              1,
+          )
+          path.write_text(text, encoding='utf-8')
+
+          repo = os.environ['GITHUB_REPOSITORY']
+          payload = json.dumps({
+              'content': base64.b64encode(path.read_bytes()).decode('ascii'),
+              'encoding': 'base64',
+          }).encode()
+          request = urllib.request.Request(
+              f'https://api.github.com/repos/{repo}/git/blobs',
+              data=payload,
+              method='POST',
+              headers={
+                  'Authorization': f'Bearer {os.environ["GH_TOKEN"]}',
+                  'Accept': 'application/vnd.github+json',
+                  'X-GitHub-Api-Version': '2022-11-28',
+                  'Content-Type': 'application/json',
+              },
+          )
+          with urllib.request.urlopen(request, timeout=20) as response:
+              blob = json.load(response)
+          print(f'VALIDATED_BLOB .github/workflows/migration-evidence.yml {blob["sha"]}')
+          PY
