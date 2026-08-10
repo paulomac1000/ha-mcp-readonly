@@ -28,6 +28,7 @@ jobs:
           .venv-review-fix/bin/python -m pip install -c constraints-ci.txt '.[dev]'
       - name: Apply verified review fixes
         run: |
+          .venv-review-fix/bin/python .github/review-fix-hotfix.py
           .venv-review-fix/bin/python -m py_compile .github/review-fix.py
           .venv-review-fix/bin/python .github/review-fix.py
           .venv-review-fix/bin/ruff check . --fix
@@ -55,7 +56,7 @@ jobs:
           git config user.name "openai-review-fix"
           git config user.email "openai-review-fix@users.noreply.github.com"
           git add -A
-          git reset -- .github/review-fix.py .github/workflows/review-fix.yml
+          git reset -- .github/review-fix.py .github/review-fix-hotfix.py .github/workflows/review-fix.yml
           if git diff --cached --quiet; then
             echo "No validated source changes to commit"
             exit 0
