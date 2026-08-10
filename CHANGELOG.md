@@ -82,7 +82,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Tests
 
-- Unit and protocol: 1,220 passed on exact-head revision `bf88ad03168f2095d59107aa7641ee3310037efd` before this follow-up review-fix round; the final count must be refreshed from the new exact-head CI before release.
+- Unit and protocol: 1,232 passed in the full review-fix gate; the exact assessed revision is recorded by Migration evidence rather than embedded in this self-referential changelog entry.
 - Public CI does not claim live Home Assistant smoke, E2E, or integration results for this revision; those suites require separate provider-backed evidence before certification.
 
 ## [1.6.0] - 2026-06-11
@@ -494,8 +494,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Tests for `automation_validate_triggers` — validates trigger IDs against their
   handlers in choose/if/parallel blocks, detects orphaned triggers, duplicate IDs,
   and missing handler references.
-- Tests for `diagnose_person_tracking` — person state, tracker freshness, zone
-  proximity, automation references.
+- Tests for `diagnose_person_tracking` — person state, tracker freshness analysis,
+  automation references.
 - Tests for `get_area_automation_summary` — area intelligence with device mappings,
   entity breakdown, and automation linking.
 - Tests for `server.py` REST API endpoints: tool calling, context generation,
