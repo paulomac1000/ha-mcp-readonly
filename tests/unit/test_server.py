@@ -116,6 +116,22 @@ def test_internal_type_error_is_not_reported_as_invalid_arguments(client: TestCl
     }
 
 
+def test_authenticated_rest_request_binds_expected_principal(client: TestClient) -> None:
+    from tools.invocation import current_principal
+
+    def report_principal() -> dict:
+        principal = current_principal()
+        return {"subject": principal.subject, "targets": sorted(principal.targets)}
+
+    with patch("server.get_tool", return_value=report_principal):
+        response = client.post("/api/tools/principal", headers=AUTH, json={})
+
+    assert response.status_code == 200
+    result = response.json()["result"]
+    assert result["subject"] == "authenticated-rest-client"
+    assert result["targets"] == ["home_assistant", "home_assistant_config", "runtime"]
+
+
 def test_sync_rest_tool_runs_off_event_loop(client: TestClient) -> None:
     import threading
 
@@ -265,6 +281,7 @@ async def test_mcp_principal_is_bound_from_each_request_token(monkeypatch) -> No
         principal = current_principal()
         observed["subject"] = principal.subject
         observed["capabilities"] = principal.capabilities
+        observed["targets"] = principal.targets
         return "ok"
 
     context = type("Context", (), {"method": "tools/call"})()
@@ -273,4 +290,5 @@ async def test_mcp_principal_is_bound_from_each_request_token(monkeypatch) -> No
     assert observed == {
         "subject": "subject-a",
         "capabilities": frozenset({"filesystem.read"}),
+        "targets": frozenset({"runtime", "home_assistant", "home_assistant_config"}),
     }

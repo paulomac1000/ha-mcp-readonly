@@ -65,7 +65,7 @@ _SENSITIVE_PATTERNS: list[tuple[re.Pattern[str], str]] = [
         re.compile(r"eyJ[A-Za-z0-9_\-]{10,}\.eyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]+"),
         "[JWT_REDACTED]",
     ),
-    (re.compile(r"Bearer\s+[A-Za-z0-9._\-]+"), "Bearer [REDACTED]"),
+    (re.compile(r"Bearer\s+[A-Za-z0-9._~+/=\-]+"), "Bearer [REDACTED]"),
     (re.compile(r"(?i)\b(password|passwd|pwd)\s*[=:]\s*\S+"), r"\1=[REDACTED]"),
     (
         re.compile(r"(?i)\b(token|access_token|refresh_token)\s*[=:]\s*\S+"),

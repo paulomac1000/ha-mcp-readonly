@@ -131,85 +131,25 @@ def _do_get_blueprint_code(blueprint_path: str, config_path: str) -> str:
 def _do_get_blueprint_instances(blueprint_path: str, config_path: str) -> str:
     """Find automations and scripts that use a given blueprint."""
     try:
-        instances = []
-
-        automations_path = Path(config_path) / "automations.yaml"
-        if automations_path.exists():
-            automations = load_yaml_file(str(automations_path)) or []
-            if isinstance(automations, dict):
-                automations = [automations]
-
-            for auto in automations:
-                if not isinstance(auto, dict):
-                    continue
-                if "use_blueprint" in auto:
-                    bp_config = auto["use_blueprint"]
-                    bp_path = bp_config if isinstance(bp_config, str) else bp_config.get("path")
-                    if bp_path == blueprint_path:
-                        instances.append(
-                            {
-                                "type": "automation",
-                                "id": auto.get("id"),
-                                "alias": auto.get("alias", "Unnamed"),
-                                "inputs": bp_config.get("input", {})
-                                if isinstance(bp_config, dict)
-                                else {},
-                            }
-                        )
-
-        scripts_path = Path(config_path) / "scripts.yaml"
-        if scripts_path.exists():
-            scripts = load_yaml_file(str(scripts_path))
-            if scripts:
-                if isinstance(scripts, dict):
-                    for script_id, script_data in scripts.items():
-                        if not isinstance(script_data, dict):
-                            continue
-                        if "use_blueprint" in script_data:
-                            bp_config = script_data["use_blueprint"]
-                            bp_path = (
-                                bp_config if isinstance(bp_config, str) else bp_config.get("path")
-                            )
-                            if bp_path == blueprint_path:
-                                instances.append(
-                                    {
-                                        "type": "script",
-                                        "id": script_id,
-                                        "alias": script_data.get("alias", script_id),
-                                        "inputs": bp_config.get("input", {})
-                                        if isinstance(bp_config, dict)
-                                        else {},
-                                    }
-                                )
-                elif isinstance(scripts, list):
-                    for script in scripts:
-                        if not isinstance(script, dict):
-                            continue
-                        if "use_blueprint" in script:
-                            bp_config = script["use_blueprint"]
-                            bp_path = (
-                                bp_config if isinstance(bp_config, str) else bp_config.get("path")
-                            )
-                            if bp_path == blueprint_path:
-                                instances.append(
-                                    {
-                                        "type": "script",
-                                        "id": script.get("id"),
-                                        "alias": script.get("alias", "Unnamed"),
-                                        "inputs": bp_config.get("input", {})
-                                        if isinstance(bp_config, dict)
-                                        else {},
-                                    }
-                                )
-
+        matching = [
+            {
+                "type": item["type"],
+                "id": item["id"],
+                "alias": item["alias"],
+                "inputs": item["inputs"],
+            }
+            for item in _iter_blueprint_instances(config_path)
+            if item["blueprint_path"] == blueprint_path
+        ]
+        automations = sum(1 for item in matching if item["type"] == "automation")
         return _success_response(
             {
                 "blueprint": blueprint_path,
-                "usage_count": len(instances),
-                "instances": instances,
+                "usage_count": len(matching),
+                "instances": matching,
                 "summary": {
-                    "automations": len([i for i in instances if i["type"] == "automation"]),
-                    "scripts": len([i for i in instances if i["type"] == "script"]),
+                    "automations": automations,
+                    "scripts": len(matching) - automations,
                 },
             }
         )
@@ -232,7 +172,10 @@ def _iter_blueprint_instances(config_path: str) -> list[dict[str, Any]]:
             {
                 "type": doc_type,
                 "id": entry.get("id") if doc_type == "automation" else key,
-                "alias": entry.get("alias", key if doc_type == "script" else "Unnamed"),
+                "alias": entry.get(
+                    "alias",
+                    (key if key is not None else "Unnamed") if doc_type == "script" else "Unnamed",
+                ),
                 "blueprint_path": bp_path,
                 "inputs": bp_config.get("input", {}) if isinstance(bp_config, dict) else {},
             }
@@ -271,19 +214,23 @@ def _do_get_blueprint_usage_summary(config_path: str) -> str:
 
         all_blueprints = list_res.get("blueprints", [])
         instances = _iter_blueprint_instances(config_path)
+        by_path: dict[str, list[dict[str, Any]]] = {}
+        for item in instances:
+            by_path.setdefault(item["blueprint_path"], []).append(item)
         usage_stats = []
 
         for bp in all_blueprints:
             path = bp.get("path")
-            matching = [i for i in instances if i["blueprint_path"] == path]
+            matching = by_path.get(path, []) if isinstance(path, str) else []
+            automations = sum(1 for item in matching if item["type"] == "automation")
             usage_stats.append(
                 {
                     "path": path,
                     "name": bp.get("name"),
                     "domain": bp.get("domain"),
                     "usage_count": len(matching),
-                    "automations": len([i for i in matching if i["type"] == "automation"]),
-                    "scripts": len([i for i in matching if i["type"] == "script"]),
+                    "automations": automations,
+                    "scripts": len(matching) - automations,
                 }
             )
 

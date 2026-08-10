@@ -1487,14 +1487,15 @@ def _do_diagnose_performance(
             for a in automation_states[:10]
         ]
 
-    logbook_window_hours = 24
+    logbook_window_hours: int | None = None
     logbook_res: dict[str, Any] = {"success": False, "data": []}
-    for logbook_window_hours in (24, 6, 1):
-        start = (datetime.now(UTC) - timedelta(hours=logbook_window_hours)).isoformat()
+    for candidate_window_hours in (24, 6, 1):
+        start = (datetime.now(UTC) - timedelta(hours=candidate_window_hours)).isoformat()
         logbook_res = make_ha_request(
             ha_url, ha_token, f"/api/logbook/{start}", timeout=60, retries=1
         )
         if logbook_res.get("success"):
+            logbook_window_hours = candidate_window_hours
             break
     if logbook_res.get("success"):
         trigger_counts: Counter[str] = Counter()

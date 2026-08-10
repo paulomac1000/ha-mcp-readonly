@@ -1195,6 +1195,8 @@ class LogAnalyzer:
         Analyzes logs from the last X hours.
         Based on test_real_ha.py get_log_insights.
         """
+        if hours is None:
+            hours = _active_log_hours()
         print(f"Analyzing logs (last {hours}h)...")
 
         log_path = _active_config_path() / "home-assistant.log"

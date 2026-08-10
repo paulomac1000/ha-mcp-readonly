@@ -740,6 +740,24 @@ class TestDiagnoseSystemHealthApiFailure:
         assert "Cannot fetch" in data["error"]
 
 
+def test_performance_reports_no_logbook_window_when_all_requests_fail(monkeypatch) -> None:
+    from tools.diagnostics import _do_diagnose_performance
+
+    calls = []
+
+    def fail_request(ha_url, ha_token, endpoint, **kwargs):
+        del ha_url, ha_token, kwargs
+        calls.append(endpoint)
+        if endpoint == "/api/states":
+            return {"success": True, "data": []}
+        return {"success": False, "error": "unavailable"}
+
+    monkeypatch.setattr("tools.diagnostics.make_ha_request", fail_request)
+    result = _do_diagnose_performance("http://ha", "token")
+    assert result["logbook_window_hours"] is None
+    assert len([endpoint for endpoint in calls if endpoint.startswith("/api/logbook/")]) == 3
+
+
 class TestEnergyDashboardEdgeCases:
     """Edge case tests for get_energy_dashboard_data()."""
 

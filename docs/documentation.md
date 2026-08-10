@@ -84,8 +84,12 @@ Every route other than health requires `Authorization: Bearer ...`. REST invokes
 | `MCP_AUTH_TOKEN` | empty | Required caller credential for network MCP |
 | `REST_API_ENABLED` | `0` | Enable the compatibility adapter |
 | `REST_API_TOKEN` | MCP token | REST caller credential |
+| `REST_API_PORT` | `9093` | REST compatibility adapter port |
+| `CORS_ALLOWED_ORIGINS` | `http://localhost` | Explicit REST origins; wildcards are rejected |
 | `HEALTH_SERVER_ENABLED` | network-dependent | Start `/live`, `/ready`, and `/health` |
+| `HEALTH_CHECK_PORT` | `9091` | Health listener port |
 | `HA_BACKEND_REQUIRED_FOR_READY` | `0` | Require live Home Assistant connectivity for `/ready`; otherwise expose HA outage as capability degradation |
+| `OUTPUT_PATH` | `/app/output/ha-ai-context.md` | Default context artifact path |
 | `CONTEXT_OUTPUT_ROOT` | output parent | Artifact containment root |
 | `HA_CONTEXT_HISTORY_HOURS` | `1` | Bounded history window included in context |
 | `HA_CONTEXT_LOG_HOURS` | `24` | Bounded logbook and log-analysis window |
@@ -93,6 +97,8 @@ Every route other than health requires `Authorization: Bearer ...`. REST invokes
 | `HA_CONTEXT_MAX_SOURCE_BYTES` | `67108864` | Total safe-source payload budget |
 | `HA_CONTEXT_MAX_OUTPUT_BYTES` | `100663296` | Final context artifact size limit |
 | `MCP_DEV_TOOLS_ENABLED` | `0` | Enable additional developer-only observations |
+| `LOG_LEVEL` | `INFO` | Runtime logging level |
+| `RUN_TESTS_ON_STARTUP` | `0` | Run bundled unit tests before serving when tests are installed |
 
 Wildcard CORS origins are rejected. Developer tools are disabled by default.
 
@@ -120,7 +126,8 @@ The report contains a provenance matrix and a comprehensive redacted snapshot. I
 
 - `/live` reports process liveness.
 - `/ready` reports the combined catalog, transport, filesystem, backend-configuration, and optional REST component state.
-- `/health` includes version, component details, readiness, and tool count; it deliberately omits per-tool invocation counters from the public endpoint.
+- `/health` returns only status and version and deliberately exposes no component detail.
+- Authenticated `/api/health/details` reports component state, readiness, and tool counts for operators.
 
 Backend configuration may be reported as degraded when no Home Assistant token is configured. Readiness does not claim that every integration endpoint is reachable; individual backend failures remain controlled tool errors and are visible in context provenance.
 

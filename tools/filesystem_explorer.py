@@ -100,13 +100,16 @@ SECURITY_CONTEXT = SecurityContext(
 # =============================================================================
 
 
-def _do_list_directory(path: str, max_entries: int) -> dict[str, Any]:
+def _do_list_directory(
+    path: str, max_entries: int, security_context: SecurityContext | None = None
+) -> dict[str, Any]:
     """List directory contents with allowlist validation.
 
     Returns a dict (not JSON) so the wrapper can add _meta envelope.
     """
+    context = security_context or SECURITY_CONTEXT
     try:
-        target = SECURITY_CONTEXT.validate_path(path)
+        target = context.validate_path(path)
     except PermissionError as e:
         return create_error_response("ACCESS_DENIED", str(e), retryable=False)
 
@@ -125,7 +128,7 @@ def _do_list_directory(path: str, max_entries: int) -> dict[str, Any]:
         if len(entries) >= max_entries:
             break
         try:
-            safe_entry = SECURITY_CONTEXT.validate_metadata_path(entry)
+            safe_entry = context.validate_metadata_path(entry)
             stat = safe_entry.stat()
             entries.append(
                 {
@@ -133,7 +136,7 @@ def _do_list_directory(path: str, max_entries: int) -> dict[str, Any]:
                     "type": "directory" if safe_entry.is_dir() else "file",
                     "size_bytes": stat.st_size if safe_entry.is_file() else None,
                     "modified_timestamp": stat.st_mtime,
-                    "is_binary": SECURITY_CONTEXT.is_binary_file(safe_entry)
+                    "is_binary": context.is_binary_file(safe_entry)
                     if safe_entry.is_file()
                     else False,
                 }
@@ -149,14 +152,17 @@ def _do_list_directory(path: str, max_entries: int) -> dict[str, Any]:
         "total_entries": total,
         "entries": entries,
         "truncated": len(entries) < total,
-        "allowed_directories": [str(d) for d in SECURITY_CONTEXT.allowed_directories],
+        "allowed_directories": [str(d) for d in context.allowed_directories],
     }
 
 
-def _do_read_file(file_path: str, max_lines: int, offset: int) -> dict[str, Any]:
+def _do_read_file(
+    file_path: str, max_lines: int, offset: int, security_context: SecurityContext | None = None
+) -> dict[str, Any]:
     """Read a text file with allowlist validation and size limits."""
+    context = security_context or SECURITY_CONTEXT
     try:
-        target = SECURITY_CONTEXT.validate_metadata_path(file_path)
+        target = context.validate_metadata_path(file_path)
     except PermissionError as e:
         return create_error_response("ACCESS_DENIED", str(e), retryable=False)
 
@@ -165,7 +171,7 @@ def _do_read_file(file_path: str, max_lines: int, offset: int) -> dict[str, Any]
             "INVALID_PARAM", f"Path is not a regular file: {target}", retryable=False
         )
 
-    if SECURITY_CONTEXT.is_binary_file(target):
+    if context.is_binary_file(target):
         return create_error_response(
             "UNSUPPORTED",
             f"Binary file type not allowlisted for reading: {target}. Use list_directory to explore this location",
@@ -173,7 +179,7 @@ def _do_read_file(file_path: str, max_lines: int, offset: int) -> dict[str, Any]
         )
 
     try:
-        target = SECURITY_CONTEXT.validate_text_file(target)
+        target = context.validate_text_file(target)
     except PermissionError as e:
         return create_error_response("ACCESS_DENIED", str(e), retryable=False)
 
@@ -233,8 +239,14 @@ def _do_read_file(file_path: str, max_lines: int, offset: int) -> dict[str, Any]
     }
 
 
-def _do_search_files(pattern: str, search_path: str, max_results: int) -> dict[str, Any]:
+def _do_search_files(
+    pattern: str,
+    search_path: str,
+    max_results: int,
+    security_context: SecurityContext | None = None,
+) -> dict[str, Any]:
     """Search for files containing a text pattern (safe grep)."""
+    context = security_context or SECURITY_CONTEXT
     if not re.match(r"^[a-zA-Z0-9\s\-_\.\/\\:\[\]\(\)\{\}\+\*\?\^\$\|@#%&=!<>~\']+$", pattern):
         return create_error_response(
             "INVALID_PARAM",
@@ -243,7 +255,7 @@ def _do_search_files(pattern: str, search_path: str, max_results: int) -> dict[s
         )
 
     try:
-        target = SECURITY_CONTEXT.validate_path(search_path)
+        target = context.validate_path(search_path)
     except PermissionError as e:
         return create_error_response("ACCESS_DENIED", str(e), retryable=False)
 
@@ -261,13 +273,13 @@ def _do_search_files(pattern: str, search_path: str, max_results: int) -> dict[s
             truncated = True
             dirs[:] = []
             break
-        if root.count(os.sep) - str(target).count(os.sep) > SECURITY_CONTEXT.max_depth:
+        if root.count(os.sep) - str(target).count(os.sep) > context.max_depth:
             dirs[:] = []
             continue
         safe_dirs: list[str] = []
         for dirname in dirs:
             try:
-                SECURITY_CONTEXT.validate_path(Path(root) / dirname)
+                context.validate_path(Path(root) / dirname)
             except PermissionError:
                 continue
             safe_dirs.append(dirname)
@@ -281,10 +293,10 @@ def _do_search_files(pattern: str, search_path: str, max_results: int) -> dict[s
 
             filepath = Path(root) / filename
             try:
-                filepath = SECURITY_CONTEXT.validate_text_file(filepath)
+                filepath = context.validate_text_file(filepath)
             except PermissionError:
                 continue
-            if SECURITY_CONTEXT.is_binary_file(filepath):
+            if context.is_binary_file(filepath):
                 continue
             try:
                 if filepath.stat().st_size > 2 * 1024 * 1024:
@@ -303,8 +315,8 @@ def _do_search_files(pattern: str, search_path: str, max_results: int) -> dict[s
                 for match in re.finditer(re.escape(pattern), content, re.IGNORECASE):
                     match_start = max(0, match.start() - 30)
                     match_end = min(len(content), match.end() + 30)
-                    context = content[match_start:match_end].replace("\n", " ").strip()
-                    matches.append({"position": match.start(), "context": context})
+                    match_context = content[match_start:match_end].replace("\n", " ").strip()
+                    matches.append({"position": match.start(), "context": match_context})
                     if len(matches) >= 3:
                         break
                 results.append(
@@ -339,19 +351,20 @@ def register_filesystem_tools(mcp, config_path: str | None = None) -> None:  # t
     so the generic filesystem tools honor the configured Home Assistant root
     instead of the container-default ``/config``.
     """
-    global SECURITY_CONTEXT
-    if config_path:
-        SECURITY_CONTEXT = SecurityContext(
+    security_context = (
+        SecurityContext(
             allowed_directories=[Path(config_path)],
             max_file_size=10 * 1024 * 1024,
             max_depth=20,
         )
-
-    default_root = str(SECURITY_CONTEXT.allowed_directories[0])
+        if config_path
+        else SECURITY_CONTEXT
+    )
+    default_root = str(security_context.allowed_directories[0])
 
     @mcp.tool()
     def list_directory(path: str = default_root, max_entries: int = 100) -> str:
-        """[READ] List directory contents with allowlist validation.
+        """List directory contents with allowlist validation.
 
         Args:
             path: Directory path (must be within the allowlist).
@@ -361,7 +374,7 @@ def register_filesystem_tools(mcp, config_path: str | None = None) -> None:  # t
             JSON string containing the entries or an error message.
         """
         try:
-            data = _do_list_directory(path, max_entries)
+            data = _do_list_directory(path, max_entries, security_context)
             if data.get("success") is False:
                 return _error_response(data.get("error", data))
             return _success_response(data)
@@ -371,7 +384,7 @@ def register_filesystem_tools(mcp, config_path: str | None = None) -> None:  # t
 
     @mcp.tool()
     def read_file(file_path: str, max_lines: int = 200, offset: int = 1) -> str:
-        """[READ] Read a text file with allowlist validation and size limits.
+        """Read a text file with allowlist validation and size limits.
 
         Args:
             file_path: Path to the file (must be within the allowlist).
@@ -382,7 +395,7 @@ def register_filesystem_tools(mcp, config_path: str | None = None) -> None:  # t
             JSON string with file content or error details.
         """
         try:
-            data = _do_read_file(file_path, max_lines, offset)
+            data = _do_read_file(file_path, max_lines, offset, security_context)
             if data.get("success") is False:
                 return _error_response(data.get("error", data))
             return _success_response(data)
@@ -392,7 +405,7 @@ def register_filesystem_tools(mcp, config_path: str | None = None) -> None:  # t
 
     @mcp.tool()
     def search_files(pattern: str, search_path: str = default_root, max_results: int = 50) -> str:
-        """[READ] Search for files containing a text pattern (safe grep).
+        """Search for files containing a text pattern (safe grep).
 
         Args:
             pattern: Pattern to search for (only safe characters allowed).
@@ -403,7 +416,7 @@ def register_filesystem_tools(mcp, config_path: str | None = None) -> None:  # t
             JSON string with search results or error information.
         """
         try:
-            data = _do_search_files(pattern, search_path, max_results)
+            data = _do_search_files(pattern, search_path, max_results, security_context)
             if data.get("success") is False:
                 return _error_response(data.get("error", data))
             return _success_response(data)

@@ -126,7 +126,7 @@ pytest tests/unit/ tests/smoke/ tests/e2e/ -v
 ### Coverage and static gates
 
 ```bash
-pytest tests/unit/ -q --cov=tools --cov=context_generator.core --cov=context_generator.config --cov=context_generator.runtime --cov=context_generator.provenance --cov=context_generator.snapshot --cov-report=term-missing
+pytest tests/unit/ -q --cov=tools --cov=context_generator.core --cov=context_generator.config --cov=context_generator.runtime --cov=context_generator.provenance --cov=context_generator.snapshot --cov-report=term-missing --cov-fail-under=80
 ruff check .
 ruff format --check .
 mypy server.py tools/ context_generator/core.py context_generator/config.py context_generator/runtime.py context_generator/provenance.py context_generator/snapshot.py scripts/verify_runtime_endpoints.py --strict

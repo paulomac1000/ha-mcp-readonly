@@ -82,7 +82,12 @@ class MCPWrapper:
     def __init__(self, mcp_instance):
         self._mcp = mcp_instance
         self._loop = None
-        self._tools_cache = None
+
+    def close(self):
+        """Close the shared event loop owned by this wrapper."""
+        if self._loop is not None and not self._loop.is_closed():
+            self._loop.close()
+        self._loop = None
 
     def _get_or_create_loop(self):
         """Fetch or create the single shared event loop."""
@@ -133,7 +138,11 @@ def real_mcp():
         file=sys.stderr,
     )
 
-    return MCPWrapper(mcp)
+    wrapper = MCPWrapper(mcp)
+    try:
+        yield wrapper
+    finally:
+        wrapper.close()
 
 
 @pytest.fixture(scope="module")

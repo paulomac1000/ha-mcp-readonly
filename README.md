@@ -67,6 +67,8 @@ services:
       - "127.0.0.1:9092:9092"  # authenticated Streamable HTTP MCP
     volumes:
       - /path/to/ha/config:/config:ro  # Replace with your HA config path (e.g., /config, ~/.homeassistant)
+    tmpfs:
+      - /app/output:size=256m,mode=0750,uid=10001,gid=10001
     restart: unless-stopped
     read_only: true
     cap_drop: ["ALL"]
@@ -292,9 +294,11 @@ ruff format --check .
 server.py                  # Main entry point — FastMCP + REST API + health check
 context_generator/
 ├── config.py              # Immutable per-run configuration
+├── constants.py           # Legacy/static analyzer defaults and HA YAML loader
 ├── runtime.py             # Context-local runtime and provenance scope
 ├── provenance.py          # Completeness matrix and redaction
 ├── snapshot.py            # Safe filesystem, REST, and WebSocket collectors
+├── storage_policy.py      # Positive allowlist for model-visible .storage data
 ├── core.py                # Isolated generation entry points
 ├── analyzers.py           # Domain analyzers
 ├── formatters.py          # Atomic bounded Markdown output

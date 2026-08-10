@@ -41,8 +41,23 @@ def test_settings_are_frozen(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_wildcard_cors_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("MCP_TRANSPORT", "stdio")
     monkeypatch.setenv("CORS_ALLOWED_ORIGINS", "*")
     with pytest.raises(ValueError, match="Wildcard CORS"):
+        RuntimeSettings.from_env()
+
+
+def test_invalid_port_names_the_setting(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("MCP_TRANSPORT", "stdio")
+    monkeypatch.setenv("MCP_PORT", "not-a-port")
+    with pytest.raises(ValueError, match="MCP_PORT must be an integer"):
+        RuntimeSettings.from_env()
+
+
+def test_out_of_range_port_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("MCP_TRANSPORT", "stdio")
+    monkeypatch.setenv("REST_API_PORT", "70000")
+    with pytest.raises(ValueError, match="REST_API_PORT must be between 1 and 65535"):
         RuntimeSettings.from_env()
 
 

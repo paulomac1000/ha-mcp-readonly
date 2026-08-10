@@ -23,11 +23,13 @@ pytestmark = pytest.mark.skipif(
 
 def _get(path: str, **kwargs: Any) -> requests.Response:
     headers = {**REST_HEADERS, **kwargs.pop("headers", {})}
+    kwargs.setdefault("timeout", 10)
     return requests.get(f"{REST_API_URL}{path}", headers=headers, **kwargs)
 
 
 def _post(path: str, **kwargs: Any) -> requests.Response:
     headers = {**REST_HEADERS, **kwargs.pop("headers", {})}
+    kwargs.setdefault("timeout", 10)
     return requests.post(f"{REST_API_URL}{path}", headers=headers, **kwargs)
 
 

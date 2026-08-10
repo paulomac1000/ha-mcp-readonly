@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from . import constants
-from .config import GenerationConfig
+from .config import DEFAULT_MAX_OUTPUT_BYTES, GenerationConfig
 from .provenance import ProvenanceTracker
 from .utils import is_ignorable_entity
 
@@ -98,7 +98,7 @@ class ReportGenerator:
             maximum = (
                 self.generation_config.max_output_bytes
                 if self.generation_config is not None
-                else 32 * 1024 * 1024
+                else DEFAULT_MAX_OUTPUT_BYTES
             )
             if temporary.stat().st_size > maximum:
                 raise ValueError("Generated context exceeds configured output limit")
@@ -111,7 +111,7 @@ class ReportGenerator:
 
     def _write_header(self, f):
         """Document header."""
-        f.write("# Home Assistant Context for AI (v1.0)\n\n")
+        f.write("# Home Assistant Context for AI (v1.1)\n\n")
         f.write(f"> **Generated:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
         f.write(
             f"> **HA Instance:** {self.generation_config.ha_url if self.generation_config else constants.HA_URL}\n"

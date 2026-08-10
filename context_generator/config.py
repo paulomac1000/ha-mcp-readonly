@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Literal
 
 GenerationMode = Literal["offline", "online", "hybrid"]
+DEFAULT_MAX_OUTPUT_BYTES = 96 * 1024 * 1024
 
 
 @dataclass(frozen=True, slots=True)
@@ -22,7 +23,7 @@ class GenerationConfig:
     history_hours: int = 1
     log_hours: int = 24
     calendar_days: int = 30
-    max_output_bytes: int = 96 * 1024 * 1024
+    max_output_bytes: int = DEFAULT_MAX_OUTPUT_BYTES
     max_source_bytes: int = 64 * 1024 * 1024
 
     def __post_init__(self) -> None:
@@ -56,6 +57,8 @@ class GenerationConfig:
             history_hours=int(os.getenv("HA_CONTEXT_HISTORY_HOURS", "1")),
             log_hours=int(os.getenv("HA_CONTEXT_LOG_HOURS", "24")),
             calendar_days=int(os.getenv("HA_CONTEXT_CALENDAR_DAYS", "30")),
-            max_output_bytes=int(os.getenv("HA_CONTEXT_MAX_OUTPUT_BYTES", str(96 * 1024 * 1024))),
+            max_output_bytes=int(
+                os.getenv("HA_CONTEXT_MAX_OUTPUT_BYTES", str(DEFAULT_MAX_OUTPUT_BYTES))
+            ),
             max_source_bytes=int(os.getenv("HA_CONTEXT_MAX_SOURCE_BYTES", str(64 * 1024 * 1024))),
         )

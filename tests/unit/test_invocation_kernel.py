@@ -83,8 +83,15 @@ def test_timeout_keeps_permit_until_underlying_work_finishes() -> None:
     assert maximum_running == 1
 
     release.set()
-    time.sleep(0.05)
-    assert kernel.invoke_sync(name, lambda: "ok") == "ok"
+    deadline = time.monotonic() + 2
+    while True:
+        try:
+            assert kernel.invoke_sync(name, lambda: "ok") == "ok"
+            break
+        except InvocationError as exc:
+            if exc.code != "BUSY" or time.monotonic() >= deadline:
+                raise
+            time.sleep(0.01)
 
 
 @pytest.mark.asyncio
@@ -120,8 +127,15 @@ async def test_async_timeout_keeps_permit_until_cancelled_operation_finishes() -
     assert second.value.code == "BUSY"
 
     release.set()
-    await asyncio.sleep(0.01)
-    assert await kernel.invoke_async(name, _async_ok) == "ok"
+    deadline = time.monotonic() + 2
+    while True:
+        try:
+            assert await kernel.invoke_async(name, _async_ok) == "ok"
+            break
+        except InvocationError as exc:
+            if exc.code != "BUSY" or time.monotonic() >= deadline:
+                raise
+            await asyncio.sleep(0.01)
 
 
 async def _async_ok() -> str:

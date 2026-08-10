@@ -47,6 +47,18 @@ def test_symlink_escape_is_blocked(tmp_path: Path) -> None:
         policy.resolve(root / "linked" / "data.yaml", require_file=True)
 
 
+def test_in_root_symlink_is_rejected(tmp_path: Path) -> None:
+    root = tmp_path / "config"
+    real = root / "real"
+    root.mkdir()
+    real.mkdir()
+    (real / "data.yaml").write_text("value: 1")
+    (root / "linked").symlink_to(real, target_is_directory=True)
+    policy = PathPolicy.from_paths([root])
+    with pytest.raises(SecurityBoundaryError, match="symbolic links"):
+        policy.resolve(root / "linked" / "data.yaml", require_file=True)
+
+
 def test_artifact_output_is_confined_and_typed(tmp_path: Path) -> None:
     root = tmp_path / "artifacts"
     root.mkdir()

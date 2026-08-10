@@ -117,9 +117,24 @@ class TestGenerateContextFile:
         assert '"data_redacted": true' in text
 
 
+def test_provenance_redacts_padded_base64_bearer_tokens() -> None:
+    from context_generator.provenance import redact_sensitive
+
+    value = "Authorization: Bearer abc+def/ghi=="
+    redacted, count = redact_sensitive(value)
+    assert redacted == "Authorization: Bearer [REDACTED]"
+    assert count == 1
+
+
 class TestMain:
-    def test_main_raises_controlled_error_on_required_source_failure(self, monkeypatch):
-        config = GenerationConfig.from_env()
+    def test_main_raises_controlled_error_on_required_source_failure(self, tmp_path):
+        config = GenerationConfig(
+            config_path=tmp_path,
+            output_path=tmp_path / "out.md",
+            ha_url="",
+            ha_token="",
+            mode="offline",
+        )
         with (
             patch("context_generator.core.GenerationConfig.from_env", return_value=config),
             patch("context_generator.core.run_generation", side_effect=GenerationError("failed")),

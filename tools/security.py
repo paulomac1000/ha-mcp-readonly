@@ -94,14 +94,16 @@ class PathPolicy:
             if part.startswith("auth_provider."):
                 raise SecurityBoundaryError("Access denied: authentication data is blocked")
 
-    def _reject_symlink_components(self, root: Path, relative: Path) -> None:
+    def reject_symlink_components(self, candidate: Path) -> None:
+        """Reject any existing symlink in an unresolved candidate path."""
         if not self.reject_symlinks:
             return
-        cursor = root
-        for component in relative.parts:
-            cursor = cursor / component
+        unresolved = Path(os.path.abspath(os.fspath(candidate)))
+        cursor = unresolved
+        while cursor != cursor.parent:
             if cursor.is_symlink():
                 raise SecurityBoundaryError("Access denied: symbolic links are not allowed")
+            cursor = cursor.parent
 
     def resolve(
         self,
@@ -122,13 +124,13 @@ class PathPolicy:
                 raise SecurityBoundaryError("Relative paths require exactly one configured root")
             candidate = self.roots[0] / candidate
 
+        self.reject_symlink_components(candidate)
         resolved = candidate.resolve(strict=False)
         root = self._root_for(resolved)
         relative = resolved.relative_to(root)
         if len(relative.parts) > self.max_depth:
             raise SecurityBoundaryError("Access denied: path is too deep and exceeds maximum depth")
         self._reject_sensitive(relative)
-        self._reject_symlink_components(root, relative)
 
         if require_exists and not resolved.exists():
             raise SecurityBoundaryError("Path does not exist")
@@ -155,7 +157,6 @@ def resolve_output_path(raw_path: str | Path, output_root: str | Path) -> Path:
         [Path(output_root)],
         max_file_size=50 * 1024 * 1024,
         max_depth=8,
-        allowed_suffixes=frozenset({".md", ".json"}),
         deny_storage=False,
     )
     target = policy.resolve(raw_path, require_exists=False)
@@ -167,7 +168,7 @@ def resolve_output_path(raw_path: str | Path, output_root: str | Path) -> Path:
         parent.relative_to(root)
     except ValueError as exc:
         raise SecurityBoundaryError("Artifact path escapes the output root") from exc
-    policy._reject_symlink_components(root, parent.relative_to(root))
+    policy.reject_symlink_components(target)
     return target
 
 
@@ -179,4 +180,7 @@ def bearer_token_is_valid(headers: Mapping[str, str], expected_token: str) -> bo
     scheme, separator, supplied = value.partition(" ")
     if not separator or scheme.casefold() != "bearer" or not supplied:
         return False
-    return hmac.compare_digest(supplied.encode("utf-8"), expected_token.encode("utf-8"))
+    return hmac.compare_digest(
+        supplied.encode("utf-8", "surrogateescape"),
+        expected_token.encode("utf-8", "surrogateescape"),
+    )

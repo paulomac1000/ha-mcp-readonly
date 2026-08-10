@@ -15,7 +15,7 @@ _SENSITIVE_KEY = re.compile(
     re.IGNORECASE,
 )
 _JWT = re.compile(r"eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]+")
-_BEARER = re.compile(r"(?i)Bearer\s+[A-Za-z0-9._~-]+")
+_BEARER = re.compile(r"(?i)Bearer\s+[A-Za-z0-9._~+/=-]+")
 _QUERY_SECRET = re.compile(r"(?i)([?&](?:token|api_key|access_token|key)=)[^&#\s]+")
 
 

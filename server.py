@@ -577,6 +577,7 @@ def create_rest_app(auth_token: str | None = None) -> Any:
     token = REST_API_TOKEN if auth_token is None else auth_token
     if not token:
         raise ValueError("REST_API_TOKEN or MCP_AUTH_TOKEN is required for the REST adapter")
+    sync_tool_slots = asyncio.Semaphore(16)
 
     class BearerAuthMiddleware(BaseHTTPMiddleware):
         async def dispatch(self, request: Request, call_next: Any) -> Any:
@@ -709,11 +710,11 @@ def create_rest_app(auth_token: str | None = None) -> Any:
                 status_code=400,
             )
         try:
-            result = (
-                await function(**arguments)
-                if inspect.iscoroutinefunction(function)
-                else await asyncio.to_thread(function, **arguments)
-            )
+            if inspect.iscoroutinefunction(function):
+                result = await function(**arguments)
+            else:
+                async with sync_tool_slots:
+                    result = await asyncio.to_thread(function, **arguments)
         except InvocationError as exc:
             status = {
                 "FORBIDDEN": 403,
@@ -978,6 +979,15 @@ def run_rest_api() -> None:
     )
 
 
+def _run_rest_api_guarded() -> None:
+    """Run the optional REST adapter and publish terminal failure state."""
+    try:
+        run_rest_api()
+    except Exception:
+        _set_health_component("rest", "failed")
+        _logger.exception("REST compatibility adapter stopped")
+
+
 def run_startup_tests() -> bool:
     tests_dir = Path(__file__).resolve().parent / "tests" / "unit"
     if not tests_dir.is_dir():
@@ -1057,7 +1067,7 @@ def main() -> None:
     if HEALTH_SERVER_ENABLED:
         start_health_server()
     if REST_API_ENABLED:
-        threading.Thread(target=run_rest_api, daemon=True, name="rest-api").start()
+        threading.Thread(target=_run_rest_api_guarded, daemon=True, name="rest-api").start()
 
     if MCP_TRANSPORT == "stdio":
         set_process_principal(

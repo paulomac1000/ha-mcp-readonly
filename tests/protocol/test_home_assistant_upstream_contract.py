@@ -136,6 +136,8 @@ class _RecordedWebSocket:
                 json.dumps({"id": request_id, "type": "result", "success": True, "result": None})
             )
             return
+        if command not in results:
+            raise AssertionError(f"recorded contract has no response for command: {command}")
         self.queue.append(
             json.dumps(
                 {
