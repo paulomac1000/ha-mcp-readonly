@@ -99,8 +99,17 @@ source = source.replace('replace("tools/operations.py", old, new)', "pass")
 # Keep the deliberate unresolved forward ref without making Ruff parse an undefined
 # annotation name in the generated test source.
 source = source.replace(
-    '    def operation(record: _Record, missing: "MissingModel") -> None:  # type: ignore[name-defined]\\n        return None\\n\\n    schema = signature_to_json_schema(operation)\\n',
-    '    def operation(record: _Record, missing: str) -> None:\\n        return None\\n\\n    operation.__annotations__["missing"] = "MissingModel"\\n    schema = signature_to_json_schema(operation)\\n',
+    '''    def operation(record: _Record, missing: "MissingModel") -> None:  # type: ignore[name-defined]
+        return None
+
+    schema = signature_to_json_schema(operation)
+''',
+    '''    def operation(record: _Record, missing: str) -> None:
+        return None
+
+    operation.__annotations__["missing"] = "MissingModel"
+    schema = signature_to_json_schema(operation)
+''',
 )
 # The historical unsubscribe replacement is already applied against current code above.
 source = re.sub(
