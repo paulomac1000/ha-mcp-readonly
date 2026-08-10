@@ -27,6 +27,8 @@ jobs:
           python -m venv .venv-review-fix
           .venv-review-fix/bin/python -m pip install -c constraints-ci.txt '.[dev]'
       - name: Apply verified review fixes
+        env:
+          REVIEW_FIX_ATTEMPT: "3"
         run: |
           .venv-review-fix/bin/python .github/review-fix-hotfix.py
           .venv-review-fix/bin/python -m py_compile .github/review-fix.py
