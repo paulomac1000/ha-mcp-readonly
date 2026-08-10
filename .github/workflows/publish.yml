@@ -160,18 +160,16 @@ jobs:
       attestations: write
     steps:
       - uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4
-      - name: Log in to quarantine read-only credential
+      # Docker credentials are keyed by registry hostname, so two ghcr.io logins
+      # overwrite each other. Keep this protected environment credential out of
+      # the candidate job and grant it only read access to quarantine plus write
+      # access to the release package.
+      - name: Log in with protected promotion credential
         uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4
         with:
           registry: ghcr.io
-          username: ${{ secrets.QUARANTINE_REGISTRY_USERNAME }}
-          password: ${{ secrets.QUARANTINE_REGISTRY_READ_TOKEN }}
-      - name: Log in to release registry
-        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          username: ${{ secrets.PROMOTION_REGISTRY_USERNAME }}
+          password: ${{ secrets.PROMOTION_REGISTRY_TOKEN }}
       - name: Promote exact tested digest without loading candidate image
         id: promote
         shell: bash
