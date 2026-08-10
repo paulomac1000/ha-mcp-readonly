@@ -1,6 +1,8 @@
 """Regression tests for PR review findings."""
 
 import gc
+import os
+from unittest.mock import patch
 
 import pytest
 
@@ -18,7 +20,8 @@ def test_invocation_key_cache_releases_idle_user_keys() -> None:
 
 
 @pytest.mark.parametrize("name", ["HEALTH_CHECK_PORT", "MCP_PORT", "REST_API_PORT"])
-def test_runtime_ports_reject_out_of_range(monkeypatch, name: str) -> None:
-    monkeypatch.setenv(name, "70000")
-    with pytest.raises(ValueError, match=name):
-        RuntimeSettings.from_env()
+@pytest.mark.parametrize("value", ["0", "70000"])
+def test_runtime_ports_reject_out_of_range(name: str, value: str) -> None:
+    with patch.dict(os.environ, {"MCP_TRANSPORT": "stdio", name: value}, clear=True):
+        with pytest.raises(ValueError, match=name):
+            RuntimeSettings.from_env()

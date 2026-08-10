@@ -10,7 +10,11 @@ verification: Confirm release entries against signed tags, package metadata, and
 
 # Changelog
 
-## [2.0.0] - 2026-08-09
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]
 
 
 ### Breaking Changes
@@ -31,10 +35,11 @@ verification: Confirm release entries against signed tags, package metadata, and
 
 ### Added — ai-skills Standard Alignment
 - Added `ai-skills.lock.yaml` binding this repository to the pinned
-  `paulomac1000/ai-skills` revision `c5ba4091` with per-skill content digests.
-- Re-pinned the CI documentation validator and the adoption target to the current
-  `fix/unified-contract-release-hardening` revision; the capability-manifest schema
-  and AFDS validator are unchanged between the old and new pins.
+  `paulomac1000/ai-skills` revision `b54fc6b27ea80b36a70d5de73445970e17f55789` with per-skill content digests.
+- Re-pinned the CI documentation validator and adoption target to the immutable
+  `b54fc6b27ea80b36a70d5de73445970e17f55789` revision from the
+  `fix/unified-contract-release-hardening` line; the consumer lock, validator, and
+  migration evidence now identify the same immutable revision.
 - AGENTS.md now passes the `agents-md-architect` strict validation: explicit
   completion contract (Definition of Done), reasoned context-budget waiver,
   repository-relative references, and no path-like code spans.
@@ -77,18 +82,8 @@ verification: Confirm release entries against signed tags, package metadata, and
 
 ### Tests
 
-- Unit and protocol: 1195 passing, including the recorded-cassette contract test.
-- Smoke: 86 passing against the local container with live Home Assistant.
-- E2E: 174 passing against the local container with live Home Assistant.
-- Integration: 272 passing, 6 skipped (environment-dependent) against live
-  Home Assistant through the composition root.
-
-All notable changes to this project will be documented in this file.
-
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
-
-## [1.6.0] - 2026-06-11
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+- Unit and protocol: 1,220 passed on exact-head revision `bf88ad03168f2095d59107aa7641ee3310037efd` before this follow-up review-fix round; the final count must be refreshed from the new exact-head CI before release.
+- Public CI does not claim live Home Assistant smoke, E2E, or integration results for this revision; those suites require separate provider-backed evidence before certification.
 
 ## [1.6.0] - 2026-06-11
 

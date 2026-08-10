@@ -441,6 +441,16 @@ class InvocationKernel:
             tool_permit_owned = False
             capacity_owned = False
             wrapped = asyncio.wrap_future(future)
+
+            def observe_background_result(completed: asyncio.Future[Any]) -> None:
+                if completed.cancelled():
+                    return
+                try:
+                    completed.exception()
+                except asyncio.CancelledError:
+                    return
+
+            wrapped.add_done_callback(observe_background_result)
             try:
                 result = await asyncio.wait_for(
                     asyncio.shield(wrapped), timeout=_remaining(deadline)

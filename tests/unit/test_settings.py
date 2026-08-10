@@ -62,6 +62,7 @@ def test_out_of_range_port_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_wildcard_host_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("MCP_TRANSPORT", "stdio")
     monkeypatch.setenv("MCP_ALLOWED_HOSTS", "*")
     with pytest.raises(ValueError, match="explicit hosts"):
         RuntimeSettings.from_env()

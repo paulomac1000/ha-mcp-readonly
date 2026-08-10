@@ -4,23 +4,30 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections import deque
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 
 class RequestLimitExceeded(RuntimeError):
-    """Internal marker raised when a streamed body exceeds its configured bound."""
+    """Internal marker raised when a streamed request exceeds a configured bound."""
 
 
 class StreamingRequestLimitsMiddleware:
     """Bound MCP requests without pre-reading or replaying the ASGI receive stream."""
 
-    def __init__(self, app: ASGIApp, *, max_body_bytes: int, max_header_bytes: int) -> None:
-        if max_body_bytes < 1 or max_header_bytes < 1:
+    def __init__(
+        self,
+        app: ASGIApp,
+        *,
+        max_body_bytes: int,
+        max_header_bytes: int,
+        max_request_messages: int = 65_536,
+    ) -> None:
+        if max_body_bytes < 1 or max_header_bytes < 1 or max_request_messages < 1:
             raise ValueError("HTTP request limits must be positive")
         self.app = app
         self.max_body_bytes = max_body_bytes
         self.max_header_bytes = max_header_bytes
+        self.max_request_messages = max_request_messages
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope.get("type") != "http":
@@ -41,18 +48,25 @@ class StreamingRequestLimitsMiddleware:
             except (UnicodeDecodeError, ValueError):
                 await _reject(send, 400, "Invalid Content-Length header")
                 return
+            if content_length < 0:
+                await _reject(send, 400, "Invalid Content-Length header")
+                return
             if content_length > self.max_body_bytes:
                 await _reject(send, 413, "Request body exceeds configured limit")
                 return
             break
 
         consumed = 0
+        request_messages = 0
         response_started = False
 
         async def limited_receive() -> Message:
-            nonlocal consumed
+            nonlocal consumed, request_messages
             message = await receive()
             if message.get("type") == "http.request":
+                request_messages += 1
+                if request_messages > self.max_request_messages:
+                    raise RequestLimitExceeded("Request message count exceeds configured limit")
                 body = message.get("body", b"")
                 if isinstance(body, bytes):
                     consumed += len(body)
@@ -68,10 +82,10 @@ class StreamingRequestLimitsMiddleware:
 
         try:
             await self.app(scope, limited_receive, tracking_send)
-        except RequestLimitExceeded:
+        except RequestLimitExceeded as exc:
             if response_started:
                 raise
-            await _reject(send, 413, "Request body exceeds configured limit")
+            await _reject(send, 413, str(exc))
 
 
 class ConnectionLimitMiddleware:
@@ -90,11 +104,15 @@ class ConnectionLimitMiddleware:
             await self.app(scope, receive, send)
             return
 
+        rejected = False
         async with self._guard:
             if self._active >= self.limit:
-                await _reject(send, 503, "HTTP connection limit reached", code="SERVER_BUSY")
-                return
-            self._active += 1
+                rejected = True
+            else:
+                self._active += 1
+        if rejected:
+            await _reject(send, 503, "HTTP connection limit reached", code="SERVER_BUSY")
+            return
         try:
             await self.app(scope, receive, send)
         finally:
@@ -103,14 +121,22 @@ class ConnectionLimitMiddleware:
 
 
 class RequestLimitsMiddleware:
-    """Buffer bounded REST requests before application-level JSON parsing."""
+    """Buffer a bounded REST body as bytes, not an unbounded list of ASGI messages."""
 
-    def __init__(self, app: ASGIApp, *, max_body_bytes: int, max_header_bytes: int) -> None:
-        if max_body_bytes < 1 or max_header_bytes < 1:
+    def __init__(
+        self,
+        app: ASGIApp,
+        *,
+        max_body_bytes: int,
+        max_header_bytes: int,
+        max_request_messages: int = 65_536,
+    ) -> None:
+        if max_body_bytes < 1 or max_header_bytes < 1 or max_request_messages < 1:
             raise ValueError("HTTP request limits must be positive")
         self.app = app
         self.max_body_bytes = max_body_bytes
         self.max_header_bytes = max_header_bytes
+        self.max_request_messages = max_request_messages
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope.get("type") != "http":
@@ -132,34 +158,52 @@ class RequestLimitsMiddleware:
                     await _reject(send, 400, "Invalid Content-Length header")
                     return
                 break
+        if content_length is not None and content_length < 0:
+            await _reject(send, 400, "Invalid Content-Length header")
+            return
         if content_length is not None and content_length > self.max_body_bytes:
             await _reject(send, 413, "Request body exceeds configured limit")
             return
 
-        buffered: deque[Message] = deque()
-        consumed = 0
+        body = bytearray()
+        request_messages = 0
         saw_disconnect = False
+        body_complete = False
         while True:
             message = await receive()
-            buffered.append(message)
             if message.get("type") == "http.disconnect":
                 saw_disconnect = True
                 break
             if message.get("type") != "http.request":
                 continue
-            body = message.get("body", b"")
-            if isinstance(body, bytes):
-                consumed += len(body)
-            if consumed > self.max_body_bytes:
-                await _reject(send, 413, "Request body exceeds configured limit")
+            request_messages += 1
+            if request_messages > self.max_request_messages:
+                await _reject(send, 413, "Request message count exceeds configured limit")
                 return
+            chunk = message.get("body", b"")
+            if isinstance(chunk, bytes):
+                if len(body) + len(chunk) > self.max_body_bytes:
+                    await _reject(send, 413, "Request body exceeds configured limit")
+                    return
+                body.extend(chunk)
             if not message.get("more_body", False):
+                body_complete = True
                 break
 
+        replay_pending = True
+        disconnect_pending = saw_disconnect
+
         async def replay_receive() -> Message:
-            if buffered:
-                return buffered.popleft()
-            if saw_disconnect:
+            nonlocal replay_pending, disconnect_pending
+            if replay_pending:
+                replay_pending = False
+                return {
+                    "type": "http.request",
+                    "body": bytes(body),
+                    "more_body": bool(disconnect_pending and not body_complete),
+                }
+            if disconnect_pending:
+                disconnect_pending = False
                 return {"type": "http.disconnect"}
             return await receive()
 

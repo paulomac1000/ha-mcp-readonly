@@ -386,7 +386,11 @@ class ComprehensiveSnapshotCollector:
             except Exception as exc:
                 items[entity_id] = None
                 self.provenance.record(
-                    source, method="websocket", status="unavailable", reason=type(exc).__name__
+                    source,
+                    method="websocket",
+                    status="unavailable",
+                    reason=type(exc).__name__,
+                    requested="todo/item/list",
                 )
             else:
                 safe, redactions = redact_sensitive(result)
@@ -467,12 +471,34 @@ class ComprehensiveSnapshotCollector:
                         raise WebSocketProtocolError("forecast event payload is invalid")
                     forecast = event_payload.get("forecast", [])
                     safe, redactions = redact_sensitive(forecast)
-                    self._ws_command(
-                        ws,
-                        unsubscribe_id,
-                        "unsubscribe_events",
-                        {"subscription": subscription_id},
+                    ws.send(
+                        json.dumps(
+                            {
+                                "id": unsubscribe_id,
+                                "type": "unsubscribe_events",
+                                "subscription": subscription_id,
+                            }
+                        )
                     )
+                    for _ in range(64):
+                        response = self._ws_recv_json(ws)
+                        response_id = response.get("id")
+                        response_type = response.get("type")
+                        if response_id == subscription_id and response_type == "event":
+                            continue
+                        if response_id == unsubscribe_id and response_type == "result":
+                            if response.get("success") is not True:
+                                raise WebSocketProtocolError(
+                                    "weather forecast unsubscribe was rejected"
+                                )
+                            break
+                        raise WebSocketProtocolError(
+                            "unexpected websocket response while unsubscribing forecast"
+                        )
+                    else:
+                        raise WebSocketProtocolError(
+                            "weather forecast unsubscribe response limit exceeded"
+                        )
                     subscribed = False
                 except WebSocketProtocolError:
                     raise
@@ -561,12 +587,24 @@ class ComprehensiveSnapshotCollector:
                     continue
                 try:
                     size = path.stat().st_size
-                except OSError:
+                except OSError as exc:
+                    self.provenance.record(
+                        f"file:{relative.as_posix()}",
+                        method="filesystem",
+                        status="partial",
+                        reason=f"stat failed: {type(exc).__name__}",
+                    )
                     continue
-                if (
-                    size > self.config.max_source_bytes
-                    or total_bytes + size > self.config.max_source_bytes
-                ):
+                if size > self.config.max_source_bytes:
+                    self.provenance.record(
+                        f"file:{relative.as_posix()}",
+                        method="filesystem",
+                        status="partial",
+                        size_bytes=size,
+                        reason="per-file source-size limit reached",
+                    )
+                    continue
+                if total_bytes + size > self.config.max_source_bytes:
                     self.provenance.record(
                         f"file:{relative.as_posix()}",
                         method="filesystem",
@@ -577,7 +615,14 @@ class ComprehensiveSnapshotCollector:
                     continue
                 try:
                     raw = path.read_text(encoding="utf-8")
-                except (OSError, UnicodeError):
+                except (OSError, UnicodeError) as exc:
+                    self.provenance.record(
+                        f"file:{relative.as_posix()}",
+                        method="filesystem",
+                        status="partial",
+                        size_bytes=size,
+                        reason=f"read failed: {type(exc).__name__}",
+                    )
                     continue
                 value: Any = raw
                 if path.suffix.casefold() == ".json" or ".storage" in relative.parts:

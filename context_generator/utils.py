@@ -206,7 +206,15 @@ def make_ha_request(
                 f"{ha_url}{endpoint}", headers=headers, json=data, timeout=timeout
             )
         else:
-            return {"success": False, "error": f"Unsupported method: {method}"}
+            reason = f"Unsupported method: {method}"
+            _record_source(
+                source,
+                method="rest",
+                status="unavailable",
+                reason=reason,
+                requested=endpoint,
+            )
+            return {"success": False, "error": reason}
 
         response.raise_for_status()
         try:

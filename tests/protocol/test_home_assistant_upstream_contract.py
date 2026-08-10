@@ -17,6 +17,10 @@ from context_generator.provenance import ProvenanceTracker
 from context_generator.runtime import GenerationRuntime, generation_scope
 from context_generator.snapshot import ComprehensiveSnapshotCollector
 
+_CASSETTE = json.loads(
+    Path(__file__).with_name("cassettes").joinpath("recorded_ha_upstream.json").read_text()
+)
+
 
 class _RecordedHAHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:  # noqa: N802
@@ -84,6 +88,7 @@ def _recorded_http_server(
 class _RecordedWebSocket:
     def __init__(self) -> None:
         self.queue: deque[str] = deque([json.dumps({"type": "auth_required"})])
+        self._forecast_subscription: int | None = None
 
     def __enter__(self) -> _RecordedWebSocket:
         return self
@@ -118,6 +123,7 @@ class _RecordedWebSocket:
             "todo/item/list": {"items": [{"uid": "one", "summary": "Contract task"}]},
         }
         if command == "weather/subscribe_forecast":
+            self._forecast_subscription = request_id
             self.queue.append(
                 json.dumps({"id": request_id, "type": "result", "success": True, "result": None})
             )
@@ -132,9 +138,20 @@ class _RecordedWebSocket:
             )
             return
         if command == "unsubscribe_events":
+            if self._forecast_subscription is not None:
+                self.queue.append(
+                    json.dumps(
+                        {
+                            "id": self._forecast_subscription,
+                            "type": "event",
+                            "event": {"forecast": []},
+                        }
+                    )
+                )
             self.queue.append(
                 json.dumps({"id": request_id, "type": "result", "success": True, "result": None})
             )
+            self._forecast_subscription = None
             return
         if command not in results:
             raise AssertionError(f"recorded contract has no response for command: {command}")
@@ -200,10 +217,7 @@ class _CassetteHAHandler(BaseHTTPRequestHandler):
             self.end_headers()
             return
         path = self.path.split("?", 1)[0]
-        cassette = json.loads(
-            Path(__file__).with_name("cassettes").joinpath("recorded_ha_upstream.json").read_text()
-        )
-        payloads = cassette["rest"]
+        payloads = _CASSETTE["rest"]
         if path in payloads:
             payload = payloads[path]["body"]
         elif path.startswith("/api/history/period/"):
@@ -240,10 +254,7 @@ class _CassetteWebSocket(_RecordedWebSocket):
 
     def __init__(self) -> None:
         super().__init__()
-        cassette = json.loads(
-            Path(__file__).with_name("cassettes").joinpath("recorded_ha_upstream.json").read_text()
-        )
-        self._cassette = cassette["websocket"]
+        self._cassette = _CASSETTE["websocket"]
 
     def send(self, raw: str) -> None:
         message = json.loads(raw)
@@ -254,6 +265,7 @@ class _CassetteWebSocket(_RecordedWebSocket):
         request_id = message["id"]
         command = message["type"]
         if command == "weather/subscribe_forecast":
+            self._forecast_subscription = request_id
             self.queue.append(
                 json.dumps({"id": request_id, "type": "result", "success": True, "result": None})
             )
@@ -268,11 +280,24 @@ class _CassetteWebSocket(_RecordedWebSocket):
             )
             return
         if command == "unsubscribe_events":
+            if self._forecast_subscription is not None:
+                self.queue.append(
+                    json.dumps(
+                        {
+                            "id": self._forecast_subscription,
+                            "type": "event",
+                            "event": {"forecast": []},
+                        }
+                    )
+                )
             self.queue.append(
                 json.dumps({"id": request_id, "type": "result", "success": True, "result": None})
             )
+            self._forecast_subscription = None
             return
-        result = self._cassette.get(command, [])
+        if command not in self._cassette:
+            raise AssertionError(f"recorded cassette has no response for command: {command}")
+        result = self._cassette[command]
         self.queue.append(
             json.dumps({"id": request_id, "type": "result", "success": True, "result": result})
         )
@@ -325,4 +350,7 @@ def test_recorded_real_home_assistant_rest_and_websocket_contract(
         for entity in entities
     )
     summary = provenance.summary()
-    assert summary["counts"].get("unavailable", 0) == 0
+    unavailable = [item for item in summary["sources"].values() if item["status"] == "unavailable"]
+    assert len(unavailable) == 1
+    assert unavailable[0]["source"].startswith("todo_items:")
+    assert unavailable[0]["requested"] == "todo/item/list"

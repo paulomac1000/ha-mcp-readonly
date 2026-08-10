@@ -164,13 +164,39 @@ async def test_cancel_while_waiting_for_permit_does_not_leak_capacity() -> None:
 
     first = asyncio.create_task(kernel.invoke_async(name, hold))
     await asyncio.wait_for(started.wait(), timeout=1)
+    original_acquire = kernel._acquire_async_semaphore
+    second_admission_started = asyncio.Event()
+    acquire_calls = 0
+
+    async def tracked_acquire(semaphore, timeout):
+        nonlocal acquire_calls
+        acquire_calls += 1
+        if acquire_calls == 1:
+            second_admission_started.set()
+        return await original_acquire(semaphore, timeout)
+
+    kernel._acquire_async_semaphore = tracked_acquire  # type: ignore[method-assign]
     waiting = asyncio.create_task(kernel.invoke_async(name, _async_ok))
-    await asyncio.sleep(0.03)
+    await asyncio.wait_for(second_admission_started.wait(), timeout=1)
     waiting.cancel()
     with pytest.raises(asyncio.CancelledError):
         await waiting
 
-    release.set()
-    assert await asyncio.wait_for(first, timeout=1) == "held"
-    await asyncio.sleep(0.05)
-    assert await asyncio.wait_for(kernel.invoke_async(name, _async_ok), timeout=1) == "ok"
+    try:
+        release.set()
+        assert await asyncio.wait_for(first, timeout=1) == "held"
+        deadline = time.monotonic() + 1
+        while True:
+            try:
+                assert (
+                    await asyncio.wait_for(kernel.invoke_async(name, _async_ok), timeout=1) == "ok"
+                )
+                break
+            except InvocationError as exc:
+                if exc.code != "BUSY" or time.monotonic() >= deadline:
+                    raise
+                await asyncio.sleep(0.01)
+    finally:
+        release.set()
+        if not first.done():
+            await asyncio.wait_for(first, timeout=1)

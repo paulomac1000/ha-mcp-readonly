@@ -7,6 +7,7 @@ import argparse
 import asyncio
 import json
 import os
+from datetime import timedelta
 from typing import Any
 
 from mcp import ClientSession, StdioServerParameters
@@ -14,6 +15,8 @@ from mcp.client.stdio import stdio_client
 from mcp.client.streamable_http import streamable_http_client
 
 SUPPORTED_PROTOCOL_REVISION = "2025-11-25"
+INVALID_PARAMS = -32602
+SESSION_TIMEOUT_SECONDS = 20
 
 
 def _is_error(result: Any) -> bool:
@@ -31,6 +34,19 @@ def _json_payload(result: Any) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise AssertionError("tool payload is not an object")
     return payload
+
+
+def _assert_validation_error_result(result: Any) -> None:
+    if not _is_error(result):
+        raise AssertionError("invalid tool input did not produce a protocol error result")
+    content = getattr(result, "content", None)
+    if not isinstance(content, list) or not content:
+        raise AssertionError("validation failure has no protocol error content")
+    if not any(
+        isinstance(getattr(item, "text", None), str) and getattr(item, "text").strip()
+        for item in content
+    ):
+        raise AssertionError("validation failure has no non-empty text error content")
 
 
 async def _verify_session(session: ClientSession) -> None:
@@ -63,16 +79,26 @@ async def _verify_session(session: ClientSession) -> None:
     if SUPPORTED_PROTOCOL_REVISION not in payload.get("protocol_versions", []):
         raise AssertionError(payload.get("protocol_versions"))
 
-    failure_seen = False
     try:
         invalid = await session.call_tool(
             "get_entity_state", arguments={"wrong_parameter": "value"}
         )
-        failure_seen = _is_error(invalid)
-    except Exception:
-        failure_seen = True
-    if not failure_seen:
-        raise AssertionError("invalid tool input did not fail at the protocol boundary")
+    except Exception as exc:
+        error = getattr(exc, "error", None)
+        code = getattr(error, "code", None)
+        if code != INVALID_PARAMS:
+            raise AssertionError(
+                f"unexpected exception category for invalid input: {exc!r}"
+            ) from exc
+    else:
+        _assert_validation_error_result(invalid)
+
+
+async def _verify_session_bounded(session: ClientSession) -> None:
+    try:
+        await asyncio.wait_for(_verify_session(session), timeout=SESSION_TIMEOUT_SECONDS)
+    except TimeoutError as exc:
+        raise AssertionError("official MCP client verification timed out") from exc
 
 
 def _stdio_env(config_path: str) -> dict[str, str]:
@@ -97,19 +123,26 @@ async def verify_stdio(command: str, command_args: list[str], config_path: str) 
     )
     async with stdio_client(params) as streams:
         read, write = streams[0], streams[1]
-        async with ClientSession(read, write) as session:
-            await _verify_session(session)
+        async with ClientSession(
+            read, write, read_timeout_seconds=timedelta(seconds=SESSION_TIMEOUT_SECONDS)
+        ) as session:
+            await _verify_session_bounded(session)
 
 
-async def verify_http(url: str, token: str) -> None:
+async def verify_http(url: str) -> None:
     import httpx
 
+    token = os.getenv("MCP_AUTH_TOKEN")
+    if not token:
+        raise ValueError("MCP_AUTH_TOKEN must be set for HTTP verification")
     headers = {"Authorization": f"Bearer {token}"}
-    async with httpx.AsyncClient(headers=headers, timeout=20) as http_client:
+    async with httpx.AsyncClient(headers=headers, timeout=SESSION_TIMEOUT_SECONDS) as http_client:
         async with streamable_http_client(url, http_client=http_client) as streams:
             read, write = streams[0], streams[1]
-            async with ClientSession(read, write) as session:
-                await _verify_session(session)
+            async with ClientSession(
+                read, write, read_timeout_seconds=timedelta(seconds=SESSION_TIMEOUT_SECONDS)
+            ) as session:
+                await _verify_session_bounded(session)
 
 
 def main() -> None:
@@ -121,13 +154,12 @@ def main() -> None:
     stdio.add_argument("--config-path", default="/tmp")
     http = subparsers.add_parser("http")
     http.add_argument("--url", required=True)
-    http.add_argument("--token", required=True)
     args = parser.parse_args()
 
     if args.transport == "stdio":
         asyncio.run(verify_stdio(args.command, list(args.arg), args.config_path))
     else:
-        asyncio.run(verify_http(args.url, args.token))
+        asyncio.run(verify_http(args.url))
 
 
 if __name__ == "__main__":

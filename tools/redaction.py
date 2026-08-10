@@ -8,6 +8,8 @@ from typing import Any
 from tools.utils import sanitize_log_line
 
 REDACTED = "[REDACTED]"
+_CAMEL_ACRONYM_BOUNDARY = re.compile(r"(?<=[A-Z])(?=[A-Z][a-z])")
+_CAMEL_WORD_BOUNDARY = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
 _NORMALIZE_KEY = re.compile(r"[^a-z0-9]+")
 _SENSITIVE_KEYS = frozenset(
     {
@@ -46,7 +48,10 @@ _SENSITIVE_SUFFIXES = (
 
 
 def _normalized_key(value: object) -> str:
-    return _NORMALIZE_KEY.sub("_", str(value).strip().casefold()).strip("_")
+    raw = str(value).strip()
+    raw = _CAMEL_ACRONYM_BOUNDARY.sub("_", raw)
+    raw = _CAMEL_WORD_BOUNDARY.sub("_", raw)
+    return _NORMALIZE_KEY.sub("_", raw.casefold()).strip("_")
 
 
 def _is_sensitive_key(value: object) -> bool:

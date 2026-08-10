@@ -145,6 +145,8 @@ def make_ha_request(
         }
     if retries < 1:
         raise ValueError("retries must be at least 1")
+    if not isinstance(method, str):
+        raise ValueError("HTTP method must be a string")
     normalized_method = method.upper()
     if normalized_method not in {"GET", "POST"}:
         raise ValueError(f"Unsupported HTTP method: {method}")

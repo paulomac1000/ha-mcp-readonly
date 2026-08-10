@@ -49,7 +49,7 @@ repos:
       # ── Types ──
       - id: mypy
         name: mypy strict
-        entry: mypy tools/ --strict
+        entry: mypy server.py tools/ --strict
         language: system
         types: [python]
         pass_filenames: false
@@ -60,7 +60,7 @@ repos:
       # ── Security ──
       - id: bandit
         name: Bandit security scan
-        entry: bandit -r tools/ -ll
+        entry: bandit -r server.py tools/ context_generator/ ha_graph/ -ll
         language: system
         types: [python]
         pass_filenames: false
@@ -124,7 +124,7 @@ repos:
       # ── Docs ──
       - id: afds-docs
         name: AFDS documentation validation (vendored pinned validator)
-        entry: python3 scripts/vendor/afds_validate_c6dc6b13.py AGENTS.md CONTRIBUTING.md SECURITY.md docs/documentation.md docs/testing-guidelines.md docs/ai-skills-adoption.md
+        entry: make docs-check
         language: system
         pass_filenames: false
         always_run: true

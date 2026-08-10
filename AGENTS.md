@@ -55,7 +55,7 @@ verification: Run the complete local quality, unit, protocol, package, and runti
 
 ### Test Rules
 
-1. **Unit tests:** Zero I/O, all dependencies mocked via `unittest.mock.patch`. Run without credentials.
+1. **Unit tests:** No network, Home Assistant, operator-filesystem, or external-service I/O. Ephemeral `tmp_path` I/O is allowed only when filesystem/path semantics are the behavior under test; all other dependencies are mocked. Run without credentials.
 2. **Smoke tests:** Direct REST API calls (`requests` library), no MCP wrapper needed. Skip if no `HA_TOKEN`.
 3. **Integration tests:** Real HA via MCP wrapper (`MCPWrapper` from `tests/integration/conftest.py`). Skip if no `HA_TOKEN`.
 4. **E2E tests:** Full pipeline (context generator) + REST API endpoints. Skip if no `HA_TOKEN`.
@@ -112,14 +112,14 @@ Home Assistant has **two separate authentication scopes** for its REST API:
 1. **Verify the endpoint in official docs** first:
    - [HA REST API docs](https://developers.home-assistant.io/docs/api/rest/) — consult this
      reference before implementing any tool that calls the HA REST API; it decides
-     whether an endpoint is public and therefore usable with a long-lived token.
-   - If the endpoint is NOT listed there, it is **not a public REST API endpoint**
+     whether an endpoint is part of the documented public REST surface. Documentation establishes API shape, not the privileges of a particular token.
+   - If the endpoint is NOT listed there, do not claim public REST support without separate authoritative evidence.
 
 2. **Test the endpoint with curl BEFORE writing any code:**
    ```bash
    curl -s -H "Authorization: Bearer $HA_TOKEN" "http://HA_IP:8123/the/endpoint"
    ```
-   If it returns `404` or `401`, the endpoint is not accessible via LLAT.
+   Use the same class of LLAT intended for production. Support is documented only after this request succeeds with that credential class; `401`/`403`/`404` means the LLAT-access claim is not verified.
 
 3. **Never assume** an endpoint exists only because you saw it in:
    - WebSocket API docs (different transport)
@@ -241,8 +241,9 @@ context_generator/
 
 - All documentation files in `docs/` conform to AI-First Documentation Standard.
 - `afds_config.yaml` — project-specific validator configuration in repository root.
-- Validate docs: `python3 scripts/vendor/afds_validate_c6dc6b13.py AGENTS.md CONTRIBUTING.md SECURITY.md docs/documentation.md docs/testing-guidelines.md docs/ai-skills-adoption.md`
-- Reference: `scripts/vendor/afds_validate_c6dc6b13.py` (vendored validator pinned to the ai-skills revision in `ai-skills.lock.yaml`)
+- Validate governed docs: `make docs-check`
+- `README.md` and `CHANGELOG.md` are explicit AFDS exceptions: README keeps normal user-facing Markdown and CHANGELOG follows Keep a Changelog; both remain subject to their separate repository checks.
+- Reference: `scripts/vendor/afds_validate_b54fc6b2.py` (vendored validator pinned to `b54fc6b27ea80b36a70d5de73445970e17f55789` in `ai-skills.lock.yaml`)
 
 ---
 
@@ -311,8 +312,8 @@ A change is complete only when:
 - Backend suites were executed against the running deployment when credentials and
   a server are available: `pytest tests/smoke/ -q`, `pytest tests/e2e/ -q`,
   `pytest tests/integration/ -q`.
-- `pre-commit run --all-files` passes without skips, and `CHANGELOG.md` records the
-  change under the unreleased section.
+- `pre-commit run --all-files` and `make docs-check` pass without skips, and `CHANGELOG.md` records the change under the unreleased section.
+- For every newly supported Home Assistant REST/WebSocket surface, official documentation establishes the API shape, the intended LLAT class succeeds against a real instance, a sanitized recorded upstream cassette covers the request, and protocol/smoke coverage verifies catalog/capability consistency.
 
 Report the exact revision, the gates that were executed, skipped checks, and any
 residual risk before completion.

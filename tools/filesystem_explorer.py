@@ -291,9 +291,13 @@ def _do_search_files(
                 dirs[:] = []
                 break
 
-            filepath = Path(root) / filename
+            candidate = Path(root) / filename
             try:
-                filepath = context.validate_text_file(filepath)
+                relative_path = candidate.relative_to(target)
+            except ValueError:
+                continue
+            try:
+                filepath = context.validate_text_file(candidate)
             except PermissionError:
                 continue
             if context.is_binary_file(filepath):
@@ -321,9 +325,11 @@ def _do_search_files(
                         break
                 results.append(
                     {
-                        "path": str(filepath.relative_to(target)),
+                        "path": relative_path.as_posix(),
                         "absolute_path": str(filepath),
-                        "matches_count": len(matches),
+                        "matches_count": len(
+                            list(re.finditer(re.escape(pattern), content, re.IGNORECASE))
+                        ),
                         "sample_matches": matches[:3],
                     }
                 )

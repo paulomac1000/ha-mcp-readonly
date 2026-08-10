@@ -1,16 +1,36 @@
 #!/usr/bin/env python3
-"""Print the immutable inputs required for a canonical provider-backed assessment."""
+"""Print immutable inputs required for a canonical provider-backed assessment."""
 
 from __future__ import annotations
 
 import argparse
 import json
+import re
+
+_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
+
+
+def _revision(value: str) -> str:
+    normalized = value.strip().lower()
+    if not _SHA_RE.fullmatch(normalized):
+        raise argparse.ArgumentTypeError("--revision must be a full 40-character commit SHA")
+    return normalized
+
+
+def _positive_pr(value: str) -> int:
+    try:
+        parsed = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("--pr must be a positive integer") from exc
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError("--pr must be a positive integer")
+    return parsed
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--revision", required=True)
-    parser.add_argument("--pr", type=int, required=True)
+    parser.add_argument("--revision", required=True, type=_revision)
+    parser.add_argument("--pr", type=_positive_pr, required=True)
     args = parser.parse_args()
     print(
         json.dumps(

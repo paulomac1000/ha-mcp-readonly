@@ -36,6 +36,23 @@ def test_key_aware_redaction_removes_plain_secret_values() -> None:
     assert payload["nested"]["safe_name"] == "living room"
 
 
+def test_key_aware_redaction_handles_camel_and_pascal_case_credentials() -> None:
+    payload = sanitize_response_data(
+        {
+            "accessToken": "a",
+            "refreshToken": "b",
+            "clientSecret": "c",
+            "privateKey": "d",
+            "apiKey": "e",
+            "APIKey": "f",
+            "safeName": "visible",
+        }
+    )
+    for key in ("accessToken", "refreshToken", "clientSecret", "privateKey", "apiKey", "APIKey"):
+        assert payload[key] == REDACTED
+    assert payload["safeName"] == "visible"
+
+
 def test_operation_boundary_redacts_config_entry_credentials() -> None:
     name = "test_final_redaction_boundary"
     _register(name)

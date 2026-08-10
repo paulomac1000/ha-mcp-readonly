@@ -83,7 +83,7 @@ class MCPWrapper:
         self._mcp = mcp_instance
         self._loop = None
 
-    def close(self):
+    def close(self) -> None:
         """Close the shared event loop owned by this wrapper."""
         if self._loop is not None and not self._loop.is_closed():
             self._loop.close()

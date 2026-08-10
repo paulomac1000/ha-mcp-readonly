@@ -42,12 +42,25 @@ statement, not a claim that the implementation should be rolled back.
 
 ## Upstream normative vocabulary conflict
 
-The pinned capability-manifest JSON schema and the narrative capability-manifest
-reference currently use partially different field vocabularies. This consumer treats
-the canonical JSON schema as the executable serialization contract and records the
-narrative-only concepts through reviewed extension fields where possible. The
-discrepancy is an upstream residual risk and must be resolved by ai-skills before a
-final certification claims that the two sources are literally identical.
+The pinned capability-manifest JSON schema is the executable serialization contract.
+Its `operation_kind` is this consumer's side-effect projection; `risk`, `impact`,
+`determinism`, `latency`, retry/idempotency booleans, `authorization_scopes`,
+`concurrency`, and `max_response_bytes` are validated at load time. Narrative-only
+axes are represented explicitly where the schema has no top-level field:
+`extensions.data_classification` carries confidentiality, `extensions.cost` carries
+cost, `extensions.target_binding` carries stable target identity/revalidation,
+`extensions.retry_conditions` and `extensions.idempotency_mechanism` carry retry and
+idempotency evidence, and `extensions.outcome_semantics` carries ambiguous/unknown
+outcome handling. The invocation kernel enforces authorization scopes, target binding,
+deadlines, concurrency, and response bounds; descriptive confidentiality/cost fields
+are not independent authorization grants.
+
+The narrative operational-impact vocabulary (`transient`, `persistent`, `outage`,
+`safety-critical`, `financial`) and explicit abuse-potential axis do not have literal
+schema equivalents in the pinned contract. They are therefore an upstream residual
+risk rather than silently being equated with the schema's `impact` enum. Final
+certification must not claim literal schema/narrative identity until ai-skills resolves
+that mismatch or the consumer records reviewed extensions for every missing axis.
 
 ## Known residual risk
 

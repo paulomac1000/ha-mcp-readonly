@@ -128,35 +128,26 @@ class OperationMCPAdapter:
         return register
 
 
-def _augment_result(result: Any, tool_name: str, start: float) -> Any:
-    """Sanitize, attach metadata, then enforce the final serialized size limit."""
+def _augment_result(result: Any, tool_name: str, start: float) -> str:
+    """Normalize every public operation result to one JSON-string envelope."""
     import json
 
+    parsed: Any = result
     if isinstance(result, str):
         try:
             parsed = json.loads(result)
         except (ValueError, TypeError):
-            sanitized_text = sanitize_response_data(result)
-            KERNEL.enforce_final_result_size(tool_name, sanitized_text)
-            return sanitized_text
-        sanitized = sanitize_response_data(parsed)
-        if isinstance(sanitized, dict):
-            sanitized["_meta"] = _merged_meta(sanitized.get("_meta"), build_meta(tool_name, start))
-            encoded = json.dumps(sanitized, indent=2, ensure_ascii=False)
-            KERNEL.enforce_final_result_size(tool_name, encoded)
-            return encoded
-        KERNEL.enforce_final_result_size(tool_name, sanitized)
-        return sanitized
-    if isinstance(result, dict):
-        sanitized = sanitize_response_data(result)
-        if not isinstance(sanitized, dict):
-            raise TypeError("Sanitized dictionary result changed type")
-        sanitized["_meta"] = _merged_meta(sanitized.get("_meta"), build_meta(tool_name, start))
-        KERNEL.enforce_final_result_size(tool_name, sanitized)
-        return sanitized
-    sanitized = sanitize_response_data(result)
-    KERNEL.enforce_final_result_size(tool_name, sanitized)
-    return sanitized
+            parsed = result
+    sanitized = sanitize_response_data(parsed)
+    if isinstance(sanitized, dict):
+        payload = dict(sanitized)
+        payload.setdefault("success", "error" not in payload)
+    else:
+        payload = {"success": True, "result": sanitized}
+    payload["_meta"] = _merged_meta(payload.get("_meta"), build_meta(tool_name, start))
+    encoded = json.dumps(payload, indent=2, ensure_ascii=False)
+    KERNEL.enforce_final_result_size(tool_name, encoded)
+    return encoded
 
 
 def _merged_meta(tool_meta: Any, envelope: dict[str, Any]) -> dict[str, Any]:

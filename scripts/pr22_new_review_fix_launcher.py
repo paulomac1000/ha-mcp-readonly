@@ -43,15 +43,15 @@ operations_path.write_text(operations, encoding="utf-8")
 # Drain queued forecast events before accepting the unsubscribe acknowledgement.
 snapshot_path = root / "context_generator/snapshot.py"
 snapshot = snapshot_path.read_text(encoding="utf-8")
-old_unsubscribe = '''                    self._ws_command(
+old_unsubscribe = """                    self._ws_command(
                         ws,
                         unsubscribe_id,
                         "unsubscribe_events",
                         {"subscription": subscription_id},
                     )
                     subscribed = False
-'''
-new_unsubscribe = '''                    ws.send(
+"""
+new_unsubscribe = """                    ws.send(
                         json.dumps(
                             {
                                 "id": unsubscribe_id,
@@ -80,7 +80,7 @@ new_unsubscribe = '''                    ws.send(
                             "weather forecast unsubscribe response limit exceeded"
                         )
                     subscribed = False
-'''
+"""
 if old_unsubscribe not in snapshot:
     raise AssertionError("current weather unsubscribe block not found")
 snapshot_path.write_text(snapshot.replace(old_unsubscribe, new_unsubscribe, 1), encoding="utf-8")
@@ -97,17 +97,17 @@ source = source.replace(
 )
 source = source.replace('replace("tools/operations.py", old, new)', "pass")
 source = source.replace(
-    '''    def operation(record: _Record, missing: "MissingModel") -> None:  # type: ignore[name-defined]
+    """    def operation(record: _Record, missing: "MissingModel") -> None:  # type: ignore[name-defined]
         return None
 
     schema = signature_to_json_schema(operation)
-''',
-    '''    def operation(record: _Record, missing: str) -> None:
+""",
+    """    def operation(record: _Record, missing: str) -> None:
         return None
 
     operation.__annotations__["missing"] = "MissingModel"
     schema = signature_to_json_schema(operation)
-''',
+""",
 )
 # The historical unsubscribe replacement is already applied against current code above.
 source = re.sub(
@@ -135,12 +135,12 @@ exec(compile(source, str(source_path), "exec"), namespace)
 invocation_test = root / "tests/unit/test_invocation_kernel.py"
 text = invocation_test.read_text(encoding="utf-8")
 text = text.replace(
-    '''        if acquire_calls == 2:
+    """        if acquire_calls == 2:
             second_admission_started.set()
-''',
-    '''        if acquire_calls == 1:
+""",
+    """        if acquire_calls == 1:
             second_admission_started.set()
-''',
+""",
     1,
 )
 invocation_test.write_text(text, encoding="utf-8")
@@ -148,14 +148,14 @@ invocation_test.write_text(text, encoding="utf-8")
 schema_test = root / "tests/unit/test_schema_utils.py"
 text = schema_test.read_text(encoding="utf-8")
 text = text.replace(
-    '''    assert schema["properties"]["record"]["$ref"] == "#/$defs/_Record"
+    """    assert schema["properties"]["record"]["$ref"] == "#/$defs/_Record"
     assert schema["properties"]["missing"]["type"] == "string"
-''',
-    '''    record_schema = schema["properties"]["record"]
+""",
+    """    record_schema = schema["properties"]["record"]
     assert record_schema["type"] == "object"
     assert record_schema["properties"]["value"]["type"] == "integer"
     assert schema["properties"]["missing"]["type"] == "string"
-''',
+""",
     1,
 )
 schema_test.write_text(text, encoding="utf-8")
@@ -165,40 +165,40 @@ schema_test.write_text(text, encoding="utf-8")
 # is complete by substituting an empty list.
 protocol_test = root / "tests/protocol/test_home_assistant_upstream_contract.py"
 text = protocol_test.read_text(encoding="utf-8")
-old = '''    summary = provenance.summary()
+old = """    summary = provenance.summary()
     assert summary["counts"].get("unavailable", 0) == 0
-'''
+"""
 # Only the second occurrence is the real cassette test; keep the synthetic fixture complete.
 first = text.find(old)
 second = text.find(old, first + 1)
 if first < 0 or second < 0:
     raise AssertionError("expected two provenance summary assertions")
-replacement = '''    summary = provenance.summary()
+replacement = """    summary = provenance.summary()
     unavailable = [
         item for item in summary["sources"].values() if item["status"] == "unavailable"
     ]
     assert len(unavailable) == 1
     assert unavailable[0]["source"].startswith("todo_items:")
     assert unavailable[0]["requested"] == "todo/item/list"
-'''
+"""
 text = text[:second] + text[second:].replace(old, replacement, 1)
 protocol_test.write_text(text, encoding="utf-8")
 
 snapshot_path = root / "context_generator/snapshot.py"
 snapshot = snapshot_path.read_text(encoding="utf-8")
 snapshot = snapshot.replace(
-    '''                self.provenance.record(
+    """                self.provenance.record(
                     source, method="websocket", status="unavailable", reason=type(exc).__name__
                 )
-''',
-    '''                self.provenance.record(
+""",
+    """                self.provenance.record(
                     source,
                     method="websocket",
                     status="unavailable",
                     reason=type(exc).__name__,
                     requested="todo/item/list",
                 )
-''',
+""",
     1,
 )
 snapshot_path.write_text(snapshot, encoding="utf-8")

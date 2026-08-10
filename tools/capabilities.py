@@ -117,8 +117,6 @@ def _do_describe_ha_capabilities(
         name = str(item.get("name", ""))
         runtime_active = name in active_names if initialized else None
         item["runtime_active"] = runtime_active
-        if runtime_active is False:
-            item["active_state"] = "inactive"
         if name in inactive_reasons:
             item["inactive_reason"] = inactive_reasons[name]
         tools.append(item)

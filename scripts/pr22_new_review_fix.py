@@ -19,15 +19,21 @@ def replace(path: str, old: str, new: str, *, count: int = 1) -> None:
     text = read(path)
     found = text.count(old)
     if found < count:
-        raise AssertionError(f"{path}: expected at least {count} occurrences, found {found}: {old[:120]!r}")
+        raise AssertionError(
+            f"{path}: expected at least {count} occurrences, found {found}: {old[:120]!r}"
+        )
     write(path, text.replace(old, new, count))
 
 
-def regex_replace(path: str, pattern: str, replacement: str, *, count: int = 1, flags: int = 0) -> None:
+def regex_replace(
+    path: str, pattern: str, replacement: str, *, count: int = 1, flags: int = 0
+) -> None:
     text = read(path)
     updated, replaced = re.subn(pattern, replacement, text, count=count, flags=flags)
     if replaced != count:
-        raise AssertionError(f"{path}: expected {count} regex replacements, got {replaced}: {pattern!r}")
+        raise AssertionError(
+            f"{path}: expected {count} regex replacements, got {replaced}: {pattern!r}"
+        )
     write(path, updated)
 
 
@@ -281,8 +287,8 @@ replace(
 replace(
     "tools/redaction.py",
     'def _normalized_key(value: Any) -> str:\n    return _NORMALIZE_KEY.sub("_", str(value).strip().casefold()).strip("_")\n',
-    'def _normalized_key(value: Any) -> str:\n'
-    '    raw = str(value).strip()\n'
+    "def _normalized_key(value: Any) -> str:\n"
+    "    raw = str(value).strip()\n"
     '    raw = _CAMEL_ACRONYM_BOUNDARY.sub("_", raw)\n'
     '    raw = _CAMEL_WORD_BOUNDARY.sub("_", raw)\n'
     '    return _NORMALIZE_KEY.sub("_", raw.casefold()).strip("_")\n',
@@ -439,7 +445,7 @@ replace("tools/operations.py", old, new)
 # ---------------------------------------------------------------------------
 replace(
     "context_generator/snapshot.py",
-    '''                        try:
+    """                        try:
                             response = _ws_command(
                                 websocket,
                                 request_id,
@@ -455,8 +461,8 @@ replace(
                             subscribed = False
                         except Exception:
                             raise
-''',
-    '''                        unsubscribe_id = request_id
+""",
+    """                        unsubscribe_id = request_id
                         request_id += 1
                         websocket.send(
                             json.dumps(
@@ -487,11 +493,11 @@ replace(
                             raise WebSocketProtocolError(
                                 "weather forecast unsubscribe response limit exceeded"
                             )
-''',
+""",
 )
 replace(
     "context_generator/snapshot.py",
-    '''                try:
+    """                try:
                     size = path.stat().st_size
                 except OSError:
                     continue
@@ -511,8 +517,8 @@ replace(
                     raw = path.read_text(encoding="utf-8")
                 except (OSError, UnicodeError):
                     continue
-''',
-    '''                try:
+""",
+    """                try:
                     size = path.stat().st_size
                 except OSError as exc:
                     self.provenance.record(
@@ -551,14 +557,14 @@ replace(
                         reason=f"read failed: {type(exc).__name__}",
                     )
                     continue
-''',
+""",
 )
 replace(
     "context_generator/utils.py",
-    '''        else:
+    """        else:
             return {"success": False, "error": f"Unsupported method: {method}"}
-''',
-    '''        else:
+""",
+    """        else:
             reason = f"Unsupported method: {method}"
             _record_source(
                 source,
@@ -568,61 +574,61 @@ replace(
                 requested=endpoint,
             )
             return {"success": False, "error": reason}
-''',
+""",
 )
 
 replace(
     "tools/filesystem_explorer.py",
-    '''            filepath = Path(root) / filename
+    """            filepath = Path(root) / filename
             try:
                 filepath = context.validate_text_file(filepath)
-''',
-    '''            candidate = Path(root) / filename
+""",
+    """            candidate = Path(root) / filename
             try:
                 relative_path = candidate.relative_to(target)
             except ValueError:
                 continue
             try:
                 filepath = context.validate_text_file(candidate)
-''',
+""",
 )
 replace(
     "tools/filesystem_explorer.py",
-    '''                        "path": str(filepath.relative_to(target)),
+    """                        "path": str(filepath.relative_to(target)),
                         "absolute_path": str(filepath),
                         "matches_count": len(matches),
-''',
-    '''                        "path": relative_path.as_posix(),
+""",
+    """                        "path": relative_path.as_posix(),
                         "absolute_path": str(filepath),
                         "matches_count": len(list(re.finditer(re.escape(pattern), content, re.IGNORECASE))),
-''',
+""",
 )
 
 # Fail closed on method types before normalization.
 replace(
     "tools/utils.py",
-    '''    if retries < 1:
+    """    if retries < 1:
         raise ValueError("retries must be at least 1")
     normalized_method = method.upper()
-''',
-    '''    if retries < 1:
+""",
+    """    if retries < 1:
         raise ValueError("retries must be at least 1")
     if not isinstance(method, str):
         raise ValueError("HTTP method must be a string")
     normalized_method = method.upper()
-''',
+""",
 )
 
 # Observe background future exceptions after caller timeout/cancellation.
 replace(
     "tools/invocation.py",
-    '''            wrapped = asyncio.wrap_future(future)
+    """            wrapped = asyncio.wrap_future(future)
             try:
                 result = await asyncio.wait_for(
                     asyncio.shield(wrapped), timeout=_remaining(deadline)
                 )
-''',
-    '''            wrapped = asyncio.wrap_future(future)
+""",
+    """            wrapped = asyncio.wrap_future(future)
 
             def observe_background_result(completed: asyncio.Future[Any]) -> None:
                 if completed.cancelled():
@@ -637,20 +643,20 @@ replace(
                 result = await asyncio.wait_for(
                     asyncio.shield(wrapped), timeout=_remaining(deadline)
                 )
-''',
+""",
 )
 
 # Preserve manifest active_state as declaration; runtime_active is the dynamic state.
 replace(
     "tools/capabilities.py",
-    '''        runtime_active = name in active_names if initialized else None
+    """        runtime_active = name in active_names if initialized else None
         item["runtime_active"] = runtime_active
         if runtime_active is False:
             item["active_state"] = "inactive"
-''',
-    '''        runtime_active = name in active_names if initialized else None
+""",
+    """        runtime_active = name in active_names if initialized else None
         item["runtime_active"] = runtime_active
-''',
+""",
 )
 
 # ---------------------------------------------------------------------------
@@ -893,15 +899,15 @@ if __name__ == "__main__":
 # ---------------------------------------------------------------------------
 replace(
     "docker-compose.build.yml",
-    '''      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen(http://127.0.0.1:9091/ready, timeout=3)"]
-''',
-    '''      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9091/ready', timeout=3)"]
-''',
+    """      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen(http://127.0.0.1:9091/ready, timeout=3)"]
+""",
+    """      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9091/ready', timeout=3)"]
+""",
 )
 
 write(
     "Makefile",
-    '''.PHONY: test test-integration test-all typecheck lint format docs-check docker-build docker-build-source docker-run help clean
+    """.PHONY: test test-integration test-all typecheck lint format docs-check docker-build docker-build-source docker-run help clean
 
 AFDS_VALIDATOR := scripts/vendor/afds_validate_b54fc6b2.py
 
@@ -952,11 +958,15 @@ clean:
 	find . -type d -name ".pytest_cache" -exec rm -rf {} + 2>/dev/null || true
 	find . -type d -name ".ruff_cache" -exec rm -rf {} + 2>/dev/null || true
 	rm -f .coverage coverage.xml
-''',
+""",
 )
 
 # Keep local hooks aligned with the canonical gates instead of the stale vendored validator.
-replace(".pre-commit-config.yaml", "entry: mypy tools/ --strict", "entry: mypy server.py tools/ --strict")
+replace(
+    ".pre-commit-config.yaml",
+    "entry: mypy tools/ --strict",
+    "entry: mypy server.py tools/ --strict",
+)
 replace(
     ".pre-commit-config.yaml",
     "entry: bandit -r tools/ -ll",
@@ -964,39 +974,39 @@ replace(
 )
 replace(
     ".pre-commit-config.yaml",
-    '''      - id: afds-docs
+    """      - id: afds-docs
         name: AFDS documentation validation (vendored pinned validator)
         entry: python3 scripts/vendor/afds_validate_c6dc6b13.py AGENTS.md CONTRIBUTING.md SECURITY.md docs/documentation.md docs/testing-guidelines.md docs/ai-skills-adoption.md
-''',
-    '''      - id: afds-docs
+""",
+    """      - id: afds-docs
         name: AFDS documentation validation (vendored pinned validator)
         entry: make docs-check
-''',
+""",
 )
 
 replace(
     "AGENTS.md",
-    '''3. Check the official Home Assistant REST or WebSocket documentation to decide whether the endpoint is public and therefore usable with a normal long-lived access token.
+    """3. Check the official Home Assistant REST or WebSocket documentation to decide whether the endpoint is public and therefore usable with a normal long-lived access token.
 4. Verify the exact endpoint manually with a normal long-lived access token, for example:
-''',
-    '''3. Check the official Home Assistant REST or WebSocket documentation to establish the public API shape. Documentation alone does **not** prove that a normal long-lived access token has the required authorization.
+""",
+    """3. Check the official Home Assistant REST or WebSocket documentation to establish the public API shape. Documentation alone does **not** prove that a normal long-lived access token has the required authorization.
 4. Verify the exact endpoint manually with the same class of normal long-lived access token intended for production, for example:
-''',
+""",
 )
 replace(
     "AGENTS.md",
-    '''python scripts/vendor/afds_validate_c6dc6b13.py AGENTS.md CONTRIBUTING.md SECURITY.md docs/documentation.md docs/testing-guidelines.md docs/ai-skills-adoption.md
-''',
-    '''make docs-check
-''',
+    """python scripts/vendor/afds_validate_c6dc6b13.py AGENTS.md CONTRIBUTING.md SECURITY.md docs/documentation.md docs/testing-guidelines.md docs/ai-skills-adoption.md
+""",
+    """make docs-check
+""",
 )
 replace(
     "AGENTS.md",
-    '''- `ruff check .`, `ruff format --check .`, strict `mypy`, Bandit, Semgrep, registry-name validation, URL-encoding detection, version consistency, and the configured AFDS validation all pass.
-''',
-    '''- `ruff check .`, `ruff format --check .`, strict `mypy`, Bandit, Semgrep, registry-name validation, URL-encoding detection, version consistency, `make docs-check`, and the full configured `pre-commit run --all-files` gate all pass.
+    """- `ruff check .`, `ruff format --check .`, strict `mypy`, Bandit, Semgrep, registry-name validation, URL-encoding detection, version consistency, and the configured AFDS validation all pass.
+""",
+    """- `ruff check .`, `ruff format --check .`, strict `mypy`, Bandit, Semgrep, registry-name validation, URL-encoding detection, version consistency, `make docs-check`, and the full configured `pre-commit run --all-files` gate all pass.
 - Every newly supported Home Assistant REST/WebSocket API surface is backed by official API-shape documentation, a successful manual request using the intended long-lived-token class, a sanitized recorded/VCR upstream-contract fixture, focused protocol tests, and smoke coverage that keeps catalog counts and capability discovery consistent.
-''',
+""",
 )
 
 # Normalize changelog structure and remove stale evidence claims.
@@ -1020,7 +1030,7 @@ write("CHANGELOG.md", text)
 
 replace(
     "docs/ai-skills-adoption.md",
-    '''## Upstream normative vocabulary conflict
+    """## Upstream normative vocabulary conflict
 
 The pinned capability-manifest JSON schema and the narrative capability-manifest
 reference currently use partially different field vocabularies. This consumer treats
@@ -1028,8 +1038,8 @@ the canonical JSON schema as the executable serialization contract and records t
 narrative-only concepts through reviewed extension fields where possible. The
 discrepancy is an upstream residual risk and must be resolved by ai-skills before a
 final certification claims that the two sources are literally identical.
-''',
-    '''## Upstream normative vocabulary conflict
+""",
+    """## Upstream normative vocabulary conflict
 
 The pinned capability-manifest JSON schema is the executable serialization contract.
 Its `operation_kind` is this consumer's side-effect projection; `risk`, `impact`,
@@ -1050,7 +1060,7 @@ schema equivalents in the pinned contract. They are therefore an upstream residu
 risk rather than silently being equated with the schema's `impact` enum. Final
 certification must not claim literal schema/narrative identity until ai-skills resolves
 that mismatch or the consumer records reviewed extensions for every missing axis.
-''',
+""",
 )
 
 # ---------------------------------------------------------------------------
@@ -1397,9 +1407,9 @@ def test_unrelated_schema_generator_errors_are_not_silenced(monkeypatch: pytest.
 
 replace(
     "tests/unit/test_response_redaction_boundary.py",
-    '''    assert payload["nested"]["safe_name"] == "living room"
-''',
-    '''    assert payload["nested"]["safe_name"] == "living room"
+    """    assert payload["nested"]["safe_name"] == "living room"
+""",
+    """    assert payload["nested"]["safe_name"] == "living room"
 
 
 def test_key_aware_redaction_handles_camel_and_pascal_case_credentials() -> None:
@@ -1417,7 +1427,7 @@ def test_key_aware_redaction_handles_camel_and_pascal_case_credentials() -> None
     for key in ("accessToken", "refreshToken", "clientSecret", "privateKey", "apiKey", "APIKey"):
         assert payload[key] == REDACTED
     assert payload["safeName"] == "visible"
-''',
+""",
 )
 
 replace(
@@ -1427,8 +1437,8 @@ replace(
 )
 regex_replace(
     "tests/unit/test_operation_async_hardening.py",
-    r'''@pytest\.mark\.asyncio\nasync def test_storage_coroutine_blocking_io_does_not_block_server_event_loop\(\) -> None:\n(?:    .*\n)+?    assert result\["success"\] is True\n''',
-    '''@pytest.mark.asyncio
+    r"""@pytest\.mark\.asyncio\nasync def test_storage_coroutine_blocking_io_does_not_block_server_event_loop\(\) -> None:\n(?:    .*\n)+?    assert result\["success"\] is True\n""",
+    """@pytest.mark.asyncio
 async def test_storage_coroutine_blocking_io_does_not_block_server_event_loop() -> None:
     name = "test_blocking_storage_coroutine"
     _register(name)
@@ -1452,19 +1462,19 @@ async def test_storage_coroutine_blocking_io_does_not_block_server_event_loop() 
     result = json.loads(await invocation)
     assert order == ["probe-ran", "blocking-finished"]
     assert result["success"] is True
-''',
+""",
     flags=re.MULTILINE,
 )
 
 replace(
     "tests/unit/test_review_regressions.py",
-    '''@pytest.mark.parametrize("name", ["HEALTH_CHECK_PORT", "MCP_PORT", "REST_API_PORT"])
+    """@pytest.mark.parametrize("name", ["HEALTH_CHECK_PORT", "MCP_PORT", "REST_API_PORT"])
 def test_runtime_ports_reject_out_of_range(monkeypatch, name: str) -> None:
     monkeypatch.setenv(name, "70000")
     with pytest.raises(ValueError, match=name):
         RuntimeSettings.from_env()
-''',
-    '''@pytest.mark.parametrize("name", ["HEALTH_CHECK_PORT", "MCP_PORT", "REST_API_PORT"])
+""",
+    """@pytest.mark.parametrize("name", ["HEALTH_CHECK_PORT", "MCP_PORT", "REST_API_PORT"])
 @pytest.mark.parametrize("value", ["0", "70000"])
 def test_runtime_ports_reject_out_of_range(
     monkeypatch: pytest.MonkeyPatch, name: str, value: str
@@ -1473,20 +1483,24 @@ def test_runtime_ports_reject_out_of_range(
     monkeypatch.setenv(name, value)
     with pytest.raises(ValueError, match=name):
         RuntimeSettings.from_env()
-''',
+""",
 )
 
 # Pin transport in the wildcard-CORS test before from_env() validates unrelated settings.
 text = read("tests/unit/test_settings.py")
-needle = 'def test_wildcard_cors_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:\n'
-if needle in text and 'def test_wildcard_cors_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:\n    monkeypatch.setenv("MCP_TRANSPORT", "stdio")\n' not in text:
+needle = "def test_wildcard_cors_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:\n"
+if (
+    needle in text
+    and 'def test_wildcard_cors_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:\n    monkeypatch.setenv("MCP_TRANSPORT", "stdio")\n'
+    not in text
+):
     text = text.replace(needle, needle + '    monkeypatch.setenv("MCP_TRANSPORT", "stdio")\n', 1)
 write("tests/unit/test_settings.py", text)
 
 # Make the cancellation-admission test synchronize on the second acquire rather than a sleep.
 replace(
     "tests/unit/test_invocation_kernel.py",
-    '''    waiting = asyncio.create_task(kernel.invoke_async(name, _async_ok))
+    """    waiting = asyncio.create_task(kernel.invoke_async(name, _async_ok))
     await asyncio.sleep(0.03)
     waiting.cancel()
     with pytest.raises(asyncio.CancelledError):
@@ -1496,8 +1510,8 @@ replace(
     assert await asyncio.wait_for(first, timeout=1) == "held"
     await asyncio.sleep(0.05)
     assert await asyncio.wait_for(kernel.invoke_async(name, _async_ok), timeout=1) == "ok"
-''',
-    '''    original_acquire = kernel._acquire_async_semaphore
+""",
+    """    original_acquire = kernel._acquire_async_semaphore
     second_admission_started = asyncio.Event()
     acquire_calls = 0
 
@@ -1531,18 +1545,18 @@ replace(
         release.set()
         if not first.done():
             await asyncio.wait_for(first, timeout=1)
-''',
+""",
 )
 
 # Cache the real cassette once at module load instead of re-reading for each request/socket.
 replace(
     "tests/protocol/test_home_assistant_upstream_contract.py",
-    '''from context_generator.snapshot import ComprehensiveSnapshotCollector
+    """from context_generator.snapshot import ComprehensiveSnapshotCollector
 
 
 class _RecordedHAHandler(BaseHTTPRequestHandler):
-''',
-    '''from context_generator.snapshot import ComprehensiveSnapshotCollector
+""",
+    """from context_generator.snapshot import ComprehensiveSnapshotCollector
 
 _CASSETTE = json.loads(
     Path(__file__).with_name("cassettes").joinpath("recorded_ha_upstream.json").read_text()
@@ -1550,71 +1564,71 @@ _CASSETTE = json.loads(
 
 
 class _RecordedHAHandler(BaseHTTPRequestHandler):
-''',
+""",
 )
 replace(
     "tests/protocol/test_home_assistant_upstream_contract.py",
-    '''        cassette = json.loads(
+    """        cassette = json.loads(
             Path(__file__).with_name("cassettes").joinpath("recorded_ha_upstream.json").read_text()
         )
         payloads = cassette["rest"]
-''',
-    '''        payloads = _CASSETTE["rest"]
-''',
+""",
+    """        payloads = _CASSETTE["rest"]
+""",
 )
 replace(
     "tests/protocol/test_home_assistant_upstream_contract.py",
-    '''        cassette = json.loads(
+    """        cassette = json.loads(
             Path(__file__).with_name("cassettes").joinpath("recorded_ha_upstream.json").read_text()
         )
         self._cassette = cassette["websocket"]
-''',
-    '''        self._cassette = _CASSETTE["websocket"]
-''',
+""",
+    """        self._cassette = _CASSETTE["websocket"]
+""",
 )
 # Explicitly reject cassette drift instead of silently substituting an empty payload.
 replace(
     "tests/protocol/test_home_assistant_upstream_contract.py",
-    '''        result = self._cassette.get(command, [])
+    """        result = self._cassette.get(command, [])
         self.queue.append(
-''',
-    '''        if command not in self._cassette:
+""",
+    """        if command not in self._cassette:
             raise AssertionError(f"recorded cassette has no response for command: {command}")
         result = self._cassette[command]
         self.queue.append(
-''',
+""",
 )
 # Exercise queued forecast events before unsubscribe acknowledgements.
 replace(
     "tests/protocol/test_home_assistant_upstream_contract.py",
-    '''    def __init__(self) -> None:
+    """    def __init__(self) -> None:
         self.queue: deque[str] = deque([json.dumps({"type": "auth_required"})])
-''',
-    '''    def __init__(self) -> None:
+""",
+    """    def __init__(self) -> None:
         self.queue: deque[str] = deque([json.dumps({"type": "auth_required"})])
         self._forecast_subscription: int | None = None
-''',
+""",
 )
 replace(
     "tests/protocol/test_home_assistant_upstream_contract.py",
-    '''        if command == "weather/subscribe_forecast":
+    """        if command == "weather/subscribe_forecast":
             self.queue.append(
-''',
-    '''        if command == "weather/subscribe_forecast":
+""",
+    """        if command == "weather/subscribe_forecast":
             self._forecast_subscription = request_id
             self.queue.append(
-''',
+""",
     count=1,
 )
 replace(
     "tests/protocol/test_home_assistant_upstream_contract.py",
-    '''        if command == "unsubscribe_events":
+    """        if command == "unsubscribe_events":
             self.queue.append(
                 json.dumps({"id": request_id, "type": "result", "success": True, "result": None})
             )
             return
-''',
-    '''        if command == "unsubscribe_events":
+""",
+    """        if command == "unsubscribe_events":
             if self._forecast_subscription is not None:
                 self.queue.append(
                     json.dumps(
@@ -1630,30 +1644,30 @@ replace(
             )
             self._forecast_subscription = None
             return
-''',
+""",
     count=1,
 )
 # The cassette subclass uses the inherited tracking state and exercises the same drain path.
 replace(
     "tests/protocol/test_home_assistant_upstream_contract.py",
-    '''        if command == "weather/subscribe_forecast":
+    """        if command == "weather/subscribe_forecast":
             self.queue.append(
-''',
-    '''        if command == "weather/subscribe_forecast":
+""",
+    """        if command == "weather/subscribe_forecast":
             self._forecast_subscription = request_id
             self.queue.append(
-''',
+""",
     count=1,
 )
 replace(
     "tests/protocol/test_home_assistant_upstream_contract.py",
-    '''        if command == "unsubscribe_events":
+    """        if command == "unsubscribe_events":
             self.queue.append(
                 json.dumps({"id": request_id, "type": "result", "success": True, "result": None})
             )
             return
-''',
-    '''        if command == "unsubscribe_events":
+""",
+    """        if command == "unsubscribe_events":
             if self._forecast_subscription is not None:
                 self.queue.append(
                     json.dumps(
@@ -1669,7 +1683,7 @@ replace(
             )
             self._forecast_subscription = None
             return
-''',
+""",
     count=1,
 )
 
@@ -1684,15 +1698,34 @@ for name in (
     "test_generate_output_overwrites",
     "test_empty_config_path_does_not_crash",
 ):
-    text = text.replace(f"def {name}(self, tmp_output_path):", f"def {name}(self, tmp_output_path, monkeypatch):")
-text = text.replace('        os.environ["HA_URL"] = _HA_URL\n', '        monkeypatch.setenv("HA_URL", _HA_URL)\n')
-text = text.replace('        os.environ["HA_TOKEN"] = _HA_TOKEN\n', '        monkeypatch.setenv("HA_TOKEN", _HA_TOKEN)\n')
-text = text.replace('        os.environ["OUTPUT_PATH"] = tmp_output_path\n', '        monkeypatch.setenv("OUTPUT_PATH", tmp_output_path)\n')
-text = text.replace('        c.HA_URL = "http://nonexistent:8123"\n        c.HA_TOKEN = ""\n        c.HA_CONFIG_PATH = _HA_CONFIG_PATH\n        c.OUTPUT_FILE = tmp_output_path\n        monkeypatch.setenv("OUTPUT_PATH", tmp_output_path)\n', '        monkeypatch.setenv("HA_URL", "http://nonexistent:8123")\n        monkeypatch.setenv("HA_TOKEN", "")\n        monkeypatch.setenv("HA_CONFIG_PATH", _HA_CONFIG_PATH)\n        monkeypatch.setenv("OUTPUT_PATH", tmp_output_path)\n        monkeypatch.setenv("HA_CONTEXT_MODE", "offline")\n')
-text = text.replace('        c.HA_URL = "http://nonexistent:8123"\n        c.HA_TOKEN = ""\n        c.HA_CONFIG_PATH = "/nonexistent/path"\n        c.OUTPUT_FILE = tmp_output_path\n        monkeypatch.setenv("OUTPUT_PATH", tmp_output_path)\n', '        monkeypatch.setenv("HA_URL", "http://nonexistent:8123")\n        monkeypatch.setenv("HA_TOKEN", "")\n        monkeypatch.setenv("HA_CONFIG_PATH", "/nonexistent/path")\n        monkeypatch.setenv("OUTPUT_PATH", tmp_output_path)\n        monkeypatch.setenv("HA_CONTEXT_MODE", "offline")\n')
+    text = text.replace(
+        f"def {name}(self, tmp_output_path):", f"def {name}(self, tmp_output_path, monkeypatch):"
+    )
+text = text.replace(
+    '        os.environ["HA_URL"] = _HA_URL\n', '        monkeypatch.setenv("HA_URL", _HA_URL)\n'
+)
+text = text.replace(
+    '        os.environ["HA_TOKEN"] = _HA_TOKEN\n',
+    '        monkeypatch.setenv("HA_TOKEN", _HA_TOKEN)\n',
+)
+text = text.replace(
+    '        os.environ["OUTPUT_PATH"] = tmp_output_path\n',
+    '        monkeypatch.setenv("OUTPUT_PATH", tmp_output_path)\n',
+)
+text = text.replace(
+    '        c.HA_URL = "http://nonexistent:8123"\n        c.HA_TOKEN = ""\n        c.HA_CONFIG_PATH = _HA_CONFIG_PATH\n        c.OUTPUT_FILE = tmp_output_path\n        monkeypatch.setenv("OUTPUT_PATH", tmp_output_path)\n',
+    '        monkeypatch.setenv("HA_URL", "http://nonexistent:8123")\n        monkeypatch.setenv("HA_TOKEN", "")\n        monkeypatch.setenv("HA_CONFIG_PATH", _HA_CONFIG_PATH)\n        monkeypatch.setenv("OUTPUT_PATH", tmp_output_path)\n        monkeypatch.setenv("HA_CONTEXT_MODE", "offline")\n',
+)
+text = text.replace(
+    '        c.HA_URL = "http://nonexistent:8123"\n        c.HA_TOKEN = ""\n        c.HA_CONFIG_PATH = "/nonexistent/path"\n        c.OUTPUT_FILE = tmp_output_path\n        monkeypatch.setenv("OUTPUT_PATH", tmp_output_path)\n',
+    '        monkeypatch.setenv("HA_URL", "http://nonexistent:8123")\n        monkeypatch.setenv("HA_TOKEN", "")\n        monkeypatch.setenv("HA_CONFIG_PATH", "/nonexistent/path")\n        monkeypatch.setenv("OUTPUT_PATH", tmp_output_path)\n        monkeypatch.setenv("HA_CONTEXT_MODE", "offline")\n',
+)
 # Replace remaining direct constants assignments in online/overwrite tests with environment setup.
-text = text.replace('        import context_generator.constants as c\n\n        c.HA_URL = _HA_URL\n        c.HA_TOKEN = _HA_TOKEN\n        c.HA_CONFIG_PATH = _HA_CONFIG_PATH\n        c.OUTPUT_FILE = tmp_output_path\n', '        monkeypatch.setenv("HA_CONFIG_PATH", _HA_CONFIG_PATH)\n')
-text = text.replace('        import context_generator.constants as c\n\n', '')
+text = text.replace(
+    "        import context_generator.constants as c\n\n        c.HA_URL = _HA_URL\n        c.HA_TOKEN = _HA_TOKEN\n        c.HA_CONFIG_PATH = _HA_CONFIG_PATH\n        c.OUTPUT_FILE = tmp_output_path\n",
+    '        monkeypatch.setenv("HA_CONFIG_PATH", _HA_CONFIG_PATH)\n',
+)
+text = text.replace("        import context_generator.constants as c\n\n", "")
 write("tests/e2e/test_context_generator.py", text)
 
 # Add focused CLI validation tests without subprocess or filesystem I/O.

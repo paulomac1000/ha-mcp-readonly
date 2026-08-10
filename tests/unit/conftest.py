@@ -7,6 +7,7 @@ import copy
 import inspect
 import json
 import sys
+from collections.abc import Iterator
 from unittest.mock import MagicMock
 
 import pytest
@@ -22,7 +23,7 @@ from tests.fixtures import (
 
 
 @pytest.fixture(autouse=True)
-def _restore_manifest_state():
+def _restore_manifest_state() -> Iterator[None]:
     """Restore global manifest and active-profile state after every unit test.
 
     Unit tests register synthetic manifests and mutate the active tool set
