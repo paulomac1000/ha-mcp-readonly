@@ -40,7 +40,8 @@ jobs:
             tests/unit/test_compliance_hardening.py tests/unit/test_review_regressions.py \
             tests/e2e/conftest.py tests/e2e/test_server_api.py tests/e2e/test_all_tools_smoke.py \
             tests/integration/conftest.py tests/smoke/conftest.py tests/smoke/test_critical_tools.py \
-            tests/smoke/test_input_validation.py tests/smoke/test_response_format.py
+            tests/smoke/test_input_validation.py tests/smoke/test_response_format.py \
+            scripts/pr22_finalize.py scripts/pr22_review_fix.py
           .venv/bin/ruff check --fix \
             scripts/pr22_finalize.py tests/unit/test_manifests.py tests/unit/test_invocation_kernel.py
           .venv/bin/ruff check .
