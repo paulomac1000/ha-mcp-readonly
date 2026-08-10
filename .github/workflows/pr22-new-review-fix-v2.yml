@@ -64,14 +64,27 @@ jobs:
       - name: Canonical documentation gate
         run: PATH="$PWD/.venv/bin:$PATH" make docs-check
       - name: Full pre-commit gate
-        run: PATH="$PWD/.venv/bin:$PATH" .venv/bin/pre-commit run --all-files
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +e
+          PATH="$PWD/.venv/bin:$PATH" .venv/bin/pre-commit run --all-files
+          first_status=$?
+          set -e
+          if [ "$first_status" -ne 0 ]; then
+            PATH="$PWD/.venv/bin:$PATH" .venv/bin/pre-commit run --all-files
+          fi
       - name: Compile gate
         run: .venv/bin/python -m compileall -q server.py tools context_generator scripts tests
       - name: Commit validated source changes
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          # Workflow EOF fixes are committed separately through the GitHub connector;
+          # keep this runner's push restricted to non-workflow source/test/docs changes.
+          git restore .github/workflows/ci.yml .github/workflows/publish.yml
           git add -A
+          git restore --staged .github/workflows/ci.yml .github/workflows/publish.yml || true
           if git diff --cached --quiet; then
             echo 'No source changes to commit'
             exit 0
