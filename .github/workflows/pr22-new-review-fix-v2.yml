@@ -5,6 +5,7 @@ on:
     branches: [agent/ai-skills-compliance-refactor]
     paths:
       - scripts/pr22_new_review_fix_launcher.py
+      - scripts/pr22_new_review_post_fix.py
 
 permissions:
   contents: write
@@ -22,7 +23,9 @@ jobs:
         with:
           python-version: '3.13'
       - name: Apply reviewed source changes
-        run: python scripts/pr22_new_review_fix_launcher.py
+        run: |
+          python scripts/pr22_new_review_fix_launcher.py
+          python scripts/pr22_new_review_post_fix.py
       - name: Vendor exact pinned AFDS validator
         run: |
           curl --fail --silent --show-error --location \
