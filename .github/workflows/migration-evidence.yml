@@ -128,7 +128,7 @@ jobs:
                   url,
                   headers={
                       'Authorization': f'Bearer {token}',
-                      'Accept': 'application/octet-stream',
+                      'Accept': 'application/vnd.github+json',
                       'X-GitHub-Api-Version': '2022-11-28',
                   },
               )
@@ -145,10 +145,7 @@ jobs:
               if parsed.scheme != 'https' or not parsed.netloc:
                   raise SystemExit('artifact download redirect is not a valid HTTPS URL')
 
-              unsigned_request = urllib.request.Request(
-                  signed_url,
-                  headers={'Accept': 'application/octet-stream'},
-              )
+              unsigned_request = urllib.request.Request(signed_url)
               last_error = None
               for attempt in range(5):
                   try:
