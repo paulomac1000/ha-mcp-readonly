@@ -2,18 +2,14 @@ name: PR22 review fix runner
 
 on:
   push:
-    branches: ["agent/ai-skills-compliance-refactor"]
+    branches:
+      - agent/ai-skills-compliance-refactor
 
 permissions:
   contents: write
 
-concurrency:
-  group: pr22-review-fix-runner
-  cancel-in-progress: false
-
 jobs:
   apply-test-push:
-    if: github.event.head_commit.message == 'chore: run PR22 review fixes'
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
