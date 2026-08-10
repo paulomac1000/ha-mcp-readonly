@@ -73,23 +73,28 @@ jobs:
           mkdir -p evidence
           python - <<'PY'
           import hashlib
+          import io
           import json
           import os
           import time
           import urllib.error
           import urllib.parse
           import urllib.request
+          import zipfile
           from pathlib import Path
+
+          import yaml
 
           repo = os.environ['GITHUB_REPOSITORY']
           head = os.environ['ASSESSED_SHA']
           token = os.environ['GH_TOKEN']
           current_run = int(os.environ['GITHUB_RUN_ID'])
           api = 'https://api.github.com'
+          expected_ai_skills = 'b54fc6b27ea80b36a70d5de73445970e17f55789'
 
-          def get(path):
+          def request_bytes(url):
               request = urllib.request.Request(
-                  api + path,
+                  url,
                   headers={
                       'Authorization': f'Bearer {token}',
                       'Accept': 'application/vnd.github+json',
@@ -100,7 +105,7 @@ jobs:
               for attempt in range(5):
                   try:
                       with urllib.request.urlopen(request, timeout=20) as response:
-                          return json.load(response)
+                          return response.read()
                   except urllib.error.HTTPError as error:
                       if error.code not in {403, 429, 500, 502, 503, 504}:
                           raise
@@ -109,7 +114,10 @@ jobs:
                       last_error = error
                   if attempt < 4:
                       time.sleep(2 ** attempt)
-              raise SystemExit(f'GitHub API request failed for {path}: {last_error}')
+              raise SystemExit(f'GitHub API request failed for {url}: {last_error}')
+
+          def get(path):
+              return json.loads(request_bytes(api + path))
 
           def wait_for_workflow(name):
               deadline = time.monotonic() + 30 * 60
@@ -134,6 +142,13 @@ jobs:
                           return candidate
                   time.sleep(10)
               raise SystemExit(f'timed out waiting for successful exact-head {name}')
+
+          lock = yaml.safe_load(Path('ai-skills.lock.yaml').read_text(encoding='utf-8'))
+          ai_skills_revision = lock.get('revision') if isinstance(lock, dict) else None
+          if ai_skills_revision != expected_ai_skills:
+              raise SystemExit(
+                  f'ai-skills lock mismatch: expected {expected_ai_skills}, got {ai_skills_revision}'
+              )
 
           ci = wait_for_workflow('CI')
           official = wait_for_workflow('Official MCP client')
@@ -180,6 +195,20 @@ jobs:
               if not isinstance(digest, str) or not digest.startswith('sha256:'):
                   raise SystemExit(f'artifact lacks provider digest: {artifact.get("name")}')
 
+          wheel_artifact = next(
+              artifact for artifact in selected if artifact.get('name') == f'python-wheel-{head}'
+          )
+          archive_url = wheel_artifact.get('archive_download_url')
+          if not isinstance(archive_url, str):
+              raise SystemExit('CI wheel artifact lacks archive_download_url')
+          wheel_zip = zipfile.ZipFile(io.BytesIO(request_bytes(archive_url)))
+          wheel_members = [name for name in wheel_zip.namelist() if name.endswith('.whl')]
+          if len(wheel_members) != 1:
+              raise SystemExit(f'expected one wheel in correlated artifact, got {wheel_members}')
+          wheel_member = wheel_members[0]
+          wheel_bytes = wheel_zip.read(wheel_member)
+          ci_wheel_sha256 = hashlib.sha256(wheel_bytes).hexdigest()
+
           official_jobs = get(
               f"/repos/{repo}/actions/runs/{official['id']}/jobs?per_page=100"
           ).get('jobs', [])
@@ -199,12 +228,13 @@ jobs:
               except ValueError as exc:
                   raise SystemExit(f"invalid check_run_url for {job.get('name')}: {url}") from exc
 
-          wheel = next(Path('dist').glob('*.whl'))
-          wheel_digest = 'sha256:' + hashlib.sha256(wheel.read_bytes()).hexdigest()
+          local_wheel = next(Path('dist').glob('*.whl'))
+          local_wheel_digest = hashlib.sha256(local_wheel.read_bytes()).hexdigest()
           report = {
-              'schema_version': 2,
+              'schema_version': 3,
               'repository': repo,
               'assessed_revision': head,
+              'ai_skills_revision': ai_skills_revision,
               'evidence_workflow_run_id': current_run,
               'correlated_ci': {
                   'run_id': int(ci['id']),
@@ -227,6 +257,13 @@ jobs:
                       }
                       for artifact in sorted(selected, key=lambda value: value['name'])
                   ],
+                  'wheel': {
+                      'artifact_id': int(wheel_artifact['id']),
+                      'artifact_name': wheel_artifact['name'],
+                      'provider_digest': wheel_artifact['digest'],
+                      'filename': Path(wheel_member).name,
+                      'content_sha256': ci_wheel_sha256,
+                  },
               },
               'official_client': {
                   'distribution': 'mcp',
@@ -243,7 +280,8 @@ jobs:
                   'unit_protocol': 'passed',
                   'clean_wheel_install': 'passed',
                   'official_stdio': 'passed',
-                  'wheel_content_digest': wheel_digest,
+                  'independently_built_wheel_filename': local_wheel.name,
+                  'independently_built_wheel_sha256': local_wheel_digest,
               },
               'limitations': [
                   'No real HA_URL/HA_TOKEN was available to this public CI lane.',
