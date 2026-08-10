@@ -53,6 +53,76 @@ jobs:
           path.write_text(text.replace(old_newline, new_newline, 1), encoding='utf-8')
           PY
           python scripts/pr22_review_fix.py
+          python - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path: str, old: str, new: str) -> None:
+              p = Path(path)
+              text = p.read_text(encoding='utf-8')
+              if text.count(old) != 1:
+                  raise SystemExit(f'{path}: expected one post-patch target')
+              p.write_text(text.replace(old, new, 1), encoding='utf-8')
+
+          # os.walk rewrite uses pathlib.Path.
+          replace_once(
+              'context_generator/snapshot.py',
+              'from datetime import UTC, datetime, timedelta\n',
+              'from datetime import UTC, datetime, timedelta\nfrom pathlib import Path\n',
+          )
+
+          # The branch already has the correct shared autouse fixture in tests/unit/conftest.py.
+          # Strengthen it to deep-copy nested manifests and restore dicts in place so imported
+          # references are not invalidated.
+          p = Path('tests/unit/conftest.py')
+          text = p.read_text(encoding='utf-8')
+          text = text.replace('import asyncio\n', 'import asyncio\nimport copy\n', 1)
+          old = '''    snapshot = {\n        "_TOOL_MANIFESTS": dict(manifests_module._TOOL_MANIFESTS),\n        "_ACTIVE_TOOL_NAMES": manifests_module._ACTIVE_TOOL_NAMES,\n        "_INACTIVE_REASONS": dict(manifests_module._INACTIVE_REASONS),\n    }\n    yield\n    manifests_module._TOOL_MANIFESTS = snapshot["_TOOL_MANIFESTS"]\n    manifests_module._ACTIVE_TOOL_NAMES = snapshot["_ACTIVE_TOOL_NAMES"]\n    manifests_module._INACTIVE_REASONS = snapshot["_INACTIVE_REASONS"]\n'''
+          new = '''    manifests = copy.deepcopy(manifests_module._TOOL_MANIFESTS)\n    active = manifests_module._ACTIVE_TOOL_NAMES\n    reasons = dict(manifests_module._INACTIVE_REASONS)\n    try:\n        yield\n    finally:\n        manifests_module._TOOL_MANIFESTS.clear()\n        manifests_module._TOOL_MANIFESTS.update(manifests)\n        manifests_module._ACTIVE_TOOL_NAMES = active\n        manifests_module._INACTIVE_REASONS.clear()\n        manifests_module._INACTIVE_REASONS.update(reasons)\n'''
+          if text.count(old) != 1:
+              raise SystemExit('tests/unit/conftest.py: manifest fixture target missing')
+          p.write_text(text.replace(old, new, 1), encoding='utf-8')
+
+          # Remove the redundant per-module fixture introduced by the first patch; isolation is
+          # intentionally centralized in tests/unit/conftest.py for every unit module.
+          p = Path('tests/unit/test_manifests.py')
+          text = p.read_text(encoding='utf-8')
+          text = text.replace('import copy\n', '', 1)
+          text = text.replace('import tools.manifests as manifests_module\n', '', 1)
+          fixture = '''@pytest.fixture(autouse=True)\ndef _restore_manifest_state():\n    manifests = copy.deepcopy(manifests_module._TOOL_MANIFESTS)\n    active = manifests_module._ACTIVE_TOOL_NAMES\n    reasons = dict(manifests_module._INACTIVE_REASONS)\n    try:\n        yield\n    finally:\n        manifests_module._TOOL_MANIFESTS.clear()\n        manifests_module._TOOL_MANIFESTS.update(manifests)\n        manifests_module._ACTIVE_TOOL_NAMES = active\n        manifests_module._INACTIVE_REASONS.clear()\n        manifests_module._INACTIVE_REASONS.update(reasons)\n\n\n'''
+          if text.count(fixture) != 1:
+              raise SystemExit('tests/unit/test_manifests.py: redundant fixture target missing')
+          p.write_text(text.replace(fixture, '', 1), encoding='utf-8')
+
+          # One shared helper keeps synthetic manifest registration behavior identical in both
+          # manifest and invocation-kernel tests.
+          Path('tests/unit/manifest_helpers.py').write_text(
+              '''"""Shared helpers for tests that register synthetic operation manifests."""\n\nfrom tools.manifests import (\n    get_all_manifests,\n    make_manifest,\n    register_manifest,\n    set_active_tools,\n)\n\n\ndef register_test_manifest(name: str, **updates: object) -> None:\n    manifest = make_manifest(name)\n    manifest.update(updates)\n    active = set(get_all_manifests(active_only=True))\n    register_manifest(name, manifest)\n    set_active_tools(active | {name})\n''',
+              encoding='utf-8',
+          )
+          helper = '''def _register(name: str, **updates: object) -> None:\n    manifest = make_manifest(name)\n    manifest.update(updates)\n    active = set(get_all_manifests(active_only=True))\n    register_manifest(name, manifest)\n    set_active_tools(active | {name})\n\n\n'''
+          for test_path in ('tests/unit/test_manifests.py', 'tests/unit/test_invocation_kernel.py'):
+              p = Path(test_path)
+              text = p.read_text(encoding='utf-8')
+              if text.count(helper) != 1:
+                  raise SystemExit(f'{test_path}: duplicate register helper target missing')
+              insert_after = 'import pytest\n'
+              import_line = 'from tests.unit.manifest_helpers import register_test_manifest as _register\n'
+              text = text.replace(insert_after, insert_after + '\n' + import_line, 1)
+              p.write_text(text.replace(helper, '', 1), encoding='utf-8')
+
+          # The shared fixture owns restoration; local finally blocks must not overwrite the
+          # pre-test active profile with "all tools" before the fixture restores it.
+          replace_once(
+              'tests/unit/test_compliance_hardening.py',
+              '''def test_empty_active_catalog_stays_empty() -> None:\n    set_active_tools(set())\n    try:\n        assert get_all_manifests(active_only=True) == {}\n    finally:\n        set_active_tools(set(get_all_manifests()))\n''',
+              '''def test_empty_active_catalog_stays_empty() -> None:\n    set_active_tools(set())\n    assert get_all_manifests(active_only=True) == {}\n''',
+          )
+          replace_once(
+              'tests/unit/test_compliance_hardening.py',
+              '''    try:\n        with principal_scope(principal), pytest.raises(InvocationError) as exc:\n            kernel.invoke_sync("get_all_states", lambda: {"ok": True})\n        assert exc.value.code == "UNAVAILABLE_DEPENDENCY"\n        assert "backend unavailable" in str(exc.value)\n    finally:\n        set_active_tools(set(get_all_manifests()))\n''',
+              '''    with principal_scope(principal), pytest.raises(InvocationError) as exc:\n        kernel.invoke_sync("get_all_states", lambda: {"ok": True})\n    assert exc.value.code == "UNAVAILABLE_DEPENDENCY"\n    assert "backend unavailable" in str(exc.value)\n''',
+          )
+          PY
       - name: Verify in isolated virtual environment
         shell: bash
         run: |
@@ -63,10 +133,12 @@ jobs:
           .venv/bin/ruff format \
             server.py tools/invocation.py tools/settings.py tools/utils.py tools/filesystem_explorer.py \
             context_generator/snapshot.py context_generator/utils.py \
-            tests/unit/test_manifests.py tests/unit/test_review_regressions.py \
-            tests/e2e/conftest.py tests/e2e/test_server_api.py tests/e2e/test_all_tools_smoke.py \
-            tests/integration/conftest.py tests/smoke/conftest.py tests/smoke/test_critical_tools.py \
-            tests/smoke/test_input_validation.py tests/smoke/test_response_format.py
+            tests/unit/conftest.py tests/unit/manifest_helpers.py tests/unit/test_manifests.py \
+            tests/unit/test_invocation_kernel.py tests/unit/test_compliance_hardening.py \
+            tests/unit/test_review_regressions.py tests/e2e/conftest.py tests/e2e/test_server_api.py \
+            tests/e2e/test_all_tools_smoke.py tests/integration/conftest.py tests/smoke/conftest.py \
+            tests/smoke/test_critical_tools.py tests/smoke/test_input_validation.py \
+            tests/smoke/test_response_format.py
           .venv/bin/ruff check .
           .venv/bin/ruff format --check .
           .venv/bin/mypy server.py tools/ context_generator/core.py context_generator/config.py \
