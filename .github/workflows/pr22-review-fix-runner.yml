@@ -27,11 +27,18 @@ jobs:
           from pathlib import Path
           path = Path('scripts/pr22_review_fix.py')
           text = path.read_text(encoding='utf-8')
-          old = '''    updated, count = re.subn(r"(?m)^owners:", "owner:", text, count=1)\n    if count != 1:\n        raise SystemExit(f"{doc}: expected one owners frontmatter key, found {count}")\n    write(doc, updated)\n'''
-          new = '''    updated, count = re.subn(r"(?m)^owners:", "owner:", text, count=1)\n    if count == 0 and re.search(r"(?m)^owner:", text):\n        continue\n    if count != 1:\n        raise SystemExit(f"{doc}: expected one owner/owners frontmatter key, found {count}")\n    write(doc, updated)\n'''
-          if text.count(old) != 1:
+
+          old_helper = '''def replace_once(path: str, old: str, new: str) -> None:\n    text = read(path)\n    count = text.count(old)\n    if count != 1:\n        raise SystemExit(\n            f"{path}: expected one replacement target, found {count}: {old[:100]!r}"\n        )\n    write(path, text.replace(old, new, 1))\n'''
+          new_helper = '''def replace_once(path: str, old: str, new: str) -> None:\n    text = read(path)\n    count = text.count(old)\n    if count == 0 and new in text:\n        return\n    if count != 1:\n        raise SystemExit(\n            f"{path}: expected one replacement target, found {count}: {old[:100]!r}"\n        )\n    write(path, text.replace(old, new, 1))\n'''
+          if text.count(old_helper) != 1:
+              raise SystemExit('replace_once helper patch target missing')
+          text = text.replace(old_helper, new_helper, 1)
+
+          old_owner = '''    updated, count = re.subn(r"(?m)^owners:", "owner:", text, count=1)\n    if count != 1:\n        raise SystemExit(f"{doc}: expected one owners frontmatter key, found {count}")\n    write(doc, updated)\n'''
+          new_owner = '''    updated, count = re.subn(r"(?m)^owners:", "owner:", text, count=1)\n    if count == 0:\n        if text.startswith("---\\n") and not re.search(r"(?m)^owner:", text):\n            raise SystemExit(f"{doc}: frontmatter has neither owner nor owners")\n        continue\n    write(doc, updated)\n'''
+          if text.count(old_owner) != 1:
               raise SystemExit('owner patch target missing')
-          path.write_text(text.replace(old, new, 1), encoding='utf-8')
+          path.write_text(text.replace(old_owner, new_owner, 1), encoding='utf-8')
           PY
           python scripts/pr22_review_fix.py
       - name: Verify in isolated virtual environment
