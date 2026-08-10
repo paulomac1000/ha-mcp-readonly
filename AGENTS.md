@@ -4,7 +4,7 @@ doc_id: reference.ha-mcp-agent-instructions
 type: reference
 status: active
 rigor: normative
-owner: [repository-maintainers]
+owners: [repository-maintainers]
 verification: Run the complete local quality, unit, protocol, package, and runtime gates documented in this file.
 ---
 

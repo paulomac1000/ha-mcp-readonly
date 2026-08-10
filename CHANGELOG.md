@@ -4,7 +4,7 @@ doc_id: reference.ha-mcp-changelog
 type: reference
 status: active
 rigor: informative
-owner: [repository-maintainers]
+owners: [repository-maintainers]
 verification: Confirm release entries against signed tags, package metadata, and the release workflow for the named version.
 ---
 

@@ -4,7 +4,7 @@ doc_id: reference.ha-mcp-security-policy
 type: reference
 status: active
 rigor: normative
-owner: [repository-maintainers]
+owners: [repository-maintainers]
 verification: Run the security-boundary unit tests, Bandit, authenticated runtime checks, and context redaction tests.
 ---
 

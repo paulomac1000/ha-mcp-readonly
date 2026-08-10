@@ -4,7 +4,7 @@ doc_id: guide.ha-mcp-contributing
 type: guide
 status: active
 rigor: operational
-owner: [repository-maintainers]
+owners: [repository-maintainers]
 verification: Run Ruff, strict mypy, Bandit, unit tests, protocol tests, and the applicable package or runtime checks before opening a pull request.
 ---
 
