@@ -59,10 +59,7 @@ save(".env.example", env)
 
 # Pin the transport in every settings test that is intended to reach host/CORS validation.
 settings_test = load("tests/unit/test_settings.py")
-for function_name, variable in (
-    ("test_wildcard_cors_is_rejected", "CORS_ALLOWED_ORIGINS"),
-    ("test_wildcard_host_is_rejected", "MCP_ALLOWED_HOSTS"),
-):
+for function_name in ("test_wildcard_cors_is_rejected", "test_wildcard_host_is_rejected"):
     pattern = rf'(def {function_name}\(monkeypatch: pytest\.MonkeyPatch\) -> None:\n)(?!    monkeypatch\.setenv\("MCP_TRANSPORT")'
     settings_test = re.sub(
         pattern,
@@ -113,4 +110,4 @@ if "elapsed <" in async_test:
     )
 save("tests/unit/test_operation_async_hardening.py", async_test)
 
-print("Applied final review post-fixes")
+print("Applied final review post-fixes; validation rerun requested")
