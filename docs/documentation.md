@@ -148,3 +148,10 @@ bandit -r server.py tools/ context_generator/ ha_graph/ -ll
 pytest tests/unit tests/protocol -q
 python -m build --wheel --no-isolation
 ```
+
+## Troubleshooting
+
+- If `/ready` is not ready, inspect authenticated `/api/health/details` when the REST adapter is enabled and verify the reported component state.
+- If remote MCP or REST returns `401`, configure the caller bearer token separately from the outbound Home Assistant `HA_TOKEN`.
+- If filesystem tools return `ACCESS_DENIED`, verify that the requested path is below `HA_CONFIG_PATH`, contains no symlink or traversal component, and is not a blocked credential-bearing path.
+- If context generation is partial, inspect the provenance matrix for permission, integration, size-limit, or unsupported-source reasons rather than treating an omitted source as successful collection.
