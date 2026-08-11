@@ -13,8 +13,14 @@ profiles:
     check_links: true
     check_anchors: true
     require_verification_by_rigor: false
+  release-history:
+    require_frontmatter: false
+    check_structure: false
+    check_links: true
+    check_anchors: true
+    require_verification_by_rigor: false
 documents:
   - match: README.md
     profile: conventional-document
   - match: CHANGELOG.md
-    profile: conventional-document
+    profile: release-history
