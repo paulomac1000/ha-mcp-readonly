@@ -37,7 +37,7 @@ jobs:
       - name: Semgrep Scan
         run: |
           semgrep scan --error --sarif --output=semgrep.sarif \
-            --config=auto --config=secrets --config=owasp-top-ten .
+            --config=p/auto --config=p/secrets --config=p/owasp-top-ten .
 
       - name: Upload SARIF to GitHub Security
         id: upload-sarif
