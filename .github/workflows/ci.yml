@@ -5,6 +5,12 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+    inputs:
+      full:
+        description: Run the complete test, wheel, and container gate
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -107,6 +113,7 @@ jobs:
           PY
 
   tests:
+    if: github.event_name != 'workflow_dispatch' || inputs.full == true
     name: Tests (Python ${{ matrix.python }})
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -120,6 +127,9 @@ jobs:
           ref: ${{ env.ASSESSED_SHA }}
           fetch-depth: 0
           persist-credentials: false
+      - name: Fetch integration coverage base for manual full runs
+        if: github.event_name == 'workflow_dispatch'
+        run: git fetch --no-tags origin main:refs/remotes/origin/main
       - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
         with:
           python-version: ${{ matrix.python }}
@@ -128,7 +138,7 @@ jobs:
         run: python -m pip install -c constraints-ci.txt '.[dev]'
       - name: Unit and protocol tests
         env:
-          COVERAGE_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before || github.sha }}
+          COVERAGE_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before || 'origin/main' }}
         run: |
           pytest tests/unit -q \
             --cov=tools \
@@ -151,6 +161,7 @@ jobs:
           fail_ci_if_error: false
 
   build:
+    if: github.event_name != 'workflow_dispatch' || inputs.full == true
     name: Build and inspect wheel
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -234,6 +245,7 @@ jobs:
           retention-days: 7
 
   container:
+    if: github.event_name != 'workflow_dispatch' || inputs.full == true
     name: Container (${{ matrix.arch }}) from tested wheel
     runs-on: ubuntu-24.04
     timeout-minutes: 30
