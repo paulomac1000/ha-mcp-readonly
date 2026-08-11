@@ -53,7 +53,8 @@ def _call(name: str, **params):
         timeout=60,
     )
     response.raise_for_status()
-    return response.json().get("result", response.json())
+    payload = response.json()
+    return payload.get("result", payload)
 
 
 def _first_item(name: str, list_key: str, **params):
