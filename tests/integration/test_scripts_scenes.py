@@ -55,7 +55,7 @@ class TestScriptsScenes:
         try:
             data = json.loads(result)
             assert data.get("success"), f"get_script_code failed: {data.get('error')}"
-            assert "code" in data
+            assert data.get("result", "").strip()
         except (json.JSONDecodeError, ValueError):
             # YAML string = success
             assert result.strip()
@@ -90,7 +90,7 @@ class TestScriptsScenes:
         try:
             data = json.loads(result)
             assert data.get("success"), f"get_scene_code failed: {data.get('error')}"
-            assert "code" in data
+            assert data.get("result", "").strip()
         except (json.JSONDecodeError, ValueError):
             # YAML string = success
             assert result.strip()

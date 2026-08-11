@@ -1,7 +1,5 @@
 """Smoke tests: critical tools reported by agents as potentially broken."""
 
-import os
-
 import pytest
 import requests
 
@@ -300,11 +298,12 @@ class TestConfigSmoke:
         data = _call_tool("read_config_file", file_path="configuration.yaml", max_lines=10)
         assert data["success"] is True
         result = data.get("result", {})
-        # The tool returns the raw YAML text for small reads; accept both shapes.
+        # The tool returns the raw YAML text for small reads; the v2 envelope
+        # wraps non-dict results under the "result" key.
         assert isinstance(result, (dict, str)), "result should be dict or str"
         if isinstance(result, dict):
-            assert any(key in result for key in ("content", "lines", "data")), (
-                "should have content/lines key"
+            assert any(key in result for key in ("content", "lines", "data", "result")), (
+                "should have content/lines/data/result key"
             )
 
 
@@ -543,7 +542,7 @@ class TestFilesystemSmoke:
     """Smoke tests for filesystem explorer."""
 
     def test_list_directory(self):
-        config_root = os.environ.get("HA_CONFIG_PATH", "/config")
+        config_root = "/config"
         data = _call_tool("list_directory", path=config_root)
         assert data["success"] is True
         result = data.get("result", {})
@@ -552,7 +551,7 @@ class TestFilesystemSmoke:
         assert isinstance(entries, (list, dict)), "directory entries should be list or dict"
 
     def test_read_file(self):
-        config_root = os.environ.get("HA_CONFIG_PATH", "/config")
+        config_root = "/config"
         data = _call_tool("read_file", file_path=f"{config_root}/configuration.yaml", max_lines=5)
         assert data["success"] is True
         result = data.get("result", {})
@@ -563,7 +562,7 @@ class TestFilesystemSmoke:
             )
 
     def test_search_files(self):
-        config_root = os.environ.get("HA_CONFIG_PATH", "/config")
+        config_root = "/config"
         data = _call_tool(
             "search_files", pattern="homeassistant", search_path=config_root, max_results=5
         )
