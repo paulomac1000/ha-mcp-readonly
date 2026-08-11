@@ -23,7 +23,7 @@ jobs:
   evidence:
     name: Migration evidence
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 60
     env:
       ASSESSED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
       GH_TOKEN: ${{ github.token }}
@@ -32,24 +32,36 @@ jobs:
         with:
           ref: ${{ env.ASSESSED_SHA }}
           persist-credentials: false
+
       - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
         with:
           python-version: "3.13"
           cache: pip
-      - name: Install project in isolated runner environment
-        run: python -m pip install -c constraints-ci.txt '.[dev]'
-      - name: Verify source contracts
+
+      - name: Install project and exact source-gate tools
         run: |
+          python -m pip install -c constraints-ci.txt '.[dev]'
+          python -m pip install 'pre-commit==4.3.0'
+
+      - name: Verify source contracts
+        shell: bash
+        run: |
+          set -euo pipefail
           ruff check .
           ruff format --check .
           mypy server.py tools/ context_generator/core.py context_generator/config.py \
             context_generator/runtime.py context_generator/provenance.py context_generator/snapshot.py \
             scripts/verify_runtime_endpoints.py --strict
           bandit -r server.py tools/ context_generator/ ha_graph/ -ll
+          make docs-check
+          pre-commit run --all-files --show-diff-on-failure
           pytest tests/unit -q
           pytest tests/protocol -q
+
       - name: Build exact constrained wheel runtime and exercise stdio with independent official client
+        shell: bash
         run: |
+          set -euo pipefail
           python -m pip install -c constraints-ci.txt 'build==1.5.0' 'setuptools==83.0.0' 'wheel==0.47.0'
           python -m build --wheel --no-isolation
           python -m venv /tmp/migration-wheel
@@ -57,427 +69,20 @@ jobs:
           /tmp/migration-wheel/bin/python -m pip check
           /tmp/migration-wheel/bin/python - <<'PY'
           import importlib.metadata
-          assert importlib.metadata.version('fastmcp') == '3.4.6'
-          assert importlib.metadata.version('mcp') == '1.29.0'
-          assert importlib.metadata.version('starlette') == '1.4.1'
+
+          assert importlib.metadata.version("fastmcp") == "3.4.6"
+          assert importlib.metadata.version("mcp") == "1.29.0"
+          assert importlib.metadata.version("starlette") == "1.4.1"
           PY
           python -m venv /tmp/migration-official-client
           /tmp/migration-official-client/bin/python -m pip install 'mcp==1.29.0'
           MCP_EXPECTED_VERSION=2.0.0 \
             /tmp/migration-official-client/bin/python scripts/verify_official_mcp_client.py stdio \
               --command /tmp/migration-wheel/bin/ha-mcp-readonly --config-path /tmp
-      - name: Correlate exact-head CI, official-client, and artifact evidence
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p evidence
-          python - <<'PY'
-          import hashlib
-          import io
-          import json
-          import os
-          import time
-          import urllib.error
-          import urllib.parse
-          import urllib.request
-          import zipfile
-          from pathlib import Path
 
-          import yaml
+      - name: Correlate exact-head policy, CI, official-client, and artifact evidence
+        run: python scripts/collect_migration_evidence.py
 
-          repo = os.environ['GITHUB_REPOSITORY']
-          head = os.environ['ASSESSED_SHA']
-          token = os.environ['GH_TOKEN']
-          current_run = int(os.environ['GITHUB_RUN_ID'])
-          api = 'https://api.github.com'
-          expected_ai_skills = 'b54fc6b27ea80b36a70d5de73445970e17f55789'
-          max_artifact_archive_bytes = 128 * 1024 * 1024
-          max_wheel_member_bytes = 128 * 1024 * 1024
-          read_chunk_bytes = 1024 * 1024
-
-          def request_bytes(url):
-              request = urllib.request.Request(
-                  url,
-                  headers={
-                      'Authorization': f'Bearer {token}',
-                      'Accept': 'application/vnd.github+json',
-                      'X-GitHub-Api-Version': '2022-11-28',
-                  },
-              )
-              last_error = None
-              for attempt in range(5):
-                  try:
-                      with urllib.request.urlopen(request, timeout=20) as response:
-                          return response.read()
-                  except urllib.error.HTTPError as error:
-                      if error.code not in {403, 429, 500, 502, 503, 504}:
-                          raise
-                      last_error = error
-                  except (urllib.error.URLError, TimeoutError) as error:
-                      last_error = error
-                  if attempt < 4:
-                      time.sleep(2 ** attempt)
-              raise SystemExit(f'GitHub API request failed for {url}: {last_error}')
-
-          def read_bounded(response, *, limit, label):
-              declared = response.headers.get('Content-Length')
-              if declared is not None:
-                  try:
-                      declared_size = int(declared)
-                  except ValueError as exc:
-                      raise SystemExit(f'{label} has invalid Content-Length: {declared!r}') from exc
-                  if declared_size > limit:
-                      raise SystemExit(
-                          f'{label} exceeds byte limit from Content-Length: {declared_size} > {limit}'
-                      )
-              chunks = []
-              total = 0
-              while True:
-                  chunk = response.read(min(read_chunk_bytes, limit - total + 1))
-                  if not chunk:
-                      break
-                  total += len(chunk)
-                  if total > limit:
-                      raise SystemExit(f'{label} exceeds byte limit: {total} > {limit}')
-                  chunks.append(chunk)
-              return b''.join(chunks)
-
-          class NoRedirect(urllib.request.HTTPRedirectHandler):
-              def redirect_request(self, req, fp, code, msg, headers, newurl):
-                  return None
-
-          no_redirect_opener = urllib.request.build_opener(NoRedirect)
-
-          def download_artifact_archive(url):
-              """Authenticate only to GitHub API, then fetch its signed redirect without credentials."""
-              api_request = urllib.request.Request(
-                  url,
-                  headers={
-                      'Authorization': f'Bearer {token}',
-                      'Accept': 'application/vnd.github+json',
-                      'X-GitHub-Api-Version': '2022-11-28',
-                  },
-              )
-              try:
-                  with no_redirect_opener.open(api_request, timeout=20) as response:
-                      return read_bounded(
-                          response,
-                          limit=max_artifact_archive_bytes,
-                          label='artifact archive',
-                      )
-              except urllib.error.HTTPError as error:
-                  if error.code not in {301, 302, 303, 307, 308}:
-                      raise
-                  signed_url = error.headers.get('Location')
-              if not signed_url:
-                  raise SystemExit('artifact download redirect did not include Location')
-              parsed = urllib.parse.urlparse(signed_url)
-              if parsed.scheme != 'https' or not parsed.netloc:
-                  raise SystemExit('artifact download redirect is not a valid HTTPS URL')
-
-              unsigned_request = urllib.request.Request(signed_url)
-              last_error = None
-              for attempt in range(5):
-                  try:
-                      with urllib.request.urlopen(unsigned_request, timeout=30) as response:
-                          return read_bounded(
-                              response,
-                              limit=max_artifact_archive_bytes,
-                              label='artifact archive',
-                          )
-                  except urllib.error.HTTPError as error:
-                      if error.code not in {403, 408, 429, 500, 502, 503, 504}:
-                          raise
-                      last_error = error
-                  except (urllib.error.URLError, TimeoutError) as error:
-                      last_error = error
-                  if attempt < 4:
-                      time.sleep(2 ** attempt)
-              raise SystemExit(f'artifact archive download failed: {last_error}')
-
-          def get(path):
-              return json.loads(request_bytes(api + path))
-
-          def wait_for_workflow(name):
-              deadline = time.monotonic() + 30 * 60
-              while time.monotonic() < deadline:
-                  query = urllib.parse.urlencode({'head_sha': head, 'per_page': 50})
-                  runs = get(f'/repos/{repo}/actions/runs?{query}').get('workflow_runs', [])
-                  matches = [
-                      run for run in runs
-                      if run.get('name') == name and int(run.get('id', 0)) != current_run
-                  ]
-                  if matches:
-                      candidate = max(matches, key=lambda run: int(run['id']))
-                      if candidate.get('status') == 'completed':
-                          if candidate.get('conclusion') != 'success':
-                              raise SystemExit(
-                                  f"correlated {name} failed: {candidate.get('html_url')}"
-                              )
-                          if candidate.get('head_sha') != head:
-                              raise SystemExit(
-                                  f"{name} head mismatch: expected {head}, got {candidate.get('head_sha')}"
-                              )
-                          return candidate
-                  time.sleep(10)
-              raise SystemExit(f'timed out waiting for successful exact-head {name}')
-
-          lock = yaml.safe_load(Path('ai-skills.lock.yaml').read_text(encoding='utf-8'))
-          ai_skills_revision = lock.get('revision') if isinstance(lock, dict) else None
-          if ai_skills_revision != expected_ai_skills:
-              raise SystemExit(
-                  f'ai-skills lock mismatch: expected {expected_ai_skills}, got {ai_skills_revision}'
-              )
-
-          ci = wait_for_workflow('CI')
-          official = wait_for_workflow('Official MCP client')
-
-          jobs = get(f"/repos/{repo}/actions/runs/{ci['id']}/jobs?per_page=100").get('jobs', [])
-          expected = {
-              'Quality and standards',
-              'Tests (Python 3.11)',
-              'Tests (Python 3.12)',
-              'Tests (Python 3.13)',
-              'Tests (Python 3.14)',
-              'Build and inspect wheel',
-              'Container (amd64) from tested wheel',
-              'Container (arm64) from tested wheel',
-          }
-          by_name = {job['name']: job for job in jobs}
-          missing = sorted(expected - by_name.keys())
-          if missing:
-              raise SystemExit(f'missing required CI jobs: {missing}')
-          failed = {
-              name: by_name[name].get('conclusion')
-              for name in expected
-              if by_name[name].get('conclusion') != 'success'
-          }
-          if failed:
-              raise SystemExit(f'non-success required CI jobs: {failed}')
-
-          artifacts = get(f"/repos/{repo}/actions/runs/{ci['id']}/artifacts?per_page=100").get(
-              'artifacts', []
-          )
-          expected_artifacts = {
-              f'python-wheel-{head}',
-              f'container-image-{head}-amd64',
-              f'container-image-{head}-arm64',
-          }
-          selected = [artifact for artifact in artifacts if artifact.get('name') in expected_artifacts]
-          selected_names = {artifact.get('name') for artifact in selected}
-          if selected_names != expected_artifacts or len(selected) != len(expected_artifacts):
-              raise SystemExit(
-                  f'expected exact CI artifacts {sorted(expected_artifacts)}, got {sorted(str(name) for name in selected_names)}'
-              )
-          for artifact in selected:
-              digest = artifact.get('digest')
-              if not isinstance(digest, str) or not digest.startswith('sha256:'):
-                  raise SystemExit(f'artifact lacks provider digest: {artifact.get("name")}')
-
-          wheel_artifact = next(
-              artifact for artifact in selected if artifact.get('name') == f'python-wheel-{head}'
-          )
-          archive_url = wheel_artifact.get('archive_download_url')
-          if not isinstance(archive_url, str):
-              raise SystemExit('CI wheel artifact lacks archive_download_url')
-          archive_bytes = download_artifact_archive(archive_url)
-          archive_sha256 = hashlib.sha256(archive_bytes).hexdigest()
-          provider_sha256 = wheel_artifact['digest'].removeprefix('sha256:')
-          if archive_sha256 != provider_sha256:
-              raise SystemExit(
-                  f'CI wheel artifact digest mismatch: provider={provider_sha256}, downloaded={archive_sha256}'
-              )
-          with zipfile.ZipFile(io.BytesIO(archive_bytes)) as wheel_zip:
-              wheel_infos = [
-                  info
-                  for info in wheel_zip.infolist()
-                  if not info.is_dir() and info.filename.endswith('.whl')
-              ]
-              if len(wheel_infos) != 1:
-                  raise SystemExit(
-                      f'expected one wheel in correlated artifact, got {[info.filename for info in wheel_infos]}'
-                  )
-              wheel_info = wheel_infos[0]
-              if wheel_info.file_size > max_wheel_member_bytes:
-                  raise SystemExit(
-                      f'correlated wheel exceeds uncompressed byte limit: '
-                      f'{wheel_info.file_size} > {max_wheel_member_bytes}'
-                  )
-              wheel_member = wheel_info.filename
-              wheel_bytes = wheel_zip.read(wheel_info)
-          ci_wheel_sha256 = hashlib.sha256(wheel_bytes).hexdigest()
-
-          official_jobs = get(
-              f"/repos/{repo}/actions/runs/{official['id']}/jobs?per_page=100"
-          ).get('jobs', [])
-          official_job = next(
-              (job for job in official_jobs if job.get('name') == 'Official client exact artifacts'),
-              None,
-          )
-          if not official_job or official_job.get('conclusion') != 'success':
-              raise SystemExit('official-client exact-artifact job is not successful')
-
-          def check_run_id(job):
-              url = job.get('check_run_url')
-              if not isinstance(url, str) or '/check-runs/' not in url:
-                  raise SystemExit(f"job lacks check_run_url: {job.get('name')}")
-              try:
-                  return int(url.rstrip('/').rsplit('/', 1)[-1])
-              except ValueError as exc:
-                  raise SystemExit(f"invalid check_run_url for {job.get('name')}: {url}") from exc
-
-          local_wheel = next(Path('dist').glob('*.whl'))
-          local_wheel_digest = hashlib.sha256(local_wheel.read_bytes()).hexdigest()
-          report = {
-              'schema_version': 3,
-              'repository': repo,
-              'assessed_revision': head,
-              'ai_skills_revision': ai_skills_revision,
-              'evidence_workflow_run_id': current_run,
-              'correlated_ci': {
-                  'run_id': int(ci['id']),
-                  'workflow_id': int(ci['workflow_id']),
-                  'head_sha': ci['head_sha'],
-                  'conclusion': ci['conclusion'],
-                  'jobs': {
-                      name: {
-                          'job_id': int(by_name[name]['id']),
-                          'check_run_id': check_run_id(by_name[name]),
-                          'conclusion': by_name[name]['conclusion'],
-                      }
-                      for name in sorted(expected)
-                  },
-                  'artifacts': [
-                      {
-                          'artifact_id': int(artifact['id']),
-                          'name': artifact['name'],
-                          'provider_digest': artifact['digest'],
-                      }
-                      for artifact in sorted(selected, key=lambda value: value['name'])
-                  ],
-                  'wheel': {
-                      'artifact_id': int(wheel_artifact['id']),
-                      'artifact_name': wheel_artifact['name'],
-                      'provider_digest': wheel_artifact['digest'],
-                      'archive_sha256': archive_sha256,
-                      'provider_digest_verified': True,
-                      'filename': Path(wheel_member).name,
-                      'content_sha256': ci_wheel_sha256,
-                  },
-              },
-              'official_client': {
-                  'distribution': 'mcp',
-                  'version': '1.29.0',
-                  'protocol_revision': '2025-11-25',
-                  'run_id': int(official['id']),
-                  'job_id': int(official_job['id']),
-                  'conclusion': official_job['conclusion'],
-                  'transports': ['stdio', 'streamable-http'],
-              },
-              'local_evidence_lane': {
-                  'python': '3.13',
-                  'quality': 'passed',
-                  'unit_protocol': 'passed',
-                  'clean_wheel_install': 'passed',
-                  'official_stdio': 'passed',
-                  'independently_built_wheel_filename': local_wheel.name,
-                  'independently_built_wheel_sha256': local_wheel_digest,
-                  'executed_gates': [
-                      {
-                          'gate': 'ruff-check',
-                          'source': 'local',
-                          'command': 'ruff check .',
-                          'status': 'passed',
-                      },
-                      {
-                          'gate': 'ruff-format',
-                          'source': 'local',
-                          'command': 'ruff format --check .',
-                          'status': 'passed',
-                      },
-                      {
-                          'gate': 'strict-mypy',
-                          'source': 'local',
-                          'status': 'passed',
-                      },
-                      {
-                          'gate': 'bandit',
-                          'source': 'local',
-                          'command': 'bandit -r server.py tools/ context_generator/ ha_graph/ -ll',
-                          'status': 'passed',
-                      },
-                      {
-                          'gate': 'unit-tests',
-                          'source': 'local',
-                          'command': 'pytest tests/unit -q',
-                          'status': 'passed',
-                      },
-                      {
-                          'gate': 'protocol-tests',
-                          'source': 'local',
-                          'command': 'pytest tests/protocol -q',
-                          'status': 'passed',
-                      },
-                      {
-                          'gate': 'afds-and-capability-schema',
-                          'source': 'correlated-ci:Quality and standards',
-                          'status': 'passed',
-                      },
-                      {
-                          'gate': 'python-3.11-through-3.14-unit-protocol',
-                          'source': 'correlated-ci',
-                          'status': 'passed',
-                      },
-                      {
-                          'gate': 'clean-wheel-install-and-stdio',
-                          'source': 'correlated-ci:Build and inspect wheel',
-                          'status': 'passed',
-                      },
-                      {
-                          'gate': 'container-amd64-runtime-boundaries',
-                          'source': 'correlated-ci:Container (amd64) from tested wheel',
-                          'status': 'passed',
-                      },
-                      {
-                          'gate': 'container-arm64-runtime-boundaries',
-                          'source': 'correlated-ci:Container (arm64) from tested wheel',
-                          'status': 'passed',
-                      },
-                      {
-                          'gate': 'official-mcp-client',
-                          'source': 'correlated-official-client',
-                          'status': 'passed',
-                      },
-                  ],
-                  'skipped_gates': [
-                      {
-                          'gate': 'live-home-assistant-smoke-e2e-integration',
-                          'reason': 'No real HA_URL/HA_TOKEN is available to the public CI lane.',
-                      }
-                  ],
-                  'residual_risks': [
-                      'Provider-backed live Home Assistant behavior is not validated in this public CI lane.',
-                      'Independent GitHub approval for canonical provider-backed adoption remains required for this exact SHA.',
-                      'MCP 2026-07-28 is not claimed for the FastMCP 3.x runtime lane.',
-                  ],
-              },
-              'limitations': [
-                  'No real HA_URL/HA_TOKEN was available to this public CI lane.',
-                  'MCP 2026-07-28 is not claimed for the FastMCP 3.x runtime lane.',
-                  'Canonical provider-backed adoption remains request-changes until live Home Assistant evidence and independent GitHub approval exist for this exact SHA.',
-              ],
-          }
-          report_path = Path('evidence/migration-evidence.json')
-          report_path.write_text(
-              json.dumps(report, indent=2, sort_keys=True) + '\n', encoding='utf-8'
-          )
-          digest = hashlib.sha256(report_path.read_bytes()).hexdigest()
-          Path('evidence/migration-evidence.json.sha256').write_text(
-              f'{digest}  migration-evidence.json\n', encoding='utf-8'
-          )
-          print(json.dumps(report, indent=2, sort_keys=True))
-          print('report_sha256=' + digest)
-          PY
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
         with:
           name: migration-evidence-${{ github.event.pull_request.head.sha || github.sha }}
