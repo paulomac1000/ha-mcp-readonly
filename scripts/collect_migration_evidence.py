@@ -136,9 +136,7 @@ class GitHubEvidenceClient:
             time.sleep(POLL_SECONDS)
         raise EvidenceError(f"timed out waiting for successful exact-head {name}")
 
-    def wait_for_jobs(
-        self, run_id: int, expected_names: set[str]
-    ) -> dict[str, dict[str, Any]]:
+    def wait_for_jobs(self, run_id: int, expected_names: set[str]) -> dict[str, dict[str, Any]]:
         """Wait through GitHub's post-run job-metadata eventual consistency window."""
         deadline = time.monotonic() + SETTLE_WAIT_SECONDS
         last_state: dict[str, str | None] = {}
@@ -151,9 +149,7 @@ class GitHubEvidenceClient:
                 for job in jobs
                 if isinstance(job, dict) and isinstance(job.get("name"), str)
             }
-            last_state = {
-                name: by_name.get(name, {}).get("conclusion") for name in expected_names
-            }
+            last_state = {name: by_name.get(name, {}).get("conclusion") for name in expected_names}
             if expected_names <= by_name.keys() and all(
                 by_name[name].get("status") == "completed"
                 and by_name[name].get("conclusion") is not None
@@ -208,9 +204,7 @@ class GitHubEvidenceClient:
             try:
                 declared_size = int(declared)
             except ValueError as exc:
-                raise EvidenceError(
-                    f"{label} has invalid Content-Length: {declared!r}"
-                ) from exc
+                raise EvidenceError(f"{label} has invalid Content-Length: {declared!r}") from exc
             if declared_size > limit:
                 raise EvidenceError(
                     f"{label} exceeds byte limit from Content-Length: {declared_size} > {limit}"
@@ -292,9 +286,7 @@ def verify_lock() -> str:
 def correlated_wheel(
     client: GitHubEvidenceClient, artifacts: list[dict[str, Any]], head: str
 ) -> dict[str, Any]:
-    artifact = next(
-        item for item in artifacts if item.get("name") == f"python-wheel-{head}"
-    )
+    artifact = next(item for item in artifacts if item.get("name") == f"python-wheel-{head}")
     archive_url = artifact.get("archive_download_url")
     if not isinstance(archive_url, str):
         raise EvidenceError("CI wheel artifact lacks archive_download_url")
