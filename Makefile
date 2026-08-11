@@ -10,7 +10,7 @@ help:
 	@echo "  typecheck         - Run strict mypy on server.py and tools/"
 	@echo "  lint              - Run ruff linter"
 	@echo "  format            - Format code with ruff"
-	@echo "  docs-check        - Validate all governed Markdown with pinned AFDS validator"
+	@echo "  docs-check        - Validate all Markdown under explicit AFDS governance"
 	@echo "  docker-build      - Build Docker image"
 	@echo "  docker-build-run  - Build from source and run"
 	@echo "  clean             - Remove cache files"
@@ -40,7 +40,9 @@ docker-build-run:
 	docker compose -f docker-compose.build.yml up -d
 
 docs-check:
-	@set -eu; 		docs="$$(find docs -type f -name '*.md' | sort)"; 		python3 $(AFDS_VALIDATOR) AGENTS.md CONTRIBUTING.md SECURITY.md $$docs
+	@set -eu; \
+		docs="$$(find docs -type f -name '*.md' | sort)"; \
+		python3 $(AFDS_VALIDATOR) README.md CHANGELOG.md AGENTS.md CONTRIBUTING.md SECURITY.md $$docs
 
 clean:
 	find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
