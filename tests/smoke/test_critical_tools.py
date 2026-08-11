@@ -54,6 +54,16 @@ def _call_tool_safe(tool_name, **params):
         return None, f"JSON parse error: {e}"
 
 
+def _config_root() -> str:
+    """Discover the server's filesystem root instead of assuming /config."""
+    data, error = _call_tool_safe("list_directory")
+    if error:
+        return "/config"
+    result = data.get("result", {})
+    path = result.get("path")
+    return path if isinstance(path, str) and path else "/config"
+
+
 class TestCriticalEntityTools:
     """Verify the 6 critical tools return success."""
 
@@ -542,7 +552,7 @@ class TestFilesystemSmoke:
     """Smoke tests for filesystem explorer."""
 
     def test_list_directory(self):
-        config_root = "/config"
+        config_root = _config_root()
         data = _call_tool("list_directory", path=config_root)
         assert data["success"] is True
         result = data.get("result", {})
@@ -551,7 +561,7 @@ class TestFilesystemSmoke:
         assert isinstance(entries, (list, dict)), "directory entries should be list or dict"
 
     def test_read_file(self):
-        config_root = "/config"
+        config_root = _config_root()
         data = _call_tool("read_file", file_path=f"{config_root}/configuration.yaml", max_lines=5)
         assert data["success"] is True
         result = data.get("result", {})
@@ -562,7 +572,7 @@ class TestFilesystemSmoke:
             )
 
     def test_search_files(self):
-        config_root = "/config"
+        config_root = _config_root()
         data = _call_tool(
             "search_files", pattern="homeassistant", search_path=config_root, max_results=5
         )

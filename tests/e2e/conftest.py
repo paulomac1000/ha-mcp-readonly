@@ -128,6 +128,14 @@ def discover_live_context() -> dict:
     except Exception:
         pass
 
+    try:
+        listing = _call("list_directory")
+        path = listing.get("path")
+        if isinstance(path, str) and path:
+            context["config_root"] = path
+    except Exception:
+        pass
+
     return context
 
 

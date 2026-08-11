@@ -149,7 +149,10 @@ def _discover_params(context: dict) -> dict:
         "graph_get_neighbors": {"node_id": "entity:sun.sun"},
         "investigate_entity": {"search_term": "sun"},
         "read_config_file": {"file_path": "configuration.yaml", "max_lines": 1},
-        "read_file": {"file_path": "/config/configuration.yaml", "max_lines": 1},
+        "read_file": {
+            "file_path": f"{context.get('config_root', '/config')}/configuration.yaml",
+            "max_lines": 1,
+        },
         "resolve_blueprint_automation": {"automation_id": automation_id},
         "search_automations_by_entity": {"entity_id": "sun.sun"},
         "search_config_by_params": {"entity_id": "sun.sun"},
