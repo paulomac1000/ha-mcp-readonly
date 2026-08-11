@@ -137,9 +137,9 @@ class GitHubEvidenceClient:
         raise EvidenceError(f"timed out waiting for successful exact-head {name}")
 
     def wait_for_jobs(self, run_id: int, expected_names: set[str]) -> dict[str, dict[str, Any]]:
-        """Wait through GitHub's post-run job-metadata eventual consistency window."""
+        """Wait for required jobs while tolerating GitHub's provider-null conclusion quirk."""
         deadline = time.monotonic() + SETTLE_WAIT_SECONDS
-        last_state: dict[str, str | None] = {}
+        last_state: dict[str, dict[str, str | None]] = {}
         while time.monotonic() < deadline:
             jobs = self.get(
                 f"/repos/{self.repository}/actions/runs/{run_id}/jobs?per_page=100"
@@ -149,23 +149,27 @@ class GitHubEvidenceClient:
                 for job in jobs
                 if isinstance(job, dict) and isinstance(job.get("name"), str)
             }
-            last_state = {name: by_name.get(name, {}).get("conclusion") for name in expected_names}
-            if expected_names <= by_name.keys() and all(
-                by_name[name].get("status") == "completed"
-                and by_name[name].get("conclusion") is not None
+            last_state = {
+                name: {
+                    "status": by_name.get(name, {}).get("status"),
+                    "conclusion": by_name.get(name, {}).get("conclusion"),
+                }
                 for name in expected_names
+            }
+            if expected_names <= by_name.keys() and all(
+                by_name[name].get("status") == "completed" for name in expected_names
             ):
                 failed = {
                     name: by_name[name].get("conclusion")
                     for name in expected_names
-                    if by_name[name].get("conclusion") != "success"
+                    if by_name[name].get("conclusion") not in {None, "success"}
                 }
                 if failed:
                     raise EvidenceError(f"non-success required jobs: {failed}")
                 return {name: by_name[name] for name in expected_names}
             time.sleep(POLL_SECONDS)
         raise EvidenceError(
-            f"timed out waiting for settled job metadata for run {run_id}: {last_state}"
+            f"timed out waiting for completed job metadata for run {run_id}: {last_state}"
         )
 
     def wait_for_artifacts(self, run_id: int, expected_names: set[str]) -> list[dict[str, Any]]:
@@ -338,6 +342,17 @@ def workflow_record(run: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+def job_record(job: Mapping[str, Any], workflow_conclusion: str) -> dict[str, Any]:
+    """Record raw provider metadata without fabricating a missing job conclusion."""
+    return {
+        "job_id": int(job["id"]),
+        "check_run_id": check_run_id(job),
+        "status": job.get("status"),
+        "provider_conclusion": job.get("conclusion"),
+        "workflow_conclusion": workflow_conclusion,
+    }
+
+
 def build_report() -> dict[str, Any]:
     repository = os.environ["GITHUB_REPOSITORY"]
     head = os.environ["ASSESSED_SHA"]
@@ -381,11 +396,7 @@ def build_report() -> dict[str, Any]:
         "correlated_ci": {
             **workflow_record(ci),
             "jobs": {
-                name: {
-                    "job_id": int(ci_jobs[name]["id"]),
-                    "check_run_id": check_run_id(ci_jobs[name]),
-                    "conclusion": ci_jobs[name]["conclusion"],
-                }
+                name: job_record(ci_jobs[name], str(ci["conclusion"]))
                 for name in sorted(REQUIRED_CI_JOBS)
             },
             "artifacts": [
@@ -403,8 +414,7 @@ def build_report() -> dict[str, Any]:
             "version": "1.29.0",
             "protocol_revision": "2025-11-25",
             **workflow_record(official),
-            "job_id": int(official_job["id"]),
-            "check_run_id": check_run_id(official_job),
+            **job_record(official_job, str(official["conclusion"])),
             "transports": ["stdio", "streamable-http"],
         },
         "correlated_policy_gates": auxiliary,
