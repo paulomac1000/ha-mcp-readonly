@@ -9,6 +9,7 @@ services:
       MCP_TRANSPORT: http
       MCP_BIND_HOST: 0.0.0.0
       MCP_AUTH_TOKEN: ${MCP_AUTH_TOKEN:?Set a strong MCP_AUTH_TOKEN}
+      MCP_ALLOWED_HOSTS: "${MCP_ALLOWED_HOSTS:-localhost,127.0.0.1,[::1]}"
       HEALTH_SERVER_ENABLED: "1"
       REST_API_ENABLED: "0"
     ports:
