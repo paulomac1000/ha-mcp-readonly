@@ -96,10 +96,17 @@ jobs:
           python .ai-skills/skills/agents-md-architect/tools/validate_agents_md.py \
             --strict --repository-root . --layout single --profile mcp-server --language en AGENTS.md
 
+      - name: Isolate authority from assessed repository tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/ai-skills-authority
+          mv .ai-skills /tmp/ai-skills-authority
+
       - name: Audit AGENTS.md repository evidence with pinned authority
         run: |
-          python .ai-skills/skills/agents-md-architect/tools/audit_agents_md.py \
+          python /tmp/ai-skills-authority/skills/agents-md-architect/tools/audit_agents_md.py \
             --strict --layout single --profile mcp-server --language en .
 
       - name: Audit GitHub Actions trust policy with pinned authority
-        run: python .ai-skills/skills/ci-cd-architect/tools/check_github_actions_policy.py .
+        run: python /tmp/ai-skills-authority/skills/ci-cd-architect/tools/check_github_actions_policy.py .
