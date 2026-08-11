@@ -68,6 +68,17 @@ def _first_item(name: str, list_key: str, **params):
     return items[0] if isinstance(items, list) and items else None
 
 
+def _discover_config_root() -> str:
+    """Return the configured filesystem root reported by the live server."""
+    listing = _call("list_directory")
+    if not isinstance(listing, dict):
+        raise AssertionError("list_directory discovery did not return an object")
+    path = listing.get("path")
+    if not isinstance(path, str) or not path.strip():
+        raise AssertionError("list_directory discovery did not report the configured root")
+    return path
+
+
 def discover_live_context() -> dict:
     """Discover real identifiers from the live server for smoke/e2e parameters.
 
@@ -128,13 +139,10 @@ def discover_live_context() -> dict:
     except Exception:
         pass
 
-    try:
-        listing = _call("list_directory")
-        path = listing.get("path")
-        if isinstance(path, str) and path:
-            context["config_root"] = path
-    except Exception:
-        pass
+    # Filesystem-root discovery is a required deployment contract, not an
+    # optional fixture. Fail closed instead of falling back to /config, because
+    # a fallback would hide regressions on deployments using HA_CONFIG_PATH.
+    context["config_root"] = _discover_config_root()
 
     return context
 
