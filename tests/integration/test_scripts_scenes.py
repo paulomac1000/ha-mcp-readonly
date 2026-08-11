@@ -66,7 +66,9 @@ class TestScriptsScenes:
             "get_script_code",
         )
         result = data.get("result")
-        assert isinstance(result, str) and result.strip(), "get_script_code result must be non-empty"
+        assert isinstance(result, str) and result.strip(), (
+            "get_script_code result must be non-empty"
+        )
 
         print(f"\n[OK] get_script_code for: {script_id}")
 
@@ -87,6 +89,8 @@ class TestScriptsScenes:
             "get_scene_code",
         )
         result = data.get("result")
-        assert isinstance(result, str) and result.strip(), "get_scene_code result must be non-empty"
+        assert isinstance(result, str) and result.strip(), (
+            "get_scene_code result must be non-empty"
+        )
 
         print(f"\n[OK] get_scene_code for: {scene_id}")
