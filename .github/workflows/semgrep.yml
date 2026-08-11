@@ -1,3 +1,4 @@
+# ai-skills-policy-profile: trusted-ci
 name: Semgrep Security Scan
 
 on:
@@ -5,6 +6,9 @@ on:
     types: [opened, synchronize, ready_for_review]
   push:
     branches: [main]
+
+permissions:
+  contents: read
 
 concurrency:
   group: semgrep-${{ github.event.pull_request.number || github.sha }}
@@ -15,14 +19,14 @@ env:
 
 jobs:
   semgrep:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
     container:
       image: semgrep/semgrep@sha256:f4791a54c891eabe1188248135574e6e03dfc31dfd3f3b747c7bec7079bfed1b
     permissions:
       contents: read
-      security-events: write
-      pull-requests: write
       actions: read
+      security-events: write
 
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v6
@@ -31,13 +35,9 @@ jobs:
           fetch-depth: 0
 
       - name: Semgrep Scan
-        id: semgrep
         run: |
-          semgrep ci --sarif --output=semgrep.sarif \
-            --config=auto --config=secrets --config=owasp-top-ten \
-            || echo "SEMGREP_EXIT_CODE=$?" >> $GITHUB_ENV
-        env:
-          SEMGREP_APP_TOKEN: ${{ secrets.SEMGREP_APP_TOKEN }}
+          semgrep scan --error --sarif --output=semgrep.sarif \
+            --config=auto --config=secrets --config=owasp-top-ten .
 
       - name: Upload SARIF to GitHub Security
         id: upload-sarif
@@ -50,45 +50,4 @@ jobs:
 
       - name: Warn if SARIF upload failed
         if: always() && steps.upload-sarif.outcome == 'failure'
-        run: echo "::warning::SARIF upload failed — check codeql-action reference or permissions"
-
-      - name: Post or update PR comment
-        if: always() && github.event_name == 'pull_request'
-        uses: actions/github-script@373c709c69115d41ff229c7e5df9f8788daa9553  # v9
-        env:
-          SEMGREP_EXIT_CODE: ${{ env.SEMGREP_EXIT_CODE }}
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            const marker = '<!-- semgrep-bot -->';
-            const exitCode = process.env.SEMGREP_EXIT_CODE || '0';
-            const prNumber = context.issue.number;
-
-            const body = exitCode === '0'
-              ? `${marker}\n## ✅ Semgrep Security Scan — Passed\n\nNo security issues or dangerous patterns found.\n\n*Ran: ${process.env.SEMGREP_RULES}*`
-              : `${marker}\n## ❌ Semgrep Security Scan — Failed\n\n**Semgrep found security issues or dangerous patterns.**\n\nSee the **Security** tab or PR diff for annotations.\n\n*Ran: ${process.env.SEMGREP_RULES}*\n\n**This is a blocking check — fix before merging.**`;
-
-            const comments = await github.rest.issues.listComments({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: prNumber,
-              per_page: 100
-            });
-            const existing = comments.data.find(
-              c => c.user.login === 'github-actions[bot]' && c.body.includes(marker)
-            );
-            if (existing) {
-              await github.rest.issues.updateComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                comment_id: existing.id,
-                body,
-              });
-            } else {
-              await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: prNumber,
-                body,
-              });
-            }
+        run: echo "::warning::SARIF upload failed — scan result remains authoritative"
