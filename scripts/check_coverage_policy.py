@@ -10,7 +10,9 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-_REGISTER_TOOL = re.compile(r"^\s*(?:async\s+)?def\s+register_[A-Za-z0-9_]*_tools\s*\(", re.MULTILINE)
+_REGISTER_TOOL = re.compile(
+    r"^\s*(?:async\s+)?def\s+register_[A-Za-z0-9_]*_tools\s*\(", re.MULTILINE
+)
 _DIFF_HUNK = re.compile(r"^@@ -(?:\d+)(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
 
 
