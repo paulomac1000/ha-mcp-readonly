@@ -1,0 +1,93 @@
+# ai-skills-policy-profile: pull-request
+name: AI Skills policy
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ai-skills-policy-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: true
+
+env:
+  AI_SKILLS_REVISION: b54fc6b27ea80b36a70d5de73445970e17f55789
+
+jobs:
+  policy:
+    name: Pinned ai-skills policy
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout assessed repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v6
+        with:
+          persist-credentials: false
+
+      - name: Checkout pinned ai-skills authority
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v6
+        with:
+          repository: paulomac1000/ai-skills
+          ref: b54fc6b27ea80b36a70d5de73445970e17f55789
+          path: .ai-skills
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install validator dependencies
+        run: python -m pip install -c constraints-ci.txt pyyaml==6.0.3 jsonschema==4.26.0
+
+      - name: Verify ai-skills lock and normative digests
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib
+          import os
+          from pathlib import Path
+
+          import yaml
+
+          root = Path.cwd()
+          lock = yaml.safe_load((root / "ai-skills.lock.yaml").read_text(encoding="utf-8"))
+          expected_revision = os.environ["AI_SKILLS_REVISION"]
+          assert lock["schema_version"] == 1
+          assert lock["repository"] == "https://github.com/paulomac1000/ai-skills"
+          assert lock["revision"] == expected_revision
+          for name, item in lock["skills"].items():
+              assert item["revision"] == expected_revision, name
+              source = root / ".ai-skills" / item["normative_entrypoint"]
+              observed = "sha256:" + hashlib.sha256(source.read_bytes()).hexdigest()
+              assert observed == item["digest"], (name, observed, item["digest"])
+          PY
+
+      - name: Validate AFDS governance with pinned authority
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t docs < <(find docs -type f -name '*.md' -print | sort)
+          python .ai-skills/skills/afds-doc-writer/validate.py \
+            --repository-root . \
+            --governance skills/afds-doc-writer/governance.yaml \
+            README.md CHANGELOG.md AGENTS.md CONTRIBUTING.md SECURITY.md "${docs[@]}"
+
+      - name: Validate AGENTS.md MCP profile with pinned authority
+        run: |
+          python .ai-skills/skills/agents-md-architect/tools/validate_agents_md.py \
+            --strict --repository-root . --layout single --profile mcp-server --language en AGENTS.md
+
+      - name: Audit AGENTS.md repository evidence with pinned authority
+        run: |
+          python .ai-skills/skills/agents-md-architect/tools/audit_agents_md.py \
+            --strict --layout single --profile mcp-server --language en .
+
+      - name: Audit GitHub Actions trust policy with pinned authority
+        run: python .ai-skills/skills/ci-cd-architect/tools/check_github_actions_policy.py .
