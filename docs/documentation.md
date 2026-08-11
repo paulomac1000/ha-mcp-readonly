@@ -5,7 +5,7 @@ type: reference
 status: active
 rigor: operational
 owners: [repository-maintainers]
-verification: Run `pytest tests/unit tests/protocol -q`, build and inspect the wheel, and execute the container job in `.github/workflows/ci.yml`.
+verification: Run the exact commands in the Verification section; public CI additionally requires the exact-head AI Skills policy, Pre-commit gate, Semgrep Security Scan, Official MCP client, CI, and Migration evidence workflows.
 ---
 
 # Operator and architecture reference
@@ -69,7 +69,7 @@ export REST_API_TOKEN='replace-with-a-dedicated-token'
 export REST_API_PORT=9093
 ```
 
-Every route other than health requires `Authorization: Bearer ...`. REST invokes the same wrapped operation functions as MCP and therefore receives the same manifest, capability, deadline, concurrency, response-size, sanitization, and observability behavior.
+The standalone health listener exposes public `/live`, `/ready`, and `/health` probes. The REST adapter exposes public `/health` and `/api/health`; all other REST routes, including `/api/health/details`, require `Authorization: Bearer ...`. REST tool invocation uses the same wrapped operation functions as MCP and therefore receives the same manifest, capability, deadline, concurrency, response-size, sanitization, and observability behavior.
 
 ## Configuration
 
@@ -139,15 +139,32 @@ The image runs as UID 10001, drops root privileges, and defaults to stdio with n
 
 ## Verification
 
+Run the deterministic source gates from an isolated Python environment:
+
 ```bash
 python -m pip install -c constraints-ci.txt '.[dev]'
+python -m pip install 'pre-commit==4.3.0'
 ruff check .
 ruff format --check .
 mypy server.py tools/ context_generator/core.py context_generator/config.py context_generator/runtime.py context_generator/provenance.py context_generator/snapshot.py scripts/verify_runtime_endpoints.py --strict
 bandit -r server.py tools/ context_generator/ ha_graph/ -ll
-pytest tests/unit tests/protocol -q
+pre-commit run --all-files
+make docs-check
+pytest tests/unit -q
+pytest tests/protocol -q
 python -m build --wheel --no-isolation
 ```
+
+The exact-head GitHub verification additionally requires these workflows to succeed for the same commit: `AI Skills policy`, `Pre-commit gate`, `Semgrep Security Scan`, `Official MCP client`, `CI`, and `Migration evidence`. `CI` installs the produced wheel in a clean environment, exercises a real stdio subprocess, and verifies the release container on `linux/amd64` and `linux/arm64`.
+
+Backend-dependent verification is:
+
+```bash
+HA_URL=http://your-isolated-ha:8123 HA_TOKEN=your_test_token \
+  pytest tests/smoke tests/e2e tests/integration -q
+```
+
+When an isolated Home Assistant and real `HA_URL`/`HA_TOKEN` are unavailable, that backend-dependent command is **not** reported as passing. Public migration evidence records it as skipped with the reason, and provider-backed migration approval remains blocked until equivalent exact-revision evidence exists.
 
 ## Troubleshooting
 
