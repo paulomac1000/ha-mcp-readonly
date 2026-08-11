@@ -31,9 +31,18 @@ jobs:
           fetch-depth: 0
 
       - name: Semgrep Full Scan
+        shell: bash
         run: |
-          semgrep scan --error --sarif --output=semgrep.sarif \
+          set +e
+          semgrep scan --sarif --output=semgrep.sarif \
             --config=p/auto --config=p/secrets --config=p/owasp-top-ten .
+          scan_status=$?
+          set -e
+          if [ "$scan_status" -ne 0 ]; then
+            echo "Semgrep scan failed before finding triage (exit $scan_status)" >&2
+            exit "$scan_status"
+          fi
+          python scripts/check_semgrep_sarif.py semgrep.sarif --repository-root .
 
       - name: Upload SARIF to GitHub Security
         id: upload-sarif
