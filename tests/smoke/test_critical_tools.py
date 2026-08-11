@@ -10,7 +10,7 @@ pytestmark = pytest.mark.skipif(
     or not HA_TOKEN
     or not REST_AUTH_CONFIGURED
     or HA_TOKEN in ("", "your_long_lived_access_token_here"),
-    reason="MCP server not running or HA_TOKEN not configured",
+    reason="MCP server not running, or HA_TOKEN or REST API token not configured",
 )
 
 
@@ -55,13 +55,15 @@ def _call_tool_safe(tool_name, **params):
 
 
 def _config_root() -> str:
-    """Discover the server's filesystem root instead of assuming /config."""
+    """Discover the configured filesystem root and fail closed if unavailable."""
     data, error = _call_tool_safe("list_directory")
-    if error:
-        return "/config"
-    result = data.get("result", {})
+    assert error is None, f"configured root discovery failed: {error}"
+    assert isinstance(data, dict), "list_directory discovery did not return an object"
+    result = data.get("result")
+    assert isinstance(result, dict), "list_directory result must be an object"
     path = result.get("path")
-    return path if isinstance(path, str) and path else "/config"
+    assert isinstance(path, str) and path.strip(), "configured root was not reported"
+    return path
 
 
 class TestCriticalEntityTools:
