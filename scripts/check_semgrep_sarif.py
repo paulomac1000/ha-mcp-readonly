@@ -28,7 +28,13 @@ def _primary_location(result: dict[str, Any]) -> tuple[Path | None, int | None]:
 
 
 def _source_line(root: Path, relative: Path | None, line: int | None) -> str | None:
-    if relative is None or line is None or line < 1 or relative.is_absolute() or ".." in relative.parts:
+    if (
+        relative is None
+        or line is None
+        or line < 1
+        or relative.is_absolute()
+        or ".." in relative.parts
+    ):
         return None
     path = root / relative
     try:
