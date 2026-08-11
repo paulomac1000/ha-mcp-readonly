@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Correlate exact-head GitHub evidence and emit a bounded migration report."""
+"""Correlate exact-head GitHub evidence without executing assessed repository code."""
 
 from __future__ import annotations
 
+import glob
 import hashlib
 import io
 import json
@@ -51,7 +52,7 @@ class EvidenceError(RuntimeError):
 
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
-    """Expose the GitHub API artifact redirect so credentials are not forwarded."""
+    """Expose the API artifact redirect so credentials are not forwarded to storage."""
 
     def redirect_request(
         self,
@@ -67,9 +68,11 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
 
 
 class GitHubEvidenceClient:
-    """Small bounded GitHub API client for one exact assessed revision."""
+    """Bounded GitHub API client for one exact assessed revision."""
 
     def __init__(self, repository: str, token: str, head: str, current_run: int) -> None:
+        if not token:
+            raise EvidenceError("GH_TOKEN is required only at the trusted evidence boundary")
         self.repository = repository
         self.token = token
         self.head = head
@@ -114,12 +117,14 @@ class GitHubEvidenceClient:
         deadline = time.monotonic() + WORKFLOW_WAIT_SECONDS
         while time.monotonic() < deadline:
             query = urllib.parse.urlencode({"head_sha": self.head, "per_page": 100})
-            runs = self.get(f"/repos/{self.repository}/actions/runs?{query}").get(
+            raw_runs = self.get(f"/repos/{self.repository}/actions/runs?{query}").get(
                 "workflow_runs", []
             )
+            if not isinstance(raw_runs, list):
+                raise EvidenceError("GitHub workflow-runs payload is malformed")
             matches = [
                 run
-                for run in runs
+                for run in raw_runs
                 if isinstance(run, dict)
                 and run.get("name") == name
                 and int(run.get("id", 0)) != self.current_run
@@ -137,16 +142,17 @@ class GitHubEvidenceClient:
         raise EvidenceError(f"timed out waiting for successful exact-head {name}")
 
     def wait_for_jobs(self, run_id: int, expected_names: set[str]) -> dict[str, dict[str, Any]]:
-        """Wait for required jobs while tolerating GitHub's provider-null conclusion quirk."""
         deadline = time.monotonic() + SETTLE_WAIT_SECONDS
         last_state: dict[str, dict[str, str | None]] = {}
         while time.monotonic() < deadline:
-            jobs = self.get(
+            raw_jobs = self.get(
                 f"/repos/{self.repository}/actions/runs/{run_id}/jobs?per_page=100"
             ).get("jobs", [])
+            if not isinstance(raw_jobs, list):
+                raise EvidenceError(f"GitHub jobs payload is malformed for run {run_id}")
             by_name = {
                 str(job["name"]): job
-                for job in jobs
+                for job in raw_jobs
                 if isinstance(job, dict) and isinstance(job.get("name"), str)
             }
             last_state = {
@@ -176,12 +182,14 @@ class GitHubEvidenceClient:
         deadline = time.monotonic() + SETTLE_WAIT_SECONDS
         last_names: set[str] = set()
         while time.monotonic() < deadline:
-            artifacts = self.get(
+            raw_artifacts = self.get(
                 f"/repos/{self.repository}/actions/runs/{run_id}/artifacts?per_page=100"
             ).get("artifacts", [])
+            if not isinstance(raw_artifacts, list):
+                raise EvidenceError(f"GitHub artifacts payload is malformed for run {run_id}")
             selected = [
                 artifact
-                for artifact in artifacts
+                for artifact in raw_artifacts
                 if isinstance(artifact, dict) and artifact.get("name") in expected_names
             ]
             last_names = {str(artifact.get("name")) for artifact in selected}
@@ -198,7 +206,8 @@ class GitHubEvidenceClient:
                 return selected
             time.sleep(POLL_SECONDS)
         raise EvidenceError(
-            f"timed out waiting for exact CI artifacts {sorted(expected_names)}; got {sorted(last_names)}"
+            f"timed out waiting for exact CI artifacts {sorted(expected_names)}; "
+            f"got {sorted(last_names)}"
         )
 
     @staticmethod
@@ -267,7 +276,7 @@ class GitHubEvidenceClient:
         raise EvidenceError(f"artifact archive download failed: {last_error}")
 
 
-def check_run_id(job: Mapping[str, Any]) -> int:
+def _check_run_id(job: Mapping[str, Any]) -> int:
     url = job.get("check_run_url")
     if not isinstance(url, str) or "/check-runs/" not in url:
         raise EvidenceError(f"job lacks check_run_url: {job.get('name')}")
@@ -277,8 +286,8 @@ def check_run_id(job: Mapping[str, Any]) -> int:
         raise EvidenceError(f"invalid check_run_url for {job.get('name')}: {url}") from exc
 
 
-def verify_lock() -> str:
-    lock = yaml.safe_load(Path("ai-skills.lock.yaml").read_text(encoding="utf-8"))
+def _verify_assessed_lock(path: Path) -> str:
+    lock = yaml.safe_load(path.read_text(encoding="utf-8"))
     revision = lock.get("revision") if isinstance(lock, dict) else None
     if revision != EXPECTED_AI_SKILLS:
         raise EvidenceError(
@@ -287,7 +296,7 @@ def verify_lock() -> str:
     return revision
 
 
-def correlated_wheel(
+def _correlated_wheel(
     client: GitHubEvidenceClient, artifacts: list[dict[str, Any]], head: str
 ) -> dict[str, Any]:
     artifact = next(item for item in artifacts if item.get("name") == f"python-wheel-{head}")
@@ -333,7 +342,7 @@ def correlated_wheel(
     }
 
 
-def workflow_record(run: Mapping[str, Any]) -> dict[str, Any]:
+def _workflow_record(run: Mapping[str, Any]) -> dict[str, Any]:
     return {
         "run_id": int(run["id"]),
         "workflow_id": int(run["workflow_id"]),
@@ -342,15 +351,21 @@ def workflow_record(run: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
-def job_record(job: Mapping[str, Any], workflow_conclusion: str) -> dict[str, Any]:
-    """Record raw provider metadata without fabricating a missing job conclusion."""
+def _job_record(job: Mapping[str, Any], workflow_conclusion: str) -> dict[str, Any]:
     return {
         "job_id": int(job["id"]),
-        "check_run_id": check_run_id(job),
+        "check_run_id": _check_run_id(job),
         "status": job.get("status"),
         "provider_conclusion": job.get("conclusion"),
         "workflow_conclusion": workflow_conclusion,
     }
+
+
+def _one_local_wheel(pattern: str) -> Path:
+    matches = [Path(value) for value in glob.glob(pattern)]
+    if len(matches) != 1:
+        raise EvidenceError(f"expected one source-lane wheel for {pattern!r}, got {matches}")
+    return matches[0]
 
 
 def build_report() -> dict[str, Any]:
@@ -358,9 +373,18 @@ def build_report() -> dict[str, Any]:
     head = os.environ["ASSESSED_SHA"]
     token = os.environ["GH_TOKEN"]
     current_run = int(os.environ["GITHUB_RUN_ID"])
-    client = GitHubEvidenceClient(repository, token, head, current_run)
-    ai_skills_revision = verify_lock()
+    collector_revision = os.environ["EVIDENCE_COLLECTOR_REVISION"]
+    source_lane_result = os.environ["SOURCE_LANE_RESULT"]
+    if source_lane_result != "success":
+        raise EvidenceError(f"credential-free source lane did not succeed: {source_lane_result}")
 
+    lock_path = Path(os.environ.get("ASSESSED_LOCK_PATH", "source-evidence/ai-skills.lock.yaml"))
+    wheel_pattern = os.environ.get("LOCAL_WHEEL_GLOB", "source-evidence/dist/*.whl")
+    ai_skills_revision = _verify_assessed_lock(lock_path)
+    local_wheel = _one_local_wheel(wheel_pattern)
+    local_wheel_digest = hashlib.sha256(local_wheel.read_bytes()).hexdigest()
+
+    client = GitHubEvidenceClient(repository, token, head, current_run)
     runs = {name: client.wait_for_workflow(name) for name in REQUIRED_WORKFLOWS}
     ci = runs["CI"]
     official = runs["Official MCP client"]
@@ -374,29 +398,36 @@ def build_report() -> dict[str, Any]:
         f"container-image-{head}-arm64",
     }
     artifacts = client.wait_for_artifacts(int(ci["id"]), expected_artifacts)
-    wheel = correlated_wheel(client, artifacts, head)
-
-    local_wheels = list(Path("dist").glob("*.whl"))
-    if len(local_wheels) != 1:
-        raise EvidenceError(f"expected one locally built evidence wheel, got {local_wheels}")
-    local_wheel = local_wheels[0]
-    local_wheel_digest = hashlib.sha256(local_wheel.read_bytes()).hexdigest()
+    wheel = _correlated_wheel(client, artifacts, head)
 
     auxiliary = {
-        name: workflow_record(run)
+        name: _workflow_record(run)
         for name, run in runs.items()
         if name not in {"CI", "Official MCP client"}
     }
     return {
-        "schema_version": 4,
+        "schema_version": 5,
         "repository": repository,
         "assessed_revision": head,
         "ai_skills_revision": ai_skills_revision,
+        "evidence_collector_revision": collector_revision,
         "evidence_workflow_run_id": current_run,
+        "credential_boundary": {
+            "assessed_code_received_github_token": False,
+            "collector_source": "immutable pinned checkout",
+            "collector_revision": collector_revision,
+        },
+        "credential_free_source_lane": {
+            "status": source_lane_result,
+            "source": "GitHub Actions needs.source-gates.result",
+            "independently_built_wheel_filename": local_wheel.name,
+            "independently_built_wheel_sha256": local_wheel_digest,
+            "individual_command_statuses": "not fabricated; inspect the source-gates job log",
+        },
         "correlated_ci": {
-            **workflow_record(ci),
+            **_workflow_record(ci),
             "jobs": {
-                name: job_record(ci_jobs[name], str(ci["conclusion"]))
+                name: _job_record(ci_jobs[name], str(ci["conclusion"]))
                 for name in sorted(REQUIRED_CI_JOBS)
             },
             "artifacts": [
@@ -413,112 +444,69 @@ def build_report() -> dict[str, Any]:
             "distribution": "mcp",
             "version": "1.29.0",
             "protocol_revision": "2025-11-25",
-            **workflow_record(official),
-            **job_record(official_job, str(official["conclusion"])),
+            **_workflow_record(official),
+            **_job_record(official_job, str(official["conclusion"])),
             "transports": ["stdio", "streamable-http"],
         },
         "correlated_policy_gates": auxiliary,
-        "local_evidence_lane": {
-            "python": "3.13",
-            "independently_built_wheel_filename": local_wheel.name,
-            "independently_built_wheel_sha256": local_wheel_digest,
-            "executed_gates": [
-                {
-                    "gate": "ruff-check",
-                    "source": "local",
-                    "command": "ruff check .",
-                    "status": "passed",
-                },
-                {
-                    "gate": "ruff-format",
-                    "source": "local",
-                    "command": "ruff format --check .",
-                    "status": "passed",
-                },
-                {
-                    "gate": "strict-mypy",
-                    "source": "local",
-                    "command": "mypy server.py tools/ context_generator/core.py context_generator/config.py context_generator/runtime.py context_generator/provenance.py context_generator/snapshot.py scripts/verify_runtime_endpoints.py --strict",
-                    "status": "passed",
-                },
-                {
-                    "gate": "bandit-medium-high",
-                    "source": "local",
-                    "command": "bandit -r server.py tools/ context_generator/ ha_graph/ -ll",
-                    "status": "passed",
-                },
-                {
-                    "gate": "pre-commit",
-                    "source": "local-and-correlated-exact-head",
-                    "command": "pre-commit run --all-files --show-diff-on-failure",
-                    "status": "passed",
-                },
-                {
-                    "gate": "documentation",
-                    "source": "local",
-                    "command": "make docs-check",
-                    "status": "passed",
-                },
-                {
-                    "gate": "unit-tests",
-                    "source": "local",
-                    "command": "pytest tests/unit -q",
-                    "status": "passed",
-                },
-                {
-                    "gate": "protocol-tests",
-                    "source": "local",
-                    "command": "pytest tests/protocol -q",
-                    "status": "passed",
-                },
-                {
-                    "gate": "ai-skills-policy",
-                    "source": "correlated-exact-head:AI Skills policy",
-                    "status": "passed",
-                },
-                {
-                    "gate": "semgrep-security-scan",
-                    "source": "correlated-exact-head:Semgrep Security Scan",
-                    "status": "passed",
-                },
-                {
-                    "gate": "python-3.11-through-3.14-unit-protocol",
-                    "source": "correlated-exact-head:CI",
-                    "status": "passed",
-                },
-                {
-                    "gate": "clean-wheel-install-and-stdio",
-                    "source": "correlated-exact-head:CI Build and inspect wheel",
-                    "status": "passed",
-                },
-                {
-                    "gate": "container-amd64-runtime-boundaries",
-                    "source": "correlated-exact-head:CI Container amd64",
-                    "status": "passed",
-                },
-                {
-                    "gate": "container-arm64-runtime-boundaries",
-                    "source": "correlated-exact-head:CI Container arm64",
-                    "status": "passed",
-                },
-                {
-                    "gate": "official-mcp-client",
-                    "source": "correlated-exact-head:Official MCP client",
-                    "status": "passed",
-                },
-            ],
-            "skipped_gates": [
-                {
-                    "gate": "pytest tests/smoke tests/e2e tests/integration -q",
-                    "reason": "No isolated real Home Assistant with HA_URL/HA_TOKEN is available to the public CI lane.",
-                }
-            ],
-            "residual_risks": [
-                "Provider-backed live Home Assistant behavior is not validated in this public CI lane.",
-                "Independent GitHub review for the canonical adoption assessment must bind to this exact SHA.",
-                "MCP 2026-07-28 is not claimed for the FastMCP 3.x runtime lane.",
-            ],
-        },
+        "executed_gates": [
+            {
+                "gate": "credential-free-source-lane",
+                "source": "workflow-needs",
+                "status": source_lane_result,
+            },
+            {
+                "gate": "python-3.11-through-3.14-unit-protocol-and-coverage-policy",
+                "source": "correlated-exact-head:CI",
+                "status": "passed",
+            },
+            {
+                "gate": "clean-wheel-install-and-stdio",
+                "source": "correlated-exact-head:CI Build and inspect wheel",
+                "status": "passed",
+            },
+            {
+                "gate": "container-amd64-runtime-boundaries",
+                "source": "correlated-exact-head:CI Container amd64",
+                "status": "passed",
+            },
+            {
+                "gate": "container-arm64-build-boundaries",
+                "source": "correlated-exact-head:CI Container arm64",
+                "status": "passed",
+            },
+            {
+                "gate": "pre-commit",
+                "source": "correlated-exact-head:Pre-commit gate",
+                "status": "passed",
+            },
+            {
+                "gate": "ai-skills-policy",
+                "source": "correlated-exact-head:AI Skills policy",
+                "status": "passed",
+            },
+            {
+                "gate": "semgrep-security-scan",
+                "source": "correlated-exact-head:Semgrep Security Scan",
+                "status": "passed",
+            },
+            {
+                "gate": "official-mcp-client",
+                "source": "correlated-exact-head:Official MCP client",
+                "status": "passed",
+            },
+        ],
+        "skipped_gates": [
+            {
+                "gate": "pytest tests/smoke tests/e2e tests/integration -q",
+                "reason": "No isolated real Home Assistant with HA_URL/HA_TOKEN is available to the public CI lane.",
+            }
+        ],
+        "residual_risks": [
+            "Provider-backed live Home Assistant behavior is not validated in this public CI lane.",
+            "Independent GitHub review for the canonical adoption assessment must bind to this exact SHA.",
+            "MCP 2026-07-28 is not claimed for the FastMCP 3.x runtime lane.",
+        ],
         "limitations": [
             "No real HA_URL/HA_TOKEN was available to this public CI lane.",
             "MCP 2026-07-28 is not claimed for the FastMCP 3.x runtime lane.",
@@ -533,16 +521,20 @@ def main() -> int:
     except (EvidenceError, OSError, ValueError, KeyError, json.JSONDecodeError) as exc:
         raise SystemExit(str(exc)) from exc
 
-    output = Path("evidence")
+    output = Path(os.environ.get("EVIDENCE_OUTPUT_DIR", "evidence"))
     output.mkdir(parents=True, exist_ok=True)
     report_path = output / "migration-evidence.json"
     report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     digest = hashlib.sha256(report_path.read_bytes()).hexdigest()
-    (output / "migration-evidence.json.sha256").write_text(
-        f"{digest}  migration-evidence.json\n", encoding="utf-8"
+    (output / "migration-evidence.sha256").write_text(
+        f"{digest}  {report_path.name}\n", encoding="utf-8"
     )
-    print(json.dumps(report, indent=2, sort_keys=True))
-    print(f"report_sha256={digest}")
+    print(
+        "Migration evidence: "
+        f"revision={report['assessed_revision']} "
+        f"collector={report['evidence_collector_revision']} "
+        f"sha256={digest}"
+    )
     return 0
 
 
