@@ -56,15 +56,29 @@ def _is_proven_false_positive(result: dict[str, Any], root: Path) -> bool:
     return source is not None and source.startswith("lambda:")
 
 
+def _validated_runs(report: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return structurally valid SARIF runs or fail closed on malformed scanner output."""
+    runs = report.get("runs")
+    if not isinstance(runs, list) or not runs:
+        raise ValueError("Semgrep SARIF must contain at least one run")
+    validated: list[dict[str, Any]] = []
+    for index, run in enumerate(runs):
+        if not isinstance(run, dict):
+            raise ValueError(f"Semgrep SARIF run {index} is not an object")
+        results = run.get("results")
+        if not isinstance(results, list):
+            raise ValueError(f"Semgrep SARIF run {index} does not contain a results list")
+        validated.append(run)
+    return validated
+
+
 def evaluate(report: dict[str, Any], root: Path) -> tuple[int, int]:
     blocking = 0
     suppressed = 0
-    for run in report.get("runs", []):
-        if not isinstance(run, dict):
-            continue
-        for result in run.get("results", []):
+    for run in _validated_runs(report):
+        for result in run["results"]:
             if not isinstance(result, dict):
-                continue
+                raise ValueError("Semgrep SARIF result is not an object")
             relative, line = _primary_location(result)
             location = f"{relative or '<unknown>'}:{line or '?'}"
             rule = result.get("ruleId", "<unknown-rule>")
@@ -86,6 +100,8 @@ def main() -> int:
     args = parser.parse_args()
 
     report = json.loads(args.sarif.read_text(encoding="utf-8"))
+    if not isinstance(report, dict):
+        raise ValueError("Semgrep SARIF root must be an object")
     blocking, suppressed = evaluate(report, args.repository_root.resolve())
     print(f"Semgrep gate: blocking={blocking}, proven_false_positives={suppressed}")
     return 1 if blocking else 0
