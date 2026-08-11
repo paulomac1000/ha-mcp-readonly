@@ -135,6 +135,22 @@ bandit -r server.py tools/ context_generator/ ha_graph/ -ll
 
 The legacy analyzer/formatter and graph modules have a deliberately scoped mypy override documented in `docs/testing-guidelines.md`; do not extend that exemption to new code.
 
+### Hosted CI during branch iteration
+
+The repository follows the pinned `ai-skills` cost-aware CI model. The current `CI` workflow supports a cheap manual path and an explicit full path:
+
+```bash
+# Fast quality/contracts feedback on the selected branch.
+gh workflow run ci.yml --ref <branch>
+
+# Full Python matrix, coverage policy, wheel, stdio, and container gate.
+gh workflow run ci.yml --ref <branch> -f full=true
+```
+
+Do not run the hosted full matrix after every intermediate agent commit. Run local deterministic checks while iterating, then use the full hosted gate for an acceptance candidate. A full run is valid evidence only for the exact SHA that executed it; any later branch commit makes that evidence stale.
+
+Automatic pull-request full gates remain enabled while newly introduced workflow paths complete GitHub's `workflow_dispatch` default-branch bootstrap. See `docs/testing-guidelines.md` for the migration and acceptance rules.
+
 ## Release Checklist
 
 - [ ] All tests passing
