@@ -35,9 +35,30 @@ jobs:
           fetch-depth: 0
 
       - name: Semgrep Scan
+        shell: bash
         run: |
+          set +e
           semgrep scan --error --sarif --output=semgrep.sarif \
             --config=p/auto --config=p/secrets --config=p/owasp-top-ten .
+          status=$?
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          path = Path("semgrep.sarif")
+          if path.exists():
+              report = json.loads(path.read_text(encoding="utf-8"))
+              for run in report.get("runs", []):
+                  for result in run.get("results", []):
+                      location = result.get("locations", [{}])[0].get("physicalLocation", {})
+                      artifact = location.get("artifactLocation", {}).get("uri", "<unknown>")
+                      region = location.get("region", {})
+                      line = region.get("startLine", "?")
+                      rule = result.get("ruleId", "<unknown-rule>")
+                      message = result.get("message", {}).get("text", "")
+                      print(f"SEMGREP_FINDING {artifact}:{line} {rule}: {message}")
+          PY
+          exit "$status"
 
       - name: Upload SARIF to GitHub Security
         id: upload-sarif
