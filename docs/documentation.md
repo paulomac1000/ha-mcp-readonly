@@ -139,7 +139,7 @@ The image runs as UID 10001, drops root privileges, and defaults to stdio with n
 
 ## Verification
 
-Run the deterministic source gates from an isolated Python environment:
+Run the deterministic source gates from an isolated Python environment. For the new-line coverage check, replace `<base-sha>` with the immutable base revision being reviewed against:
 
 ```bash
 python -m pip install -c constraints-ci.txt '.[dev]'
@@ -150,12 +150,24 @@ mypy server.py tools/ context_generator/core.py context_generator/config.py cont
 bandit -r server.py tools/ context_generator/ ha_graph/ -ll
 pre-commit run --all-files
 make docs-check
-pytest tests/unit -q
+pytest tests/unit -q \
+  --cov=tools \
+  --cov=context_generator.core \
+  --cov=context_generator.config \
+  --cov=context_generator.runtime \
+  --cov=context_generator.provenance \
+  --cov=context_generator.snapshot \
+  --cov-report=term-missing \
+  --cov-report=json:coverage.json \
+  --cov-fail-under=85
+python scripts/check_coverage_policy.py coverage.json --base-ref <base-sha>
 pytest tests/protocol -q
 python -m build --wheel --no-isolation
 ```
 
-The exact-head GitHub verification additionally requires these workflows to succeed for the same commit: `AI Skills policy`, `Pre-commit gate`, `Semgrep Security Scan`, `Official MCP client`, `CI`, and `Migration evidence`. `CI` installs the produced wheel in a clean environment, exercises a real stdio subprocess, and verifies the release container on `linux/amd64` and `linux/arm64`.
+`check_coverage_policy.py` enforces the repository's additional coverage contract: every registered tool module is at least 80%, aggregate `tools/` coverage is strictly above 85%, and newly added executable lines under `tools/` are strictly above 80% when a base revision is supplied. CI fetches enough Git history to evaluate the exact pull-request base rather than silently skipping the new-line check.
+
+The exact-head GitHub verification additionally requires these workflows to succeed for the same commit: `AI Skills policy`, `Pre-commit gate`, `Semgrep Security Scan`, `Official MCP client`, `CI`, and `Migration evidence`. `CI` installs the produced wheel in a clean environment, exercises a real stdio subprocess, and verifies the release container on `linux/amd64` and `linux/arm64`. Migration evidence executes its assessed source lane without exposing `GH_TOKEN`; GitHub API correlation runs afterward from an immutable collector checkout with the token scoped only to that trusted step.
 
 Backend-dependent verification is:
 
