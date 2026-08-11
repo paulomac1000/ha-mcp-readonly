@@ -59,6 +59,28 @@ python -m build --wheel --no-isolation
 
 Real Home Assistant suites remain environment-dependent and must run only against an isolated test instance with disposable data. They do not replace deterministic unit, protocol, package, and container gates.
 
+## Hosted CI execution policy
+
+The pinned `ci-cd-architect` standard separates workflow trust from hosted-runner execution frequency. This repository is migrating expensive development workflows to the `on-demand` execution profile without weakening the exact-SHA acceptance gate.
+
+The `CI` workflow already exists with `workflow_dispatch` on the default branch, so candidate branches can use two manual modes immediately:
+
+```bash
+# Fast branch feedback: quality, standards, typing, security lint, and contracts.
+gh workflow run ci.yml --ref <branch>
+
+# Full acceptance candidate: Python matrix, coverage policy, wheel, stdio smoke, and containers.
+gh workflow run ci.yml --ref <branch> -f full=true
+```
+
+During the bootstrap migration, pull-request and `main` events still execute the full `CI` gate. A default manual dispatch runs only the fast `quality` job; `full=true` enables the test matrix, wheel, and container jobs. Coverage for a manual full run is compared with `origin/main`, not with the dispatched commit itself.
+
+Do not remove automatic pull-request execution from a newly introduced expensive workflow until a dispatchable definition for that workflow path exists on the default branch. GitHub requires that bootstrap before a candidate-ref `workflow_dispatch` can be used. In particular, `Official MCP client` and `Migration evidence` are new workflow paths in the current migration and must retain their trusted PR acceptance path until their definitions reach the default branch. `Semgrep Security Scan` now exposes `workflow_dispatch` as its bootstrap step but also retains its PR trigger until that definition reaches the default branch.
+
+After the default-branch bootstrap is complete, expensive development workflows can remove their PR trigger and declare `# ai-skills-execution-policy: on-demand`; the pinned `check_ci_execution_policy.py` auditor is already part of `AI Skills policy` and will reject unsafe trigger shapes. Cheap policy/pre-commit checks may remain event-driven. Scheduled assurance and protected release workflows remain separately governed and are not disabled merely to save branch-iteration minutes.
+
+A hosted run is acceptance evidence only for the immutable SHA that actually executed all required steps. A later branch update makes older full-run evidence stale. A created workflow record with no assigned runner or executed steps is infrastructure/provider failure, not a code pass or failure.
+
 ## Runtime boundary verification
 
 `scripts/verify_runtime_endpoints.py` targets a running release image. It verifies public liveness, component readiness, anonymous rejection, CORS preflight, all 145 tool manifest and schema routes, OpenAPI coverage, a controlled tool call, unknown-tool behavior, the full offline context generate/status/download cycle, redaction sentinels, and an official FastMCP Streamable HTTP handshake with input rejection.
