@@ -92,7 +92,7 @@ repos:
       # ── Semgrep (security, runs before docs) ──
       - id: semgrep
         name: Semgrep security scan
-        entry: bash -c 'if command -v semgrep >/dev/null 2>&1; then semgrep --config=p/auto --config=p/secrets --config=p/owasp-top-ten --error --quiet . || exit 1; fi'
+        entry: bash -c 'if command -v semgrep >/dev/null 2>&1; then rm -f /tmp/ha-mcp-semgrep.sarif; semgrep scan --sarif --output=/tmp/ha-mcp-semgrep.sarif --config=p/auto --config=p/secrets --config=p/owasp-top-ten . && python3 scripts/check_semgrep_sarif.py /tmp/ha-mcp-semgrep.sarif --repository-root .; else echo "Semgrep CLI not installed; exact-head Semgrep Security Scan remains a required CI gate"; fi'
         language: system
         pass_filenames: false
         always_run: true
@@ -130,7 +130,6 @@ repos:
         always_run: true
         stages: [pre-commit]
         fail_fast: false
-
 
       # ── Tests ──
       - id: unit-tests
