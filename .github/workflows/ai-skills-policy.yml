@@ -110,3 +110,6 @@ jobs:
 
       - name: Audit GitHub Actions trust policy with pinned authority
         run: python /tmp/ai-skills-authority/skills/ci-cd-architect/tools/check_github_actions_policy.py .
+
+      - name: Audit GitHub Actions execution policy with pinned authority
+        run: python /tmp/ai-skills-authority/skills/ci-cd-architect/tools/check_ci_execution_policy.py .
