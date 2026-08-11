@@ -1,0 +1,20 @@
+schema_version: 1
+default_profile: governed
+profiles:
+  governed:
+    require_frontmatter: true
+    check_structure: true
+    check_links: true
+    check_anchors: true
+    require_verification_by_rigor: true
+  conventional-document:
+    require_frontmatter: false
+    check_structure: true
+    check_links: true
+    check_anchors: true
+    require_verification_by_rigor: false
+documents:
+  - match: README.md
+    profile: conventional-document
+  - match: CHANGELOG.md
+    profile: conventional-document
