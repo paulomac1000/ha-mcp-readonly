@@ -51,22 +51,34 @@ jobs:
           set -euo pipefail
           python - <<'PY'
           import hashlib
+          import json
           import os
           from pathlib import Path
 
           import yaml
+          from jsonschema import Draft202012Validator
 
           root = Path.cwd()
+          authority = root / ".ai-skills"
           lock = yaml.safe_load((root / "ai-skills.lock.yaml").read_text(encoding="utf-8"))
+          schema = json.loads(
+              (authority / "contracts/ai-skills-lock.schema.json").read_text(encoding="utf-8")
+          )
+          Draft202012Validator.check_schema(schema)
+          Draft202012Validator(schema).validate(lock)
+
           expected_revision = os.environ["AI_SKILLS_REVISION"]
-          assert lock["schema_version"] == 1
-          assert lock["repository"] == "https://github.com/paulomac1000/ai-skills"
+          assert lock["repository"] == "paulomac1000/ai-skills"
           assert lock["revision"] == expected_revision
           for name, item in lock["skills"].items():
               assert item["revision"] == expected_revision, name
-              source = root / ".ai-skills" / item["normative_entrypoint"]
+              source = authority / item["normative_entrypoint"]
               observed = "sha256:" + hashlib.sha256(source.read_bytes()).hexdigest()
-              assert observed == item["digest"], (name, observed, item["digest"])
+              assert observed == item["content_digest"], (
+                  name,
+                  observed,
+                  item["content_digest"],
+              )
           PY
 
       - name: Validate AFDS governance with pinned authority
