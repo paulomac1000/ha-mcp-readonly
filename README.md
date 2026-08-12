@@ -160,7 +160,7 @@ Tools are organized by category (75 shown in table below). All are **read-only**
 - **Recursive credential redaction**: All tool responses are sanitized at the operation boundary — bearer tokens, JWTs, API keys, passwords, and IP addresses are redacted from both response payloads and log output.
 - **Capability discovery**: Public discovery now separates supported and active transports/components and reports server, SDK, protocol, and deployment-profile identity.
 - **Reliability fixes**: `diagnose_automation_aliases` performance fix (>120s to ~4.5s on a 131-automation instance); backend health probe retries at startup with background reconciliation; blocking storage coroutines run through the bounded invocation executor.
-- **Verification and evidence**: ai-skills standard alignment with a pinned validator, recorded real-Home-Assistant cassette tests, and full local CI replication (1251 unit/protocol, 87 smoke, 278 integration, 174 e2e) documented in `docs/evidence-live-27d32c9b.md`.
+- **Verification and evidence**: ai-skills alignment uses a pinned validator and recorded real-Home-Assistant cassette tests. Exact-head hosted CI verifies 1,234 unit tests, 17 protocol tests, the installed wheel, and amd64/arm64 container artifacts. Revision-bound live-HA evidence is documented separately in `docs/evidence-live-27d32c9b.md` and applies only to the revision named there.
 
 ### Also carried forward from v1.6.0
 
