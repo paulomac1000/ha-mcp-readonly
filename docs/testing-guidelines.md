@@ -48,7 +48,17 @@ At minimum, preserve tests for:
 ## Local commands
 
 ```bash
-pytest tests/unit -q
+pytest tests/unit -q \
+  --cov=tools \
+  --cov=context_generator.core \
+  --cov=context_generator.config \
+  --cov=context_generator.runtime \
+  --cov=context_generator.provenance \
+  --cov=context_generator.snapshot \
+  --cov-report=term-missing \
+  --cov-report=json:coverage.json \
+  --cov-fail-under=85
+python scripts/check_coverage_policy.py coverage.json --base-ref origin/main
 pytest tests/protocol -q
 ruff check .
 ruff format --check .
@@ -56,6 +66,8 @@ mypy server.py tools/ context_generator/core.py context_generator/config.py cont
 bandit -r server.py tools/ context_generator/ ha_graph/ -ll
 python -m build --wheel --no-isolation
 ```
+
+The coverage policy is intentionally layered: repository unit coverage must be at least 85%, aggregate `tools/` coverage must be greater than 85%, every registered tool module must be at least 80%, and new executable `tools/*.py` lines relative to the selected base must be greater than 80%. A changed tool file missing from coverage evidence is a policy failure, not an implicit skip.
 
 Real Home Assistant suites remain environment-dependent and must run only against an isolated test instance with disposable data. They do not replace deterministic unit, protocol, package, and container gates.
 
@@ -86,7 +98,6 @@ A hosted run is acceptance evidence only for the immutable SHA that actually exe
 `scripts/verify_runtime_endpoints.py` targets a running release image. It verifies public liveness, component readiness, anonymous rejection, CORS preflight, all 145 tool manifest and schema routes, OpenAPI coverage, a controlled tool call, unknown-tool behavior, the full offline context generate/status/download cycle, redaction sentinels, and an official FastMCP Streamable HTTP handshake with input rejection.
 
 The container CI job executes the script against the built release container. The release workflow independently builds the multi-platform candidate once into quarantine, records the manifest digest, smoke-tests that exact digest on amd64 and arm64, and lets the protected publisher promote only that digest without checking out or executing candidate source. Home Assistant-dependent integration, smoke, and end-to-end suites still require an isolated live Home Assistant instance and valid credentials; skips in an environment without that backend are reported rather than represented as passes.
-
 
 ## Legacy typing boundary
 
