@@ -2,7 +2,7 @@
 
 from typing import Any
 
-from scripts.collect_migration_evidence import GitHubEvidenceClient, REQUIRED_CI_JOBS
+from scripts.collect_migration_evidence import REQUIRED_CI_JOBS, GitHubEvidenceClient
 
 
 class _FakeEvidenceClient(GitHubEvidenceClient):
