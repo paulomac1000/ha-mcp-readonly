@@ -2,7 +2,13 @@
 
 from typing import Any
 
-from scripts.collect_migration_evidence import REQUIRED_CI_JOBS, GitHubEvidenceClient
+import pytest
+
+from scripts.collect_migration_evidence import (
+    REQUIRED_CI_JOBS,
+    EvidenceError,
+    GitHubEvidenceClient,
+)
 
 
 class _FakeEvidenceClient(GitHubEvidenceClient):
@@ -77,6 +83,19 @@ class _FakeEvidenceClient(GitHubEvidenceClient):
         raise AssertionError(f"unexpected GitHub API path: {path}")
 
 
+class _FakeInconclusiveJobClient(_FakeEvidenceClient):
+    def _jobs_once(self, run_id: int) -> dict[str, dict[str, Any]]:
+        del run_id
+        return {
+            "Official client exact artifacts": {
+                "id": 303,
+                "name": "Official client exact artifacts",
+                "status": "completed",
+                "conclusion": None,
+            }
+        }
+
+
 def test_full_ci_selection_skips_newer_fast_manual_run(
     fixture_repository_name: str,
     fixture_git_sha: str,
@@ -93,3 +112,13 @@ def test_full_ci_selection_skips_newer_fast_manual_run(
     assert run["id"] == 101
     assert set(jobs) == REQUIRED_CI_JOBS
     assert {artifact["name"] for artifact in artifacts} == expected_artifacts
+
+
+def test_completed_job_without_success_conclusion_fails_closed(
+    fixture_repository_name: str,
+    fixture_git_sha: str,
+) -> None:
+    client = _FakeInconclusiveJobClient(fixture_repository_name, fixture_git_sha)
+
+    with pytest.raises(EvidenceError, match="non-success required jobs"):
+        client.wait_for_jobs(303, {"Official client exact artifacts"})
