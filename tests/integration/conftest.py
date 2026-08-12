@@ -225,3 +225,21 @@ def sample_entities(real_mcp):
 def ha_configured_flag():
     """Returns True if Home Assistant is configured."""
     return ha_configured
+
+
+@pytest.fixture
+def registry_cache_state():
+    """Restore registry cache contents and counters after a cache integration test."""
+    import tools.utils as tools_utils
+
+    with tools_utils._CACHE_LOCK:
+        previous_cache = dict(tools_utils._REGISTRY_CACHE)
+        previous_stats = dict(tools_utils._REGISTRY_CACHE_STATS)
+    try:
+        yield
+    finally:
+        with tools_utils._CACHE_LOCK:
+            tools_utils._REGISTRY_CACHE.clear()
+            tools_utils._REGISTRY_CACHE.update(previous_cache)
+            tools_utils._REGISTRY_CACHE_STATS.clear()
+            tools_utils._REGISTRY_CACHE_STATS.update(previous_stats)

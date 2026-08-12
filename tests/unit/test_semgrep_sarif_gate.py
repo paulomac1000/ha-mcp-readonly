@@ -28,15 +28,18 @@ def test_valid_empty_results_are_clean() -> None:
     assert evaluate({"runs": [{"results": []}]}, _ROOT) == (0, 0)
 
 
-def test_malformed_primary_location_remains_blocking() -> None:
+def test_malformed_primary_location_remains_blocking(
+    semgrep_rule_id: str,
+    semgrep_message: str,
+) -> None:
     report = {
         "runs": [
             {
                 "results": [
                     {
-                        "ruleId": "example.rule",
+                        "ruleId": semgrep_rule_id,
                         "locations": [None],
-                        "message": {"text": "malformed location"},
+                        "message": {"text": semgrep_message},
                     }
                 ]
             }

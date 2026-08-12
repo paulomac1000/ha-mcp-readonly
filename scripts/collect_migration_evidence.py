@@ -114,23 +114,46 @@ class GitHubEvidenceClient:
             raise EvidenceError(f"GitHub API returned non-object payload for {path}")
         return payload
 
+    def _matching_workflow_runs(self, name: str) -> list[dict[str, Any]]:
+        query = urllib.parse.urlencode({"head_sha": self.head, "per_page": 100})
+        raw_runs = self.get(f"/repos/{self.repository}/actions/runs?{query}").get(
+            "workflow_runs", []
+        )
+        if not isinstance(raw_runs, list):
+            raise EvidenceError("GitHub workflow-runs payload is malformed")
+        return [
+            run
+            for run in raw_runs
+            if isinstance(run, dict)
+            and run.get("name") == name
+            and int(run.get("id", 0)) != self.current_run
+            and run.get("head_sha") == self.head
+        ]
+
+    def _jobs_once(self, run_id: int) -> dict[str, dict[str, Any]]:
+        raw_jobs = self.get(
+            f"/repos/{self.repository}/actions/runs/{run_id}/jobs?per_page=100"
+        ).get("jobs", [])
+        if not isinstance(raw_jobs, list):
+            raise EvidenceError(f"GitHub jobs payload is malformed for run {run_id}")
+        return {
+            str(job["name"]): job
+            for job in raw_jobs
+            if isinstance(job, dict) and isinstance(job.get("name"), str)
+        }
+
+    def _artifacts_once(self, run_id: int) -> list[dict[str, Any]]:
+        raw_artifacts = self.get(
+            f"/repos/{self.repository}/actions/runs/{run_id}/artifacts?per_page=100"
+        ).get("artifacts", [])
+        if not isinstance(raw_artifacts, list):
+            raise EvidenceError(f"GitHub artifacts payload is malformed for run {run_id}")
+        return [artifact for artifact in raw_artifacts if isinstance(artifact, dict)]
+
     def wait_for_workflow(self, name: str) -> dict[str, Any]:
         deadline = time.monotonic() + WORKFLOW_WAIT_SECONDS
         while time.monotonic() < deadline:
-            query = urllib.parse.urlencode({"head_sha": self.head, "per_page": 100})
-            raw_runs = self.get(f"/repos/{self.repository}/actions/runs?{query}").get(
-                "workflow_runs", []
-            )
-            if not isinstance(raw_runs, list):
-                raise EvidenceError("GitHub workflow-runs payload is malformed")
-            matches = [
-                run
-                for run in raw_runs
-                if isinstance(run, dict)
-                and run.get("name") == name
-                and int(run.get("id", 0)) != self.current_run
-                and run.get("head_sha") == self.head
-            ]
+            matches = self._matching_workflow_runs(name)
             if matches:
                 candidate = max(matches, key=lambda run: int(run["id"]))
                 if candidate.get("status") == "completed":
@@ -142,20 +165,86 @@ class GitHubEvidenceClient:
             time.sleep(POLL_SECONDS)
         raise EvidenceError(f"timed out waiting for successful exact-head {name}")
 
+    def wait_for_full_ci(
+        self,
+        expected_artifact_names: set[str],
+    ) -> tuple[dict[str, Any], dict[str, dict[str, Any]], list[dict[str, Any]]]:
+        """Select the newest completed CI run that proves the complete gate."""
+        deadline = time.monotonic() + WORKFLOW_WAIT_SECONDS
+        last_state = "no completed full CI candidate"
+        while time.monotonic() < deadline:
+            matches = sorted(
+                self._matching_workflow_runs("CI"),
+                key=lambda run: int(run["id"]),
+                reverse=True,
+            )
+            for candidate in matches:
+                if candidate.get("status") != "completed":
+                    continue
+                run_id = int(candidate["id"])
+                jobs = self._jobs_once(run_id)
+                if not REQUIRED_CI_JOBS <= jobs.keys():
+                    last_state = (
+                        f"run {run_id} omitted required full-CI jobs: "
+                        f"{sorted(REQUIRED_CI_JOBS - jobs.keys())}"
+                    )
+                    continue
+
+                required_jobs = {name: jobs[name] for name in REQUIRED_CI_JOBS}
+                pending_jobs = {
+                    name: job.get("status")
+                    for name, job in required_jobs.items()
+                    if job.get("status") != "completed"
+                }
+                failed_jobs = {
+                    name: job.get("conclusion")
+                    for name, job in required_jobs.items()
+                    if job.get("status") == "completed" and job.get("conclusion") != "success"
+                }
+                if candidate.get("conclusion") != "success" or failed_jobs:
+                    raise EvidenceError(
+                        f"newest completed full CI run {run_id} failed: "
+                        f"workflow={candidate.get('conclusion')}, jobs={failed_jobs}"
+                    )
+                if pending_jobs:
+                    last_state = f"run {run_id} has non-completed required jobs: {pending_jobs}"
+                    break
+
+                artifacts = self._artifacts_once(run_id)
+                selected = [
+                    artifact
+                    for artifact in artifacts
+                    if artifact.get("name") in expected_artifact_names
+                ]
+                selected_names = {str(artifact.get("name")) for artifact in selected}
+                digests_ready = all(
+                    isinstance(artifact.get("digest"), str)
+                    and str(artifact["digest"]).startswith("sha256:")
+                    for artifact in selected
+                )
+                if (
+                    selected_names == expected_artifact_names
+                    and len(selected) == len(expected_artifact_names)
+                    and digests_ready
+                ):
+                    return candidate, required_jobs, selected
+
+                last_state = (
+                    f"run {run_id} has full jobs but incomplete artifacts: "
+                    f"expected={sorted(expected_artifact_names)}, "
+                    f"got={sorted(selected_names)}, digests_ready={digests_ready}"
+                )
+                # This is the newest complete-gate candidate. Do not fall back to
+                # older evidence while its provider artifacts are still settling.
+                break
+            time.sleep(POLL_SECONDS)
+        raise EvidenceError(f"timed out waiting for successful exact-head full CI: {last_state}")
+
     def wait_for_jobs(self, run_id: int, expected_names: set[str]) -> dict[str, dict[str, Any]]:
         deadline = time.monotonic() + SETTLE_WAIT_SECONDS
         last_state: dict[str, dict[str, str | None]] = {}
         while time.monotonic() < deadline:
-            raw_jobs = self.get(
-                f"/repos/{self.repository}/actions/runs/{run_id}/jobs?per_page=100"
-            ).get("jobs", [])
-            if not isinstance(raw_jobs, list):
-                raise EvidenceError(f"GitHub jobs payload is malformed for run {run_id}")
-            by_name = {
-                str(job["name"]): job
-                for job in raw_jobs
-                if isinstance(job, dict) and isinstance(job.get("name"), str)
-            }
+            by_name = self._jobs_once(run_id)
             last_state = {
                 name: {
                     "status": by_name.get(name, {}).get("status"),
@@ -183,15 +272,9 @@ class GitHubEvidenceClient:
         deadline = time.monotonic() + SETTLE_WAIT_SECONDS
         last_names: set[str] = set()
         while time.monotonic() < deadline:
-            raw_artifacts = self.get(
-                f"/repos/{self.repository}/actions/runs/{run_id}/artifacts?per_page=100"
-            ).get("artifacts", [])
-            if not isinstance(raw_artifacts, list):
-                raise EvidenceError(f"GitHub artifacts payload is malformed for run {run_id}")
+            artifacts = self._artifacts_once(run_id)
             selected = [
-                artifact
-                for artifact in raw_artifacts
-                if isinstance(artifact, dict) and artifact.get("name") in expected_names
+                artifact for artifact in artifacts if artifact.get("name") in expected_names
             ]
             last_names = {str(artifact.get("name")) for artifact in selected}
             digests_ready = all(
@@ -331,7 +414,12 @@ def _verify_assessed_lock(path: Path) -> str:
 def _correlated_wheel(
     client: GitHubEvidenceClient, artifacts: list[dict[str, Any]], head: str
 ) -> dict[str, Any]:
-    artifact = next(item for item in artifacts if item.get("name") == f"python-wheel-{head}")
+    artifact = next(
+        (item for item in artifacts if item.get("name") == f"python-wheel-{head}"),
+        None,
+    )
+    if artifact is None:
+        raise EvidenceError(f"correlated CI lacks python-wheel-{head}")
     archive_url = artifact.get("archive_download_url")
     if not isinstance(archive_url, str):
         raise EvidenceError("CI wheel artifact lacks archive_download_url")
@@ -422,19 +510,21 @@ def build_report() -> dict[str, Any]:
     local_wheel_digest = hashlib.sha256(local_wheel_bytes).hexdigest()
 
     client = GitHubEvidenceClient(repository, token, head, current_run)
-    runs = {name: client.wait_for_workflow(name) for name in REQUIRED_WORKFLOWS}
-    ci = runs["CI"]
-    official = runs["Official MCP client"]
-    ci_jobs = client.wait_for_jobs(int(ci["id"]), REQUIRED_CI_JOBS)
-    official_jobs = client.wait_for_jobs(int(official["id"]), {OFFICIAL_JOB})
-    official_job = official_jobs[OFFICIAL_JOB]
-
     expected_artifacts = {
         f"python-wheel-{head}",
         f"container-image-{head}-amd64",
         f"container-image-{head}-arm64",
     }
-    artifacts = client.wait_for_artifacts(int(ci["id"]), expected_artifacts)
+    ci, ci_jobs, artifacts = client.wait_for_full_ci(expected_artifacts)
+    runs = {
+        name: client.wait_for_workflow(name)
+        for name in REQUIRED_WORKFLOWS
+        if name != "CI"
+    }
+    runs["CI"] = ci
+    official = runs["Official MCP client"]
+    official_jobs = client.wait_for_jobs(int(official["id"]), {OFFICIAL_JOB})
+    official_job = official_jobs[OFFICIAL_JOB]
     wheel = _correlated_wheel(client, artifacts, head)
 
     auxiliary = {
@@ -555,7 +645,14 @@ def build_report() -> dict[str, Any]:
 def main() -> int:
     try:
         report = build_report()
-    except (EvidenceError, OSError, ValueError, KeyError, json.JSONDecodeError) as exc:
+    except (
+        EvidenceError,
+        OSError,
+        ValueError,
+        KeyError,
+        json.JSONDecodeError,
+        yaml.YAMLError,
+    ) as exc:
         raise SystemExit(str(exc)) from exc
 
     output = Path(os.environ.get("EVIDENCE_OUTPUT_DIR", "evidence"))

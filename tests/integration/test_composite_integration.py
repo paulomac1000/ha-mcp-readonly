@@ -5,7 +5,7 @@ These tests require a running HA instance.
 Skipped automatically when HA_URL / HA_TOKEN are not set.
 
 Run:
-    HA_URL=http://192.168.0.10:8123 HA_TOKEN=xxx \
+    HA_URL=http://home-assistant.local:8123 HA_TOKEN=xxx \
         pytest tests/integration/test_composite_integration.py -v -s
 """
 
@@ -23,50 +23,28 @@ _skip = not (HA_URL and HA_TOKEN)
 pytestmark = pytest.mark.skipif(_skip, reason="HA_URL / HA_TOKEN not set")
 
 
-@pytest.fixture(scope="module")
-def mcp():
-    """Build the production operation registry against the configured real HA."""
-    from server import create_mcp_server
-
-    return create_mcp_server()
-
-
-def _get_fn(mcp, name):
-    tools = mcp._tool_manager._tools if hasattr(mcp, "_tool_manager") else {}
-    tool = tools.get(name)
-    if tool is None:
-        pytest.skip(f"Tool {name} not available")
-    return tool.fn if hasattr(tool, "fn") else tool
-
-
 # ====================================================================
 #  investigate_entity — real HA
 # ====================================================================
 
 
 class TestInvestigateEntityReal:
-    @pytest.mark.asyncio
-    async def test_returns_success(self, mcp):
-        fn = _get_fn(mcp, "investigate_entity")
-        raw = await fn(search_term="light")
+    def test_returns_success(self, real_mcp):
+        raw = real_mcp.call_tool("investigate_entity", search_term="light")
         data = json.loads(raw)
         assert data["success"] is True
         assert data["summary"]["entities_found"] > 0
 
-    @pytest.mark.asyncio
-    async def test_csv_multiterm(self, mcp):
-        fn = _get_fn(mcp, "investigate_entity")
-        raw = await fn(search_term="light,sensor")
+    def test_csv_multiterm(self, real_mcp):
+        raw = real_mcp.call_tool("investigate_entity", search_term="light,sensor")
         data = json.loads(raw)
         assert data["success"] is True
         domains = {e.get("domain") for e in data["matched_entities"]}
         assert "light" in domains or "sensor" in domains
 
-    @pytest.mark.asyncio
-    async def test_output_size_under_budget(self, mcp):
-        fn = _get_fn(mcp, "investigate_entity")
+    def test_output_size_under_budget(self, real_mcp):
         t0 = time.time()
-        raw = await fn(search_term="light")
+        raw = real_mcp.call_tool("investigate_entity", search_term="light")
         elapsed = time.time() - t0
 
         size_kb = len(raw) / 1024
@@ -88,10 +66,11 @@ class TestInvestigateEntityReal:
 
 
 class TestGetEntityWithAutomationsReal:
-    @pytest.mark.asyncio
-    async def test_nonexistent_entity(self, mcp):
-        fn = _get_fn(mcp, "get_entity_with_automations")
-        raw = await fn(entity_id="light.definitely_does_not_exist_xyz")
+    def test_nonexistent_entity(self, real_mcp, missing_entity_id: str):
+        raw = real_mcp.call_tool(
+            "get_entity_with_automations",
+            entity_id=missing_entity_id,
+        )
         data = json.loads(raw)
         assert data["success"] is False
         assert "suggestions" in data or "error" in data
@@ -104,18 +83,14 @@ class TestGetEntityWithAutomationsReal:
 
 
 class TestGetAreaDiagnosticReal:
-    @pytest.mark.asyncio
-    async def test_nonexistent_area(self, mcp):
-        area_name = "definitely_nonexistent_room_xyz"
-        fn = _get_fn(mcp, "get_area_diagnostic")
-        raw = await fn(area_name=area_name)
+    def test_nonexistent_area(self, real_mcp, missing_area_name: str):
+        raw = real_mcp.call_tool("get_area_diagnostic", area_name=missing_area_name)
         data = json.loads(raw)
         assert data["success"] is False
-        assert data["error"] == f"Area '{area_name}' not found"
+        assert data["error"] == f"Area '{missing_area_name}' not found"
         assert "_meta" in data
 
-    @pytest.mark.asyncio
-    async def test_area_output_has_warnings_field(self, mcp):
+    def test_area_output_has_warnings_field(self, real_mcp):
         from tools.composite import _load_registries
 
         _, _, areas = _load_registries(HA_CONFIG_PATH)
@@ -125,8 +100,7 @@ class TestGetAreaDiagnosticReal:
         area_name = area.get("name") or area.get("id")
         assert area_name, "Area registry entry lacks both name and id"
 
-        fn = _get_fn(mcp, "get_area_diagnostic")
-        raw = await fn(area_name=area_name)
+        raw = real_mcp.call_tool("get_area_diagnostic", area_name=area_name)
         data = json.loads(raw)
         assert data["success"] is True
         assert "warnings" in data
@@ -140,7 +114,7 @@ class TestGetAreaDiagnosticReal:
 
 
 class TestCachePerformanceReal:
-    def test_cache_hit_rate_after_warmup(self):
+    def test_cache_hit_rate_after_warmup(self, registry_cache_state):
         from tools.utils import (
             get_registry_cache_stats,
             invalidate_registry_cache,
