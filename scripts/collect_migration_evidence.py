@@ -20,6 +20,7 @@ from typing import Any
 import yaml
 
 EXPECTED_AI_SKILLS = "b54fc6b27ea80b36a70d5de73445970e17f55789"
+MAX_LOCK_BYTES = 64 * 1024
 MAX_ARTIFACT_ARCHIVE_BYTES = 128 * 1024 * 1024
 MAX_WHEEL_MEMBER_BYTES = 128 * 1024 * 1024
 READ_CHUNK_BYTES = 1024 * 1024
@@ -276,6 +277,34 @@ class GitHubEvidenceClient:
         raise EvidenceError(f"artifact archive download failed: {last_error}")
 
 
+def _read_file_bounded(path: Path, *, limit: int, label: str) -> bytes:
+    """Read one candidate-provided evidence file without unbounded allocation."""
+    try:
+        metadata = path.lstat()
+    except OSError as exc:
+        raise EvidenceError(f"cannot inspect {label}: {exc}") from exc
+    if path.is_symlink() or not path.is_file():
+        raise EvidenceError(f"{label} must be a regular non-symlink file")
+    if metadata.st_size > limit:
+        raise EvidenceError(f"{label} exceeds byte limit: {metadata.st_size} > {limit}")
+
+    chunks: list[bytes] = []
+    total = 0
+    try:
+        with path.open("rb") as handle:
+            while True:
+                chunk = handle.read(min(READ_CHUNK_BYTES, limit - total + 1))
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > limit:
+                    raise EvidenceError(f"{label} exceeds byte limit while reading: {total} > {limit}")
+                chunks.append(chunk)
+    except OSError as exc:
+        raise EvidenceError(f"cannot read {label}: {exc}") from exc
+    return b"".join(chunks)
+
+
 def _check_run_id(job: Mapping[str, Any]) -> int:
     url = job.get("check_run_url")
     if not isinstance(url, str) or "/check-runs/" not in url:
@@ -287,7 +316,8 @@ def _check_run_id(job: Mapping[str, Any]) -> int:
 
 
 def _verify_assessed_lock(path: Path) -> str:
-    lock = yaml.safe_load(path.read_text(encoding="utf-8"))
+    raw_lock = _read_file_bounded(path, limit=MAX_LOCK_BYTES, label="assessed ai-skills lock")
+    lock = yaml.safe_load(raw_lock.decode("utf-8"))
     revision = lock.get("revision") if isinstance(lock, dict) else None
     if revision != EXPECTED_AI_SKILLS:
         raise EvidenceError(
@@ -382,7 +412,12 @@ def build_report() -> dict[str, Any]:
     wheel_pattern = os.environ.get("LOCAL_WHEEL_GLOB", "source-evidence/dist/*.whl")
     ai_skills_revision = _verify_assessed_lock(lock_path)
     local_wheel = _one_local_wheel(wheel_pattern)
-    local_wheel_digest = hashlib.sha256(local_wheel.read_bytes()).hexdigest()
+    local_wheel_bytes = _read_file_bounded(
+        local_wheel,
+        limit=MAX_WHEEL_MEMBER_BYTES,
+        label="credential-free source wheel",
+    )
+    local_wheel_digest = hashlib.sha256(local_wheel_bytes).hexdigest()
 
     client = GitHubEvidenceClient(repository, token, head, current_run)
     runs = {name: client.wait_for_workflow(name) for name in REQUIRED_WORKFLOWS}
