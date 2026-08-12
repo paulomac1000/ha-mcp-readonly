@@ -16,6 +16,7 @@ concurrency:
 
 env:
   AI_SKILLS_REVISION: b54fc6b27ea80b36a70d5de73445970e17f55789
+  ASSESSED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
 
 jobs:
   policy:
@@ -26,6 +27,7 @@ jobs:
       - name: Checkout assessed repository
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v6
         with:
+          ref: ${{ env.ASSESSED_SHA }}
           persist-credentials: false
 
       - name: Checkout pinned ai-skills authority
