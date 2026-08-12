@@ -19,7 +19,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ## [2.0.0] - 2026-08-12
 
 ### Live-HA Verification
-- Full local CI replication on HA 2026.5.1 with image `ha-mcp-readonly:4dd4ada` (digest recorded in `docs/evidence-live-27d32c9b.md`): 1251 unit/protocol, 87 smoke, 278 integration, 174 e2e — all green; 158 MCP tools (145 without dev tools), healthy container.
+- Operator validation performed during PR #22 against deployed revision `4dd4ada` on Home Assistant 2026.5.1 reported 1,251 unit/protocol, 87 smoke, 278 integration, and 174 e2e checks green, with 158 MCP tools (145 without dev tools) and a healthy container. This operator record is distinct from the checked-in revision-bound evidence in `docs/evidence-live-27d32c9b.md`, which applies only to the revision named there and must not be used to certify later heads.
 - Dependency drift resolved: the plain `Dockerfile` now installs the runtime with `-c constraints-ci.txt` and runs `pip check`, matching the pinned `Dockerfile.release` dependency graph (fastmcp 3.4.6, starlette 1.4.1, uvicorn 0.52.1).
 - Smoke and e2e filesystem tests discover the configuration root from `list_directory` instead of hardcoding `/config`; verified against a container running with `HA_CONFIG_PATH=/srv/ha-config`.
 - TrustedHost x auth matrix verified: allowed LAN host + bearer succeeds, disallowed host rejected (400), missing/wrong bearer rejected (401), `MCP_ALLOWED_HOSTS=*` fails configuration.
@@ -27,7 +27,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Redaction verified with artificial secrets (9/9), log sanitization, and real tool responses.
 - Context generation failure/recovery verified: parallel generate yields controlled 409 CONFLICT, deadline-killed workers leave no zombies, next generate starts cleanly.
 - Performance verified: no regression of `diagnose_automation_aliases` to ~120s (1.7-4.6s), 8 parallel read-tools succeed without BUSY or executor leak.
-- Three live-HA tests (`test_empty_search`, `test_too_many_batch`, `test_get_energy_dashboard_data`) are load-sensitive when suites run concurrently; they pass in isolation and in a clean sequential full run.
 
 ### Breaking Changes
 - Removed the legacy two-endpoint HTTP+SSE transport. The supported MCP transports are now stdio and Streamable HTTP only.
@@ -94,8 +93,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Tests
 
-- Unit and protocol: 1,251 passed (1,234 unit + 17 protocol) in the local CI gate; the exact assessed revision is recorded by Migration evidence.
-- Public CI does not claim live Home Assistant smoke, E2E, or integration results for this revision; those suites require separate provider-backed evidence before certification. Local live-HA verification is recorded in `docs/evidence-live-27d32c9b.md`.
+- Exact-head hosted CI verifies 1,234 unit tests and 17 protocol tests across supported Python lanes, plus clean-install wheel and amd64/arm64 container artifact gates.
+- Live Home Assistant smoke, integration, and E2E results are separate operator validation for deployed revision `4dd4ada`, not provider-backed exact-head evidence for later commits. The checked-in `docs/evidence-live-27d32c9b.md` remains bound to `27d32c9b` and does not certify later branch heads.
 
 ## [1.6.0] - 2026-06-11
 
@@ -165,7 +164,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Fixed — Bugs
 - `get_lovelace_entity_usage` — wrong registry key `lovelace.dashboards` (dot) →
-  `lovelace_dashboards` (underscore)
+  `lovelace_dashboards` (underscore), matching Home Assistant's actual storage
+  convention. Previously returned empty results.
 - `get_history_batch` and `investigate_entity` — removed `urllib.parse.quote` from
   history URL construction, preventing API errors on some HA versions
 - `search_automations_by_entity` — now detects entity references in
@@ -462,7 +462,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **Smoke tests:** Created from scratch — 84 tests covering connectivity,
   critical tools (67 unique tools), response format compliance, and input validation.
 - **E2E tests:** Created from scratch — 24 tests covering context generator
-  pipeline (all 3 modes), REST API endpoints, and SSE transport.
+  pipeline (all 3 modes), REST API endpoints, SSE transport.
 - **Total tests:** 621 → 895 (+274).
 - **Tool coverage:** 88/117 (75%) → 116/117 (99%).
 - **Code coverage tools/:** 83% → 89%.
