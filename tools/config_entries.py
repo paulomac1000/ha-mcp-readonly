@@ -599,7 +599,7 @@ def register_config_entry_tools(mcp: Any, config_path: str, ha_url: str, ha_toke
 
     @mcp.tool()
     async def list_config_entry_domains() -> str:
-        """[READ] List all domains (integrations) with counts of config entries.
+        """List all domains (integrations) with counts of config entries.
 
         Returns:
             JSON with total entry count, total domain count, and per-domain
