@@ -2012,11 +2012,6 @@ def register_storage_tools(  # type: ignore[no-untyped-def]
         Args:
             limit: Maximum number of entities to return (default: 200).
             offset: Number of entities to skip for pagination (default: 0).
-
-        Returns:
-            JSON with entity registry entries (entity_id, name, platform, device_id,
-            area_id, disabled_by, hidden_by, unique_id, config_entry_id, categories,
-            labels), total_entities count, and _meta pagination metadata.
         """
         try:
             result = _do_get_entity_registry(config_path=config_path, limit=limit, offset=offset)
@@ -2032,11 +2027,6 @@ def register_storage_tools(  # type: ignore[no-untyped-def]
         Args:
             limit: Maximum number of devices to return (default: 200).
             offset: Number of devices to skip for pagination (default: 0).
-
-        Returns:
-            JSON with device registry entries (id, name, manufacturer, model,
-            sw_version, area_id, disabled_by, config_entries), total_devices count,
-            and _meta pagination metadata.
         """
         try:
             result = _do_get_device_registry(config_path=config_path, limit=limit, offset=offset)
@@ -2052,10 +2042,6 @@ def register_storage_tools(  # type: ignore[no-untyped-def]
         Args:
             limit: Maximum number of areas to return (default: 200).
             offset: Number of areas to skip for pagination (default: 0).
-
-        Returns:
-            JSON with area registry entries (name, aliases, picture, icon),
-            total_areas count, and _meta pagination metadata.
         """
         try:
             result = _do_get_area_registry(config_path=config_path, limit=limit, offset=offset)
@@ -2071,10 +2057,6 @@ def register_storage_tools(  # type: ignore[no-untyped-def]
         Args:
             limit: Maximum number of entries to return (default: 200).
             offset: Number of entries to skip for pagination (default: 0).
-
-        Returns:
-            JSON with config entry list (entry_id, domain, title, version, source,
-            disabled_by, options), total_entries count, and _meta pagination metadata.
         """
         try:
             result = _do_get_config_entries(config_path=config_path, limit=limit, offset=offset)
@@ -2084,11 +2066,7 @@ def register_storage_tools(  # type: ignore[no-untyped-def]
 
     @mcp.tool()
     async def get_lovelace_dashboards() -> str:
-        """[READ] Fetches list of all Lovelace dashboards.
-
-        Returns:
-            JSON with total_dashboards count and dashboards list.
-        """
+        """[READ] Fetches list of all Lovelace dashboards."""
         try:
             result = _do_get_lovelace_dashboards(config_path=config_path)
             return _success_response(result)
@@ -2101,10 +2079,6 @@ def register_storage_tools(  # type: ignore[no-untyped-def]
 
         Args:
             dashboard: Dashboard name (default: "lovelace" for main)
-
-        Returns:
-            JSON with the dashboard configuration (title, views, cards) from the
-            storage registry, or an error message if the dashboard is not found.
         """
         try:
             result = _do_get_lovelace_config(dashboard=dashboard, config_path=config_path)
@@ -2146,11 +2120,6 @@ def register_storage_tools(  # type: ignore[no-untyped-def]
             entity_id: Find cards referencing this entity.
             dashboard: Limit search to a specific dashboard (url_path or id).
             max_results: Maximum results (default 50).
-
-        Returns:
-            JSON with matched_count, dashboards_scanned, dashboards_skipped, matches
-            list (dashboard, view_title, view_path, card_type, card_index, is_badge,
-            matched_by), and warnings.
         """
         try:
             result = _do_search_lovelace_config(
@@ -2174,11 +2143,6 @@ def register_storage_tools(  # type: ignore[no-untyped-def]
 
         Args:
             dashboard: Specific dashboard url_path/id, or None for all dashboards.
-
-        Returns:
-            JSON with dashboard summaries (views, total_cards, card_types_breakdown,
-            strategy) and global_stats for all dashboards, or an error message if a
-            specific dashboard is not found.
         """
         try:
             result = _do_get_lovelace_config_summary(
@@ -2198,10 +2162,6 @@ def register_storage_tools(  # type: ignore[no-untyped-def]
         Checks: missing entity references, strategy/YAML mode dashboards,
         resource analysis, and generates recommendations. ~85% token savings
         vs manual multi-call workflow.
-
-        Returns:
-            JSON with dashboard stats, resource analysis, health_checks (missing
-            entity references, strategy/YAML mode), issues, and recommendations.
         """
         try:
             result = _do_diagnose_lovelace_setup(config_path=config_path)
@@ -2211,11 +2171,7 @@ def register_storage_tools(  # type: ignore[no-untyped-def]
 
     @mcp.tool()
     async def get_exposed_entities() -> str:
-        """[READ] Fetches list of entities exposed to voice assistants (Google Assistant, Alexa).
-
-        Returns:
-            JSON with total_exposed count and entities exposed to voice assistants.
-        """
+        """[READ] Fetches list of entities exposed to voice assistants (Google Assistant, Alexa)."""
         try:
             result = _do_get_exposed_entities(config_path=config_path)
             return _success_response(result)
@@ -2224,11 +2180,7 @@ def register_storage_tools(  # type: ignore[no-untyped-def]
 
     @mcp.tool()
     async def get_persons() -> str:
-        """[READ] Fetches list of people (person entities) with their configuration.
-
-        Returns:
-            JSON with total_persons count and persons list.
-        """
+        """[READ] Fetches list of people (person entities) with their configuration."""
         try:
             result = _do_get_persons(config_path=config_path)
             return _success_response(result)
@@ -2237,11 +2189,7 @@ def register_storage_tools(  # type: ignore[no-untyped-def]
 
     @mcp.tool()
     async def get_zones() -> str:
-        """[READ] Fetches list of zones with their configuration.
-
-        Returns:
-            JSON with total_zones count and zones list.
-        """
+        """[READ] Fetches list of zones with their configuration."""
         try:
             result = _do_get_zones(config_path=config_path)
             return _success_response(result)
@@ -2250,12 +2198,7 @@ def register_storage_tools(  # type: ignore[no-untyped-def]
 
     @mcp.tool()
     async def get_input_helpers() -> str:
-        """[READ] Fetches all input helpers (input_boolean, input_number, input_select, input_text, input_datetime, input_button).
-
-        Returns:
-            JSON with helper type keys (input_boolean, input_number, input_select,
-            input_text, input_datetime, input_button), each with count and items.
-        """
+        """[READ] Fetches all input helpers (input_boolean, input_number, input_select, input_text, input_datetime, input_button)."""
         try:
             result = _do_get_input_helpers(config_path=config_path)
             return _success_response(result)
@@ -2266,10 +2209,6 @@ def register_storage_tools(  # type: ignore[no-untyped-def]
     async def get_hacs_data() -> str:
         """[READ] Fetches HACS data (Home Assistant Community Store).
         Shows installed custom integrations and themes.
-
-        Returns:
-            JSON with the full HACS storage data (repositories, categories), or an
-            info message when HACS is not installed.
         """
         try:
             result = _do_get_hacs_data(config_path=config_path)
@@ -2325,11 +2264,7 @@ def register_storage_tools(  # type: ignore[no-untyped-def]
 
     @mcp.tool()
     async def get_timers() -> str:
-        """[READ] Fetches list of timers with their configuration.
-
-        Returns:
-            JSON with total_timers count and timers list.
-        """
+        """[READ] Fetches list of timers with their configuration."""
         try:
             result = _do_get_timers(config_path=config_path)
             return _success_response(result)
@@ -2338,11 +2273,7 @@ def register_storage_tools(  # type: ignore[no-untyped-def]
 
     @mcp.tool()
     async def get_counters() -> str:
-        """[READ] Fetches list of counters with their configuration.
-
-        Returns:
-            JSON with total_counters count and counters list.
-        """
+        """[READ] Fetches list of counters with their configuration."""
         try:
             result = _do_get_counters(config_path=config_path)
             return _success_response(result)
@@ -2432,10 +2363,6 @@ def register_storage_tools(  # type: ignore[no-untyped-def]
 
         Args:
             search_term: Phrase to search for
-
-        Returns:
-            JSON with search_params, summary counts, and matched_entities list with
-            device and area details.
         """
         try:
             result = _do_search_entity_by_name(
@@ -2461,12 +2388,6 @@ def register_storage_tools(  # type: ignore[no-untyped-def]
             entity_id: Entity id (e.g. "sensor.temperature_living_room")
             compact: If True, return only essential fields: entity_id, name,
                 platform, device_id, area_id, disabled_by, hidden_by. Default: False.
-
-        Returns:
-            JSON with entity details (entity_info, current_state, device_info,
-            area_info, related_entities, area_entities, integration_info, issues,
-            and recommendations), or a compact dict with essential fields when
-            compact is True, or an error message if the entity is not found.
         """
         try:
             result = _do_get_entity_details(
