@@ -55,7 +55,7 @@ python -m pip install -c constraints-ci.txt '.[dev]'
 - **Style**: Follow PEP 8
 - **Docstrings**: Use Google-style docstrings for all public functions
 - **Type hints**: Include type hints for function signatures
-- **Tests**: Minimum 80% code coverage for new code
+- **Tests**: Repository unit coverage must be at least 85%; registered tool modules must be at least 80%; new executable `tools/*.py` lines must be greater than 80%
 - **Error handling**: Always return JSON with `success` field
 
 ## Adding a New Tool
@@ -89,10 +89,10 @@ async def my_new_tool(entity_id: str) -> str:
 
 ## Testing
 
-### Unit Tests (no credentials needed)
+### Unit and protocol tests (no credentials needed)
 
 ```bash
-pytest tests/unit/ tests/smoke/ -v --tb=short
+pytest tests/unit/ tests/protocol/ -v --tb=short
 ```
 
 ### Smoke Tests (requires REST API + HA_TOKEN)
@@ -120,13 +120,23 @@ pytest tests/e2e/ -v
 ### All Tests
 
 ```bash
-pytest tests/unit/ tests/smoke/ tests/e2e/ -v
+pytest tests/unit/ tests/protocol/ tests/smoke/ tests/e2e/ tests/integration/ -v
 ```
 
 ### Coverage and static gates
 
 ```bash
-pytest tests/unit/ -q --cov=tools --cov=context_generator.core --cov=context_generator.config --cov=context_generator.runtime --cov=context_generator.provenance --cov=context_generator.snapshot --cov-report=term-missing --cov-fail-under=80
+pytest tests/unit/ -q \
+  --cov=tools \
+  --cov=context_generator.core \
+  --cov=context_generator.config \
+  --cov=context_generator.runtime \
+  --cov=context_generator.provenance \
+  --cov=context_generator.snapshot \
+  --cov-report=term-missing \
+  --cov-report=json:coverage.json \
+  --cov-fail-under=85
+python scripts/check_coverage_policy.py coverage.json --base-ref origin/main
 ruff check .
 ruff format --check .
 mypy server.py tools/ context_generator/core.py context_generator/config.py context_generator/runtime.py context_generator/provenance.py context_generator/snapshot.py scripts/verify_runtime_endpoints.py --strict
@@ -153,8 +163,8 @@ Automatic pull-request full gates remain enabled while newly introduced workflow
 
 ## Release Checklist
 
-- [ ] All tests passing
-- [ ] Code coverage > 80%
+- [ ] All applicable tests passing
+- [ ] Repository coverage policy passes (overall >=85%, tools aggregate >85%, registered tool modules >=80%, new executable tool lines >80%)
 - [ ] Documentation updated
 - [ ] Security review completed
 - [ ] No hardcoded credentials
