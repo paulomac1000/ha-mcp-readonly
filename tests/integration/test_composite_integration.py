@@ -109,22 +109,32 @@ class TestGetEntityWithAutomationsReal:
 class TestGetAreaDiagnosticReal:
     @pytest.mark.asyncio
     async def test_nonexistent_area(self, mcp):
+        area_name = "definitely_nonexistent_room_xyz"
         fn = _get_fn(mcp, "get_area_diagnostic")
-        raw = await fn(area_name="definitely_nonexistent_room_xyz")
+        raw = await fn(area_name=area_name)
         data = json.loads(raw)
-        assert data["success"] is False
-        # Graceful failure is the contract; get_area_diagnostic reports the
-        # error message instead of fabricating an available_areas hint.
-        assert "error" in data
+        assert data == {
+            "success": False,
+            "error": f"Area '{area_name}' not found",
+        }
 
     @pytest.mark.asyncio
     async def test_area_output_has_warnings_field(self, mcp):
+        from tools.composite import _load_registries
+
+        _, _, areas = _load_registries(HA_CONFIG_PATH)
+        if not areas:
+            pytest.skip("Area registry is empty")
+        area = areas[0]
+        area_name = area.get("name") or area.get("id")
+        assert area_name, "Area registry entry lacks both name and id"
+
         fn = _get_fn(mcp, "get_area_diagnostic")
-        raw = await fn(area_name="definitely_nonexistent_room_xyz")
+        raw = await fn(area_name=area_name)
         data = json.loads(raw)
-        if data.get("success") is False:
-            pytest.skip(f"Area not found: {data.get('error')}")
+        assert data["success"] is True
         assert "warnings" in data
+        assert isinstance(data["warnings"], list)
 
 
 # ====================================================================
@@ -150,8 +160,10 @@ class TestCachePerformanceReal:
         ):
             load_registry(name, HA_CONFIG_PATH)
 
-        # Warm loads (×3 each)
-        for _ in range(3):
+        stats_after_cold = get_registry_cache_stats()
+
+        # Warm loads — should all hit cache
+        for _ in range(5):
             for name in (
                 "core.entity_registry",
                 "core.device_registry",
@@ -159,8 +171,6 @@ class TestCachePerformanceReal:
             ):
                 load_registry(name, HA_CONFIG_PATH)
 
-        stats = get_registry_cache_stats()
-        print(f"\n  Cache stats: {stats}")
-        assert stats["hit_rate_percent"] >= 70.0, (
-            f"Hit rate {stats['hit_rate_percent']}% below 70% target"
-        )
+        stats_after_warm = get_registry_cache_stats()
+        new_hits = stats_after_warm["hits"] - stats_after_cold["hits"]
+        assert new_hits >= 15
