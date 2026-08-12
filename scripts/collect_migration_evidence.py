@@ -298,7 +298,9 @@ def _read_file_bounded(path: Path, *, limit: int, label: str) -> bytes:
                     break
                 total += len(chunk)
                 if total > limit:
-                    raise EvidenceError(f"{label} exceeds byte limit while reading: {total} > {limit}")
+                    raise EvidenceError(
+                        f"{label} exceeds byte limit while reading: {total} > {limit}"
+                    )
                 chunks.append(chunk)
     except OSError as exc:
         raise EvidenceError(f"cannot read {label}: {exc}") from exc
