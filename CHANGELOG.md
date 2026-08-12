@@ -16,6 +16,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Live Verification (exact 51f7a1b)
+- Re-verified after the CI/script/test hardening refactor: 1242 unit/protocol, 87 smoke (including the new `test_filesystem_root_contract.py`), 174 e2e, 277 integration (1 skipped) on HA 2026.5.1 with image `ha-mcp-readonly:51f7a1b`; 158 MCP tools, healthy container.
+- Fixed stale integration assertion: `TestGetAreaDiagnosticReal::test_nonexistent_area` asserted a top-level `available_areas` key that `get_area_diagnostic` never produced (present since v1.0.0). The error path returns the established `{"success": false, "error": ...}` envelope; the assertion now checks the actual contract.
+- Note: three live-HA tests (`test_empty_search`, `test_too_many_batch`, `test_get_energy_dashboard_data`) are load-sensitive against the shared instance when suites run concurrently; they pass in isolation and in a clean full run.
+
 ### Live Verification (exact 27d32c9b)
 - Dependency drift resolved: the plain `Dockerfile` now installs the runtime with `-c constraints-ci.txt` and runs `pip check`, matching the pinned `Dockerfile.release` dependency graph (fastmcp 3.4.6, starlette 1.4.1, uvicorn 0.52.1).
 - Live-HA evidence recorded in `docs/evidence-live-27d32c9b.md`: 1234 unit/protocol, 86 smoke, 174 e2e, 272 integration (6 skipped), 158 MCP tools, HA 2026.5.1, image digest `sha256:52a860...`.

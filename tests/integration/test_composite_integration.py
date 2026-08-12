@@ -113,7 +113,9 @@ class TestGetAreaDiagnosticReal:
         raw = await fn(area_name="definitely_nonexistent_room_xyz")
         data = json.loads(raw)
         assert data["success"] is False
-        assert "available_areas" in data
+        # Graceful failure is the contract; get_area_diagnostic reports the
+        # error message instead of fabricating an available_areas hint.
+        assert "error" in data
 
     @pytest.mark.asyncio
     async def test_area_output_has_warnings_field(self, mcp):
