@@ -33,7 +33,7 @@ verification: Run the complete local quality, unit, protocol, package, and runti
 - First line of `@mcp.tool()` docstring MUST be a complete sentence describing what the tool does.
 - NO emoji in tool description first lines.
 - NO emoji in API response strings (status labels, messages).
-- Every docstring must include `Args` and `Returns` sections.
+- Public tool/function docstrings MUST include meaningful `Args` and `Returns` sections when the callable accepts arguments or returns a value; module, class, and exception docstrings MUST NOT contain empty placeholder sections.
 - Use plain text status labels: `"OK"` not `"✅ OK"`, `"FAILED"` not `"❌ FAILED"`.
 
 ### Parameter Descriptions
