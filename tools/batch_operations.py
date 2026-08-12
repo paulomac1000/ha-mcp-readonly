@@ -685,7 +685,15 @@ def register_batch_operations_tools(mcp, config_path: str, ha_url: str, ha_token
 
     @mcp.tool()
     async def validate_yaml_batch(file_paths: str) -> str:
-        """[READ] BATCH - Validate multiple YAML files in one call. Saves ~80% tokens vs individual calls."""
+        """[READ] BATCH - Validate multiple YAML files in one call. Saves ~80% tokens vs individual calls.
+
+        Args:
+            file_paths: Comma-separated list of YAML file paths relative to the config root
+                (e.g. "automations.yaml,scripts.yaml").
+
+        Returns:
+            JSON with per-file validation results and an overall success flag.
+        """
         try:
             return await _do_validate_yaml_batch(config_path, file_paths)
         except Exception as e:
@@ -693,7 +701,15 @@ def register_batch_operations_tools(mcp, config_path: str, ha_url: str, ha_token
 
     @mcp.tool()
     async def compare_entities_state(entity_ids: str, snapshot_before: str | None = None) -> str:
-        """[READ] COMPARE - Compare entity states before/after changes. Saves ~70% tokens vs manual checking."""
+        """[READ] COMPARE - Compare entity states before/after changes. Saves ~70% tokens vs manual checking.
+
+        Args:
+            entity_ids: Comma-separated entity IDs to compare (e.g. "sensor.temperature,light.living_room").
+            snapshot_before: Optional JSON snapshot of previous states; live states are used when omitted.
+
+        Returns:
+            JSON with the current and (if provided) previous state for each entity plus a diff summary.
+        """
         try:
             return await _do_compare_entities_state(ha_url, ha_token, entity_ids, snapshot_before)
         except Exception as e:
@@ -701,7 +717,14 @@ def register_batch_operations_tools(mcp, config_path: str, ha_url: str, ha_token
 
     @mcp.tool()
     async def get_template_dependencies(entity_id: str) -> str:
-        """[READ] ANALYZE - Get all entities referenced in template. Saves ~90% tokens vs manual analysis."""
+        """[READ] ANALYZE - Get all entities referenced in a template. Saves ~90% tokens vs manual analysis.
+
+        Args:
+            entity_id: Template entity whose referenced entities should be resolved (e.g. "sensor.computed_value").
+
+        Returns:
+            JSON listing every entity referenced by the template configuration.
+        """
         try:
             return await _do_get_template_dependencies(config_path, entity_id)
         except Exception as e:
@@ -709,7 +732,15 @@ def register_batch_operations_tools(mcp, config_path: str, ha_url: str, ha_token
 
     @mcp.tool()
     async def bulk_search_entities(search_terms: str, max_results_per_term: int = 10) -> str:
-        """[READ] BATCH - Search multiple terms at once. Saves ~85% tokens vs individual searches."""
+        """[READ] BATCH - Search multiple terms at once. Saves ~85% tokens vs individual searches.
+
+        Args:
+            search_terms: Comma-separated search terms (e.g. "temperature,humidity,pressure").
+            max_results_per_term: Maximum number of matches to return per term (default 10).
+
+        Returns:
+            JSON with grouped search results for each term.
+        """
         try:
             return await _do_bulk_search_entities(config_path, search_terms, max_results_per_term)
         except Exception as e:
@@ -717,7 +748,14 @@ def register_batch_operations_tools(mcp, config_path: str, ha_url: str, ha_token
 
     @mcp.tool()
     async def get_automation_codes_batch(automation_ids: str) -> str:
-        """[READ] BATCH - Get YAML code for multiple automations at once. Saves ~70% tokens vs N individual calls."""
+        """[READ] BATCH - Get YAML code for multiple automations at once. Saves ~70% tokens vs N individual calls.
+
+        Args:
+            automation_ids: Comma-separated automation unique IDs or aliases (e.g. "morning_lights,night_mode").
+
+        Returns:
+            JSON with the YAML source for each requested automation.
+        """
         try:
             return await _do_get_automation_codes_batch(config_path, automation_ids)
         except Exception as e:

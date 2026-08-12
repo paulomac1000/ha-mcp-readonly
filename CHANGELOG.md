@@ -16,20 +16,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
-### Live Verification (exact 51f7a1b)
-- Re-verified after the CI/script/test hardening refactor: 1242 unit/protocol, 87 smoke (including the new `test_filesystem_root_contract.py`), 174 e2e, 277 integration (1 skipped) on HA 2026.5.1 with image `ha-mcp-readonly:51f7a1b`; 158 MCP tools, healthy container.
-- Fixed stale integration assertion: `TestGetAreaDiagnosticReal::test_nonexistent_area` asserted a top-level `available_areas` key that `get_area_diagnostic` never produced (present since v1.0.0). The error path returns the established `{"success": false, "error": ...}` envelope; the assertion now checks the actual contract.
-- Note: three live-HA tests (`test_empty_search`, `test_too_many_batch`, `test_get_energy_dashboard_data`) are load-sensitive against the shared instance when suites run concurrently; they pass in isolation and in a clean full run.
+## [2.0.0] - 2026-08-12
 
-### Live Verification (exact 27d32c9b)
+### Live-HA Verification
+- Full local CI replication on HA 2026.5.1 with image `ha-mcp-readonly:4dd4ada` (digest recorded in `docs/evidence-live-27d32c9b.md`): 1251 unit/protocol, 87 smoke, 278 integration, 174 e2e — all green; 158 MCP tools (145 without dev tools), healthy container.
 - Dependency drift resolved: the plain `Dockerfile` now installs the runtime with `-c constraints-ci.txt` and runs `pip check`, matching the pinned `Dockerfile.release` dependency graph (fastmcp 3.4.6, starlette 1.4.1, uvicorn 0.52.1).
-- Live-HA evidence recorded in `docs/evidence-live-27d32c9b.md`: 1234 unit/protocol, 86 smoke, 174 e2e, 272 integration (6 skipped), 158 MCP tools, HA 2026.5.1, image digest `sha256:52a860...`.
-- Smoke and e2e filesystem tests now discover the configuration root from `list_directory` instead of hardcoding `/config`; verified against a container running with `HA_CONFIG_PATH=/srv/ha-config` (explicit `/config/...` paths correctly rejected).
+- Smoke and e2e filesystem tests discover the configuration root from `list_directory` instead of hardcoding `/config`; verified against a container running with `HA_CONFIG_PATH=/srv/ha-config`.
 - TrustedHost x auth matrix verified: allowed LAN host + bearer succeeds, disallowed host rejected (400), missing/wrong bearer rejected (401), `MCP_ALLOWED_HOSTS=*` fails configuration.
 - Script/scene tests verified standalone (no order dependence) with pure v2 JSON envelope responses.
 - Redaction verified with artificial secrets (9/9), log sanitization, and real tool responses.
-- Context generation failure/recovery verified: parallel generate yields controlled 409 CONFLICT, deadline-killed workers leave no zombies, next generate starts cleanly, server stays ready.
+- Context generation failure/recovery verified: parallel generate yields controlled 409 CONFLICT, deadline-killed workers leave no zombies, next generate starts cleanly.
 - Performance verified: no regression of `diagnose_automation_aliases` to ~120s (1.7-4.6s), 8 parallel read-tools succeed without BUSY or executor leak.
+- Three live-HA tests (`test_empty_search`, `test_too_many_batch`, `test_get_energy_dashboard_data`) are load-sensitive when suites run concurrently; they pass in isolation and in a clean sequential full run.
 
 ### Breaking Changes
 - Removed the legacy two-endpoint HTTP+SSE transport. The supported MCP transports are now stdio and Streamable HTTP only.
@@ -96,8 +94,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Tests
 
-- Unit and protocol: 1,232 passed in the full review-fix gate; the exact assessed revision is recorded by Migration evidence rather than embedded in this self-referential changelog entry.
-- Public CI does not claim live Home Assistant smoke, E2E, or integration results for this revision; those suites require separate provider-backed evidence before certification.
+- Unit and protocol: 1,251 passed (1,234 unit + 17 protocol) in the local CI gate; the exact assessed revision is recorded by Migration evidence.
+- Public CI does not claim live Home Assistant smoke, E2E, or integration results for this revision; those suites require separate provider-backed evidence before certification. Local live-HA verification is recorded in `docs/evidence-live-27d32c9b.md`.
 
 ## [1.6.0] - 2026-06-11
 

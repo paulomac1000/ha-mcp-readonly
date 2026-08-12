@@ -2670,6 +2670,9 @@ def register_automation_tools(mcp, config_path, ha_url=None, ha_token=None) -> N
 
         Args:
             automation_id: Automation alias or id (prefer alias)
+
+        Returns:
+            JSON with automation alias, id, and YAML code string.
         """
         try:
             result = _do_get_automation_code(automation_id, config_path)

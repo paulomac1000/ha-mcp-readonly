@@ -153,14 +153,21 @@ Tools are organized by category (75 shown in table below). All are **read-only**
 
 > Full tool catalog with schemas available at GET /api/tools
 
-## What's New in v1.6.0
+## What's New in v2.0.0
 
-- **5 new tools**: `get_context_chain` (Context), `resolve_blueprint_automation` (Blueprints), `get_cache_stats` (Storage), `compare_templates` (Dev tools), `get_automation_entity_id` (Automations)
-- **`choose_analysis` in `diagnose_automation`**: When `detail_level="full"`, returns conditional branch analysis for automations using `choose` actions
-- **Registry pagination**: `limit` and `offset` parameters added to `get_entity_registry`, `get_device_registry`, `get_area_registry`, and `get_config_entries` for efficient scanning of large registries
-- **`data_quality` field**: Composite diagnostic tools (`investigate_entity`, `get_area_diagnostic`, `get_entity_with_automations`) now include a `data_quality` assessment flagging stale sensors, missing entities, and unavailable devices
-- **New pre-commit hooks**: `mypy strict`, `Bandit`, `Semgrep`, and AFDS documentation validation added to the pre-commit pipeline
-- **Test infrastructure**: 272 integration tests, 174 E2E tool-smoke cases, and 86 smoke tests for expanded real-HA and end-to-end coverage
+- **Breaking — transport cleanup**: Removed the legacy two-endpoint HTTP+SSE transport. The supported MCP transports are now stdio and Streamable HTTP only; `MCP_TRANSPORT=sse` is rejected.
+- **Hardened network deployment**: Explicit ASGI application with bounded request/header sizes, trusted Host policy (`MCP_ALLOWED_HOSTS`), exact-origin CORS, connection limits, and stateless/stateful mode selection.
+- **Recursive credential redaction**: All tool responses are sanitized at the operation boundary — bearer tokens, JWTs, API keys, passwords, and IP addresses are redacted from both response payloads and log output.
+- **Capability discovery**: Public discovery now separates supported and active transports/components and reports server, SDK, protocol, and deployment-profile identity.
+- **Reliability fixes**: `diagnose_automation_aliases` performance fix (>120s to ~4.5s on a 131-automation instance); backend health probe retries at startup with background reconciliation; blocking storage coroutines run through the bounded invocation executor.
+- **Verification and evidence**: ai-skills standard alignment with a pinned validator, recorded real-Home-Assistant cassette tests, and full local CI replication (1251 unit/protocol, 87 smoke, 278 integration, 174 e2e) documented in `docs/evidence-live-27d32c9b.md`.
+
+### Also carried forward from v1.6.0
+
+- **5 tools**: `get_context_chain`, `resolve_blueprint_automation`, `get_cache_stats`, `compare_templates`, `get_automation_entity_id`
+- **Registry pagination** (`limit`/`offset` on `get_entity_registry`, `get_device_registry`, `get_area_registry`, `get_config_entries`)
+- **`data_quality` field** on composite diagnostic tools
+- **`choose_analysis`** in `diagnose_automation` (detail_level="full")
 
 ## Client configuration
 

@@ -655,6 +655,9 @@ def register_config_tools(  # type: ignore[no-untyped-def]
     def get_main_configuration() -> str:
         """[READ] Fetches main configuration from file `configuration.yaml`.
         Returns structured YAML, with sensitive data (passwords, tokens) redacted.
+
+        Returns:
+            JSON with sanitized configuration data as a YAML string.
         """
         try:
             result = _do_get_main_configuration(config_path)
@@ -665,7 +668,12 @@ def register_config_tools(  # type: ignore[no-untyped-def]
 
     @mcp.tool()
     def list_custom_components() -> str:
-        """[READ] Fetches list of installed custom components (custom_components/)."""
+        """[READ] Fetches list of installed custom components (custom_components/).
+
+        Returns:
+            JSON with total component count and per-component name, path,
+            version, and domain metadata.
+        """
         try:
             result = _do_list_custom_components(config_path)
             return _success_response(result)

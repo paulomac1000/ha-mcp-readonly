@@ -889,6 +889,11 @@ def register_composite_tools(  # type: ignore[no-untyped-def]
         Args:
             entity_id: Entity id (e.g., "light.yeelink_color2_0510_light").
             include_automation_code: Include full automation YAML (default: False).
+
+        Returns:
+            JSON with entity_info, device_info, area_info, current_state,
+            related_entities, automations, conflict_analysis, data_quality,
+            issues, recommendations, and warnings.
         """
         try:
             data = _do_get_entity_with_automations(
@@ -919,6 +924,11 @@ def register_composite_tools(  # type: ignore[no-untyped-def]
             include_automation_code: Include full automation YAML (default: False).
             include_history: Include history of primary entity (default: False).
             hours_back: History window in hours (default: 24, max: 168).
+
+        Returns:
+            JSON with matched_entities, area_context, automations, conflicts,
+            related_sensors, optional history, data_quality, issues,
+            recommendations, summary, and warnings.
         """
         try:
             data = _do_investigate_entity(
@@ -957,6 +967,10 @@ def register_composite_tools(  # type: ignore[no-untyped-def]
             area_name: Area name or id (e.g. "living_room", "kitchen")
             include_automations: Search automations (default: True)
             include_sensors: Include sensor readings (default: True)
+
+        Returns:
+            JSON with area_info, entities_by_domain, sensor_readings,
+            automations, data_quality, issues, recommendations, and warnings.
         """
         try:
             data = _do_get_area_diagnostic(
