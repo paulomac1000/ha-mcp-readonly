@@ -107,7 +107,8 @@ jobs:
     timeout-minutes: 60
     needs: source-gates
     env:
-      EVIDENCE_COLLECTOR_REVISION: 47083fc693e0321dd7a22bfe996ba9eda618a376
+      # Immutable reviewed collector revision with strict success-only job conclusions.
+      EVIDENCE_COLLECTOR_REVISION: c2d5d921d9434fa78ee750d6bd15b5525ce7a7af
     steps:
       - name: Checkout immutable reviewed evidence collector
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v6
