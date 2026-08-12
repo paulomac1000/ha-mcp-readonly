@@ -258,7 +258,7 @@ class GitHubEvidenceClient:
                 failed = {
                     name: by_name[name].get("conclusion")
                     for name in expected_names
-                    if by_name[name].get("conclusion") not in {None, "success"}
+                    if by_name[name].get("conclusion") != "success"
                 }
                 if failed:
                     raise EvidenceError(f"non-success required jobs: {failed}")
