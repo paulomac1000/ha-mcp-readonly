@@ -150,7 +150,7 @@ def _discover_params(context: dict) -> dict:
         "investigate_entity": {"search_term": "sun"},
         "read_config_file": {"file_path": "configuration.yaml", "max_lines": 1},
         "read_file": {
-            "file_path": f"{context.get('config_root', '/config')}/configuration.yaml",
+            "file_path": f"{context['config_root']}/configuration.yaml",
             "max_lines": 1,
         },
         "resolve_blueprint_automation": {"automation_id": automation_id},
