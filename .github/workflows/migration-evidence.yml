@@ -45,7 +45,7 @@ jobs:
       - name: Verify source contracts and coverage policy
         shell: bash
         env:
-          COVERAGE_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before || github.sha }}
+          COVERAGE_BASE_SHA: ${{ github.event.pull_request.base.sha || 'origin/main' }}
         run: |
           set -euo pipefail
           ruff check .
