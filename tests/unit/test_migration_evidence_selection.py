@@ -84,16 +84,26 @@ class _FakeEvidenceClient(GitHubEvidenceClient):
 
 
 class _FakeInconclusiveJobClient(_FakeEvidenceClient):
+    def __init__(self, repository: str, head: str, job_name: str) -> None:
+        super().__init__(repository, head)
+        self.job_name = job_name
+
     def _jobs_once(self, run_id: int) -> dict[str, dict[str, Any]]:
         del run_id
         return {
-            "Official client exact artifacts": {
+            self.job_name: {
                 "id": 303,
-                "name": "Official client exact artifacts",
+                "name": self.job_name,
                 "status": "completed",
                 "conclusion": None,
             }
         }
+
+
+@pytest.fixture
+def fixture_job_name() -> str:
+    """Return a synthetic required CI job name for evidence-client tests."""
+    return "Fixture required job"
 
 
 def test_full_ci_selection_skips_newer_fast_manual_run(
@@ -117,8 +127,13 @@ def test_full_ci_selection_skips_newer_fast_manual_run(
 def test_completed_job_without_success_conclusion_fails_closed(
     fixture_repository_name: str,
     fixture_git_sha: str,
+    fixture_job_name: str,
 ) -> None:
-    client = _FakeInconclusiveJobClient(fixture_repository_name, fixture_git_sha)
+    client = _FakeInconclusiveJobClient(
+        fixture_repository_name,
+        fixture_git_sha,
+        fixture_job_name,
+    )
 
     with pytest.raises(EvidenceError, match="non-success required jobs"):
-        client.wait_for_jobs(303, {"Official client exact artifacts"})
+        client.wait_for_jobs(303, {fixture_job_name})
