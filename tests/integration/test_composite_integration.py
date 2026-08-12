@@ -95,6 +95,7 @@ class TestGetEntityWithAutomationsReal:
         data = json.loads(raw)
         assert data["success"] is False
         assert "suggestions" in data or "error" in data
+        assert "_meta" in data
 
 
 # ====================================================================
@@ -111,6 +112,7 @@ class TestGetAreaDiagnosticReal:
         data = json.loads(raw)
         assert data["success"] is False
         assert data["error"] == f"Area '{area_name}' not found"
+        assert "_meta" in data
 
     @pytest.mark.asyncio
     async def test_area_output_has_warnings_field(self, mcp):
@@ -129,6 +131,7 @@ class TestGetAreaDiagnosticReal:
         assert data["success"] is True
         assert "warnings" in data
         assert isinstance(data["warnings"], list)
+        assert "_meta" in data
 
 
 # ====================================================================
