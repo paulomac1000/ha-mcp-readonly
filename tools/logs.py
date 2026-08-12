@@ -1049,7 +1049,7 @@ def register_log_tools(  # type: ignore[no-untyped-def]
 
     @mcp.tool()
     def get_startup_errors() -> str:
-        """[READ] Analyzes startup logs and returns errors/warnings from last startup.
+        """Analyzes startup logs and returns errors/warnings from last startup.
 
         Returns:
             JSON with startup errors and warnings, and total counts for each.
