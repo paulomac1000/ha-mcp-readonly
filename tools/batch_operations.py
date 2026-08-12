@@ -685,7 +685,7 @@ def register_batch_operations_tools(mcp, config_path: str, ha_url: str, ha_token
 
     @mcp.tool()
     async def validate_yaml_batch(file_paths: str) -> str:
-        """[READ] BATCH - Validate multiple YAML files in one call. Saves ~80% tokens vs individual calls.
+        """Validate multiple YAML files in one call. Saves ~80% tokens vs individual calls.
 
         Args:
             file_paths: Comma-separated list of YAML file paths relative to the config root
@@ -701,7 +701,7 @@ def register_batch_operations_tools(mcp, config_path: str, ha_url: str, ha_token
 
     @mcp.tool()
     async def compare_entities_state(entity_ids: str, snapshot_before: str | None = None) -> str:
-        """[READ] COMPARE - Compare entity states before/after changes. Saves ~70% tokens vs manual checking.
+        """Compare entity states before/after changes. Saves ~70% tokens vs manual checking.
 
         Args:
             entity_ids: Comma-separated entity IDs to compare (e.g. "sensor.temperature,light.living_room").
@@ -717,7 +717,7 @@ def register_batch_operations_tools(mcp, config_path: str, ha_url: str, ha_token
 
     @mcp.tool()
     async def get_template_dependencies(entity_id: str) -> str:
-        """[READ] ANALYZE - Get all entities referenced in a template. Saves ~90% tokens vs manual analysis.
+        """Get all entities referenced in a template. Saves ~90% tokens vs manual analysis.
 
         Args:
             entity_id: Template entity whose referenced entities should be resolved (e.g. "sensor.computed_value").
@@ -732,7 +732,7 @@ def register_batch_operations_tools(mcp, config_path: str, ha_url: str, ha_token
 
     @mcp.tool()
     async def bulk_search_entities(search_terms: str, max_results_per_term: int = 10) -> str:
-        """[READ] BATCH - Search multiple terms at once. Saves ~85% tokens vs individual searches.
+        """Search multiple terms at once. Saves ~85% tokens vs individual searches.
 
         Args:
             search_terms: Comma-separated search terms (e.g. "temperature,humidity,pressure").
@@ -748,7 +748,7 @@ def register_batch_operations_tools(mcp, config_path: str, ha_url: str, ha_token
 
     @mcp.tool()
     async def get_automation_codes_batch(automation_ids: str) -> str:
-        """[READ] BATCH - Get YAML code for multiple automations at once. Saves ~70% tokens vs N individual calls.
+        """Get YAML code for multiple automations at once. Saves ~70% tokens vs N individual calls.
 
         Args:
             automation_ids: Comma-separated automation unique IDs or aliases (e.g. "morning_lights,night_mode").
