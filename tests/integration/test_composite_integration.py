@@ -1,7 +1,7 @@
 """
 Integration Tests — Composite tools against real Home Assistant.
 
-These tests require a running HA instatece.
+These tests require a running HA instance.
 Skipped automatically when HA_URL / HA_TOKEN are not set.
 
 Run:
@@ -25,14 +25,10 @@ pytestmark = pytest.mark.skipif(_skip, reason="HA_URL / HA_TOKEN not set")
 
 @pytest.fixture(scope="module")
 def mcp():
-    """Register composite tools against real HA."""
-    from fastmcp import FastMCP
+    """Build the production operation registry against the configured real HA."""
+    from server import create_mcp_server
 
-    from tools.composite import register_composite_tools
-
-    server = FastMCP("integration_test")
-    register_composite_tools(server, HA_CONFIG_PATH, HA_URL, HA_TOKEN)
-    return server
+    return create_mcp_server()
 
 
 def _get_fn(mcp, name):
@@ -113,10 +109,8 @@ class TestGetAreaDiagnosticReal:
         fn = _get_fn(mcp, "get_area_diagnostic")
         raw = await fn(area_name=area_name)
         data = json.loads(raw)
-        assert data == {
-            "success": False,
-            "error": f"Area '{area_name}' not found",
-        }
+        assert data["success"] is False
+        assert data["error"] == f"Area '{area_name}' not found"
 
     @pytest.mark.asyncio
     async def test_area_output_has_warnings_field(self, mcp):
