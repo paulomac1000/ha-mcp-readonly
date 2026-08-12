@@ -151,9 +151,13 @@ def evaluate(
     new_covered = 0
     if base_ref:
         for relative, added in _added_lines(root, base_ref).items():
+            if not added:
+                continue
             record = _file_record(files, relative)
             if record is None:
-                continue
+                raise CoveragePolicyError(
+                    f"changed tool file {relative} is not measured in coverage JSON"
+                )
             executed, missing = _line_sets(record)
             executable = added & (executed | missing)
             new_executable += len(executable)
