@@ -277,6 +277,7 @@ def _load_tool_cases():
 _LIVE_E2E_AVAILABLE = (
     _server_running()
     and bool(HA_TOKEN)
+    and REST_AUTH_CONFIGURED
     and HA_TOKEN not in ("", "your_long_lived_access_token_here")
 )
 _TOOL_CASES = _load_tool_cases() if _LIVE_E2E_AVAILABLE else []
