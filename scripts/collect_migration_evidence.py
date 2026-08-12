@@ -516,11 +516,7 @@ def build_report() -> dict[str, Any]:
         f"container-image-{head}-arm64",
     }
     ci, ci_jobs, artifacts = client.wait_for_full_ci(expected_artifacts)
-    runs = {
-        name: client.wait_for_workflow(name)
-        for name in REQUIRED_WORKFLOWS
-        if name != "CI"
-    }
+    runs = {name: client.wait_for_workflow(name) for name in REQUIRED_WORKFLOWS if name != "CI"}
     runs["CI"] = ci
     official = runs["Official MCP client"]
     official_jobs = client.wait_for_jobs(int(official["id"]), {OFFICIAL_JOB})
