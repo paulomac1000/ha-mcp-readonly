@@ -15,7 +15,10 @@ def _primary_location(result: dict[str, Any]) -> tuple[Path | None, int | None]:
     locations = result.get("locations")
     if not isinstance(locations, list) or not locations:
         return None, None
-    physical = locations[0].get("physicalLocation", {})
+    location = locations[0]
+    if not isinstance(location, dict):
+        return None, None
+    physical = location.get("physicalLocation", {})
     if not isinstance(physical, dict):
         return None, None
     artifact = physical.get("artifactLocation", {})
