@@ -399,7 +399,7 @@ def register_health_reporter_tools(
 
     @mcp.tool()
     def trigger_health_report() -> str:
-        """[READ] Generate system health report (read-only). Returns JSON with metrics, logs, entity and automation health.
+        """Generate system health report (read-only). Returns JSON with metrics, logs, entity and automation health.
 
         Returns:
             JSON with health score, system metrics, log summary, entity health,
