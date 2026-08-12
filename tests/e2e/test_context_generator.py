@@ -21,6 +21,7 @@ def _run_generation(output_path):
     os.environ["HA_URL"] = _HA_URL
     os.environ["HA_TOKEN"] = _HA_TOKEN
     os.environ["HA_CONFIG_PATH"] = _HA_CONFIG_PATH
+    os.environ["OUTPUT_PATH"] = output_path
 
     import context_generator.constants as c
 
@@ -90,16 +91,12 @@ class TestContextGeneratorE2E:
                     break
             assert found_section, f"Section '{section}' not found"
 
-    def test_generate_online_mode(self, tmp_output_path):
+    def test_generate_online_mode(self, tmp_output_path, monkeypatch):
         """Online mode should fetch data from HA API."""
-        os.environ["HA_URL"] = _HA_URL
-        os.environ["HA_TOKEN"] = _HA_TOKEN
-        import context_generator.constants as c
-
-        c.HA_URL = _HA_URL
-        c.HA_TOKEN = _HA_TOKEN
-        c.HA_CONFIG_PATH = _HA_CONFIG_PATH
-        c.OUTPUT_FILE = tmp_output_path
+        monkeypatch.setenv("HA_URL", _HA_URL)
+        monkeypatch.setenv("HA_TOKEN", _HA_TOKEN)
+        monkeypatch.setenv("OUTPUT_PATH", tmp_output_path)
+        monkeypatch.setenv("HA_CONFIG_PATH", _HA_CONFIG_PATH)
         from context_generator.core import main
 
         main()
@@ -109,14 +106,13 @@ class TestContextGeneratorE2E:
             content = f.read()
         assert "Executive Summary" in content
 
-    def test_generate_offline_no_api(self, tmp_output_path):
+    def test_generate_offline_no_api(self, tmp_output_path, monkeypatch):
         """Offline mode should work without HA_TOKEN."""
-        import context_generator.constants as c
-
-        c.HA_URL = "http://nonexistent:8123"
-        c.HA_TOKEN = ""
-        c.HA_CONFIG_PATH = _HA_CONFIG_PATH
-        c.OUTPUT_FILE = tmp_output_path
+        monkeypatch.setenv("HA_URL", "http://nonexistent:8123")
+        monkeypatch.setenv("HA_TOKEN", "")
+        monkeypatch.setenv("HA_CONFIG_PATH", _HA_CONFIG_PATH)
+        monkeypatch.setenv("OUTPUT_PATH", tmp_output_path)
+        monkeypatch.setenv("HA_CONTEXT_MODE", "offline")
         from context_generator.core import main
 
         main()
@@ -126,14 +122,10 @@ class TestContextGeneratorE2E:
             content = f.read()
         assert "Home Assistant Context for AI" in content
 
-    def test_generate_output_overwrites(self, tmp_output_path):
+    def test_generate_output_overwrites(self, tmp_output_path, monkeypatch):
         """Second generation should overwrite, not append."""
-        import context_generator.constants as c
-
-        c.HA_URL = _HA_URL
-        c.HA_TOKEN = _HA_TOKEN
-        c.HA_CONFIG_PATH = _HA_CONFIG_PATH
-        c.OUTPUT_FILE = tmp_output_path
+        monkeypatch.setenv("HA_CONFIG_PATH", _HA_CONFIG_PATH)
+        monkeypatch.setenv("OUTPUT_PATH", tmp_output_path)
         from context_generator.core import main
 
         main()
@@ -142,16 +134,21 @@ class TestContextGeneratorE2E:
         main()
         size2 = os.path.getsize(tmp_output_path)
 
-        assert abs(size1 - size2) < 500
+        # Live HA state changes between runs, so sizes naturally differ. The
+        # overwrite contract is that the document header appears exactly once;
+        # an append bug would duplicate it.
+        with open(tmp_output_path) as f:
+            content = f.read()
+        assert content.count("Home Assistant Context for AI") == 1
+        assert size1 > 0 and size2 > 0
 
-    def test_empty_config_path_does_not_crash(self, tmp_output_path):
+    def test_empty_config_path_does_not_crash(self, tmp_output_path, monkeypatch):
         """Empty config path should still generate without crashing."""
-        import context_generator.constants as c
-
-        c.HA_URL = "http://nonexistent:8123"
-        c.HA_TOKEN = ""
-        c.HA_CONFIG_PATH = "/nonexistent/path"
-        c.OUTPUT_FILE = tmp_output_path
+        monkeypatch.setenv("HA_URL", "http://nonexistent:8123")
+        monkeypatch.setenv("HA_TOKEN", "")
+        monkeypatch.setenv("HA_CONFIG_PATH", "/nonexistent/path")
+        monkeypatch.setenv("OUTPUT_PATH", tmp_output_path)
+        monkeypatch.setenv("HA_CONTEXT_MODE", "offline")
         from context_generator.core import main
 
         main()

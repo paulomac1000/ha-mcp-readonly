@@ -22,7 +22,7 @@ class TestDoDescribeCapabilities:
         assert result["schema_version"] == CAPABILITIES_SCHEMA_VERSION
         assert result["server"] == "HA-Observer"
         assert "tools_version" in result
-        assert result["transports"] == ["sse", "rest"]
+        assert result["transports"] == ["stdio", "streamable-http"]
         assert isinstance(result["tools"], list)
         assert result["tool_count"] == len(result["tools"])
 
@@ -62,5 +62,6 @@ class TestRegisterCapabilityTools:
         register_capability_tools(mock_mcp)
         manifest = get_manifest("describe_ha_capabilities")
         assert manifest is not None
-        assert manifest["risk"] == "READ"
-        assert manifest["latency"] == "instant"
+        assert manifest["operation_kind"] == "read"
+        assert manifest["risk"] == "low"
+        assert manifest["latency"] == "interactive"

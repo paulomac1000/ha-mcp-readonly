@@ -1397,6 +1397,10 @@ def register_dev_tools(mcp, ha_url: str, ha_token: str, config_path: str | None 
             test_template("{{ states('sensor.temperature') }}")
             test_template("{{ state_attr('light.living_room', 'brightness') }}")
             test_template("{{ now().hour }}")
+
+        Returns:
+            JSON with the rendered template result, render time, and a
+            performance warning flag.
         """
         try:
             result = _do_test_template(template, None, None, ha_url, ha_token)  # type: ignore[no-untyped-call]
@@ -1483,6 +1487,10 @@ def register_dev_tools(mcp, ha_url: str, ha_token: str, config_path: str | None 
               entity_id: sensor.temperature
               above: 25
             ''')
+
+        Returns:
+            JSON with validity flag, parsed triggers, validation issues,
+            and warnings.
         """
         try:
             result = _do_validate_automation_trigger(trigger_config, ha_url, ha_token)  # type: ignore[no-untyped-call]
@@ -1502,6 +1510,10 @@ def register_dev_tools(mcp, ha_url: str, ha_token: str, config_path: str | None 
         Example:
             test_condition("{{ states('sensor.temperature') | float > 25 }}")
             test_condition("{{ trigger.to_state.state == 'on' }}", "trigger.to_state.state = 'on'")
+
+        Returns:
+            JSON with the condition, rendered result, boolean evaluation,
+            context, and render time.
         """
         try:
             result = _do_test_condition(condition_template, context, ha_url, ha_token)  # type: ignore[no-untyped-call]
@@ -1518,6 +1530,10 @@ def register_dev_tools(mcp, ha_url: str, ha_token: str, config_path: str | None 
 
         Args:
             entity_id: Entity id to check
+
+        Returns:
+            JSON with existence flag, current state, friendly name, device
+            class, unit of measurement, and last changed/updated timestamps.
         """
         try:
             result = _do_check_entity_exists(entity_id, ha_url, ha_token)  # type: ignore[no-untyped-call]
@@ -1567,6 +1583,10 @@ def register_dev_tools(mcp, ha_url: str, ha_token: str, config_path: str | None 
 
         Example:
             test_service_call('light', 'turn_on', 'light.living_room', '{"brightness": 255}')
+
+        Returns:
+            JSON with validity flag, service name, entity validation, parsed
+            data, service info, and a dry-run note that the call was not executed.
         """
         try:
             result = _do_test_service_call(domain, service, entity_id, data, ha_url, ha_token)  # type: ignore[no-untyped-call]

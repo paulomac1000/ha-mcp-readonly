@@ -1,8 +1,11 @@
-"""Core entry points for context generation."""
+"""Core entry points for isolated Home Assistant context generation."""
 
-import os
+from __future__ import annotations
 
-from . import constants
+import logging
+from pathlib import Path
+from typing import Any
+
 from .analyzers import (
     AutomationAnalyzer,
     CacheAnalyzer,
@@ -18,166 +21,150 @@ from .analyzers import (
     TemplateEntityCollector,
     ZoneAnalyzer,
 )
+from .config import GenerationConfig, GenerationMode
 from .formatters import ReportGenerator
+from .provenance import ProvenanceTracker
+from .runtime import GenerationRuntime, generation_scope
+from .snapshot import ComprehensiveSnapshotCollector
 from .utils import invalidate_registry_cache
 
-
-def main():
-    """Run the full context generation pipeline."""
-    # Re-read env vars at runtime — constants may have been imported before env was set
-    constants.HA_URL = os.getenv("HA_URL", constants.HA_URL)
-    constants.HA_TOKEN = os.getenv("HA_TOKEN", constants.HA_TOKEN)
-    constants.HA_CONFIG_PATH = os.getenv("HA_CONFIG_PATH", constants.HA_CONFIG_PATH)
-    constants.OUTPUT_FILE = os.getenv("OUTPUT_PATH", constants.OUTPUT_FILE)
-
-    print("\n" + "=" * 60)
-    print("HOME ASSISTANT CONTEXT GENERATOR FOR AI (v1.0)")
-    print("   Comprehensive smart home context for AI assistants")
-    print("=" * 60 + "\n")
-
-    # Invalidate cache at start
-    invalidate_registry_cache()
-
-    # Collectors
-    registry = RegistryCollector()
-    if not registry.collect():
-        print("Failed to collect data from registry. Check connection to HA.")
-        exit(1)
-
-    automation = AutomationAnalyzer(registry)
-    automation.collect()
-    automation.analyze()
-
-    dashboard = DashboardAnalyzer(registry)
-    dashboard.analyze()
-
-    logs = LogAnalyzer()
-    logs.analyze(constants.LOG_HOURS_BACK)
-
-    templates = TemplateEntityCollector(registry)
-    templates.collect()
-
-    history = HistoryAnalyzer(registry)
-    history.analyze(hours=1)
-
-    persons = PersonAnalyzer(registry)
-    persons.collect()
-
-    zones = ZoneAnalyzer(registry)
-    zones.collect()
-
-    energy = EnergyAnalyzer(registry)
-    energy.collect()
-
-    helpers = HelperAnalyzer(registry)
-    helpers.collect()
-
-    services = ServiceCatalogAnalyzer(registry)
-    services.collect()
-
-    hacs = HacsAnalyzer(registry)
-    hacs.collect()
-
-    cache = CacheAnalyzer(registry)
-    cache.collect()
-
-    # Generate report
-    generator = ReportGenerator(
-        registry,
-        automation,
-        dashboard,
-        logs,
-        templates,
-        history,
-        persons,
-        zones,
-        energy,
-        helpers,
-        services,
-        hacs,
-        cache=cache,
-    )
-    generator.generate(constants.OUTPUT_FILE)
-
-    # Summary
-    print("\n" + "=" * 60)
-    print("GENERATION SUMMARY")
-    print("=" * 60)
-    print(f"   Output file: {constants.OUTPUT_FILE}")
-    print(f"   Entities: {len(registry.states)}")
-    print(f"   Automations: {len(automation.automation_analysis)}")
-    print(f"   Scripts: {len(automation.script_analysis)}")
-    print(f"   Scenes: {len(automation.scene_analysis)}")
-    print(f"   Ghost entities: {len(automation.ghost_entities)}")
-    print(f"   Conflicts: {len(automation.conflicting_entities)}")
-    print(f"   Dashboard entities: {len(dashboard.entity_in_dashboards)}")
-    print(f"   Log errors: {len(logs.errors)}")
-    print(f"   Template entities: {len(templates.template_entities)}")
-    print(f"   Persons: {len(persons.persons)}")
-    print(f"   Zones: {len(zones.zones)}")
-    print(f"   Energy sensors: {len(energy.energy_sensors)}")
-    print(
-        f"   Helpers: {len(helpers.timers)}T/{len(helpers.counters)}C/{len(helpers.input_booleans)}B/{len(helpers.input_numbers)}N"
-    )
-    print(f"   Services: {services.total_services}")
-    print(f"   HACS: {len(hacs.hacs_repos)} repos, {len(hacs.custom_components)} custom")
-    print(
-        f"   Cache: {cache.cache_stats.get('hits', 0)} hits / {cache.cache_stats.get('total', 0)} total ({cache.cache_stats.get('hit_rate_percent', 0)}% hit rate)"
-    )
-    print("=" * 60 + "\n")
+_logger = logging.getLogger(__name__)
 
 
-def generate_context_file(
-    config_path: str = None,
-    output_path: str = None,
-    ha_url: str = None,
-    ha_token: str = None,
-    mode: str = "hybrid",
-) -> dict:
-    """Generate HA context file.
+class GenerationError(RuntimeError):
+    """Controlled context-generation failure."""
 
-    Wrapper around main() that allows overriding paths and credentials.
-    Runs the full context generation pipeline.
 
-    Args:
-        config_path: Override HA config path.
-        output_path: Override output file path.
-        ha_url: Override HA URL.
-        ha_token: Override HA token.
-        mode: "online", "offline", or "hybrid".
+def run_generation(config: GenerationConfig) -> dict[str, Any]:
+    """Run one complete generation without mutating process-wide configuration."""
+    config.output_path.parent.mkdir(mode=0o750, parents=True, exist_ok=True)
+    provenance = ProvenanceTracker()
+    runtime = GenerationRuntime(config=config, provenance=provenance)
 
-    Returns:
-        Dictionary with generation statistics.
-    """
-    import os
+    with generation_scope(runtime):
+        invalidate_registry_cache()
 
-    # Override constants for this run
-    if config_path:
-        os.environ["HA_CONFIG_PATH"] = config_path
-        constants.HA_CONFIG_PATH = config_path
-    if output_path:
-        constants.OUTPUT_FILE = output_path
-    if ha_url:
-        os.environ["HA_URL"] = ha_url
-        constants.HA_URL = ha_url
-    if ha_token:
-        os.environ["HA_TOKEN"] = ha_token
-        constants.HA_TOKEN = ha_token
+        registry = RegistryCollector()
+        if not registry.collect():
+            raise GenerationError("Required Home Assistant data is unavailable")
 
-    # Ensure output directory exists
-    out_dir = os.path.dirname(constants.OUTPUT_FILE)
-    if out_dir:
-        os.makedirs(out_dir, exist_ok=True)
+        automation = AutomationAnalyzer(registry)
+        automation.collect()
+        automation.analyze()
 
-    # Run generation
-    main()
+        dashboard = DashboardAnalyzer(registry)
+        dashboard.analyze()
 
+        logs = LogAnalyzer()
+        logs.analyze(config.log_hours)
+
+        templates = TemplateEntityCollector(registry)
+        templates.collect()
+
+        history = HistoryAnalyzer(registry)
+        history.analyze(hours=config.history_hours)
+
+        persons = PersonAnalyzer(registry)
+        persons.collect()
+
+        zones = ZoneAnalyzer(registry)
+        zones.collect()
+
+        energy = EnergyAnalyzer(registry)
+        energy.collect()
+
+        helpers = HelperAnalyzer(registry)
+        helpers.collect()
+
+        services = ServiceCatalogAnalyzer(registry)
+        services.collect()
+
+        hacs = HacsAnalyzer(registry)
+        hacs.collect()
+
+        cache = CacheAnalyzer(registry)
+        cache.collect()
+
+        snapshot_collector = ComprehensiveSnapshotCollector(config, provenance)
+        snapshot = snapshot_collector.collect()
+
+        generator = ReportGenerator(
+            registry,
+            automation,
+            dashboard,
+            logs,
+            templates,
+            history,
+            persons,
+            zones,
+            energy,
+            helpers,
+            services,
+            hacs,
+            cache=cache,
+            generation_config=config,
+            provenance=provenance,
+            comprehensive_snapshot=snapshot,
+        )
+        generator.generate(str(config.output_path))
+
+    if not config.output_path.exists():
+        raise GenerationError("Context generator did not create an artifact")
+    output_bytes = config.output_path.stat().st_size
+    if output_bytes > config.max_output_bytes:
+        config.output_path.unlink(missing_ok=True)
+        raise GenerationError("Generated context exceeds configured output limit")
+
+    summary = provenance.summary()
     return {
-        "output_file": constants.OUTPUT_FILE,
-        "config_path": constants.HA_CONFIG_PATH,
-        "mode": mode,
+        "output_file": str(config.output_path),
+        "config_path": str(config.config_path),
+        "mode": config.mode,
+        "output_bytes": output_bytes,
+        "completeness": summary["completeness"],
+        "source_counts": summary["counts"],
+        "entities": len(registry.states),
+        "registered_entities": len(registry.entities),
+        "devices": len(registry.devices),
+        "areas": len(registry.areas),
+        "automations": len(automation.automation_analysis),
+        "scripts": len(automation.script_analysis),
+        "scenes": len(automation.scene_analysis),
     }
 
 
+def generate_context_file(
+    config_path: str | None = None,
+    output_path: str | None = None,
+    ha_url: str | None = None,
+    ha_token: str | None = None,
+    mode: GenerationMode = "hybrid",
+) -> dict[str, Any]:
+    """Generate a context artifact from explicit, per-call configuration."""
+    defaults = GenerationConfig.from_env()
+    config = GenerationConfig(
+        config_path=Path(config_path) if config_path is not None else defaults.config_path,
+        output_path=Path(output_path) if output_path is not None else defaults.output_path,
+        ha_url=ha_url if ha_url is not None else defaults.ha_url,
+        ha_token=ha_token if ha_token is not None else defaults.ha_token,
+        mode=mode,
+        history_hours=defaults.history_hours,
+        log_hours=defaults.log_hours,
+        calendar_days=defaults.calendar_days,
+        max_output_bytes=defaults.max_output_bytes,
+        max_source_bytes=defaults.max_source_bytes,
+    )
+    return run_generation(config)
+
+
+def main() -> None:
+    """CLI-compatible entry point using environment-derived configuration."""
+    run_generation(GenerationConfig.from_env())
+
+
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except GenerationError as exc:
+        _logger.error("Context generation failed: %s", exc)
+        raise SystemExit(1) from exc

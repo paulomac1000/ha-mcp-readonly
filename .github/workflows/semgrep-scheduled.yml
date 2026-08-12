@@ -1,3 +1,4 @@
+# ai-skills-policy-profile: trusted-ci
 name: Semgrep Full Scan (Scheduled)
 
 on:
@@ -5,19 +6,23 @@ on:
     - cron: "0 3 * * *"
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 concurrency:
   group: semgrep-full
   cancel-in-progress: true
 
 jobs:
   semgrep-full:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
     container:
       image: semgrep/semgrep@sha256:f4791a54c891eabe1188248135574e6e03dfc31dfd3f3b747c7bec7079bfed1b
     permissions:
       contents: read
-      security-events: write
       actions: read
+      security-events: write
 
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v6
@@ -26,11 +31,18 @@ jobs:
           fetch-depth: 0
 
       - name: Semgrep Full Scan
+        shell: bash
         run: |
-          semgrep ci --sarif --output=semgrep.sarif \
-            --config=auto --config=secrets --config=owasp-top-ten
-        env:
-          SEMGREP_APP_TOKEN: ${{ secrets.SEMGREP_APP_TOKEN }}
+          set +e
+          semgrep scan --sarif --output=semgrep.sarif \
+            --config=p/auto --config=p/secrets --config=p/owasp-top-ten .
+          scan_status=$?
+          set -e
+          if [ "$scan_status" -ne 0 ]; then
+            echo "Semgrep scan failed before finding triage (exit $scan_status)" >&2
+            exit "$scan_status"
+          fi
+          python scripts/check_semgrep_sarif.py semgrep.sarif --repository-root .
 
       - name: Upload SARIF to GitHub Security
         id: upload-sarif
@@ -43,4 +55,4 @@ jobs:
 
       - name: Warn if SARIF upload failed
         if: always() && steps.upload-sarif.outcome == 'failure'
-        run: echo "::warning::SARIF upload failed — check codeql-action reference or permissions"
+        run: echo "::warning::SARIF upload failed — scan result remains authoritative"

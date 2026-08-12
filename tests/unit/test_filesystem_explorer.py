@@ -125,7 +125,7 @@ class TestSecurityContext:
 
     def test_max_file_size(self, security_context, temp_dir):
         """Test blocking of overly large files."""
-        with pytest.raises(PermissionError, match="too large"):
+        with pytest.raises(PermissionError, match="exceeds maximum size"):
             security_context.validate_path(temp_dir / "allowed" / "large.log")
 
     def test_max_depth(self, security_context, temp_dir):
@@ -138,7 +138,7 @@ class TestSecurityContext:
 
         (deep_path / "deep.txt").write_text("Deep file")
 
-        with pytest.raises(PermissionError, match="too deep"):
+        with pytest.raises(PermissionError, match="maximum depth"):
             security_context.validate_path(deep_path / "deep.txt")
 
 
@@ -222,7 +222,7 @@ class TestFilesystemTools:
         result = json.loads(result_str)
 
         assert "error" in result
-        assert "binary" in str(result["error"]).lower()
+        assert "allowlisted" in str(result["error"]).lower()
         assert "db.sqlite" in str(result["error"])
 
     def test_read_file_not_a_file(self, mock_mcp, temp_dir, allow_temp_dir_in_security_context):
@@ -232,7 +232,7 @@ class TestFilesystemTools:
             mock_mcp.get_tool("read_file")(file_path=str(temp_dir / "allowed" / "subdir"))
         )
         assert "error" in result
-        assert "Not a file" in str(result["error"])
+        assert "regular file" in str(result["error"])
 
     def test_read_file_blocked_path(self, mock_mcp, temp_dir, allow_temp_dir_in_security_context):
         """Path outside allowlist → Access denied."""

@@ -2,21 +2,31 @@
 
 Exposes the full tool catalog with capability manifests over the MCP
 transport itself. The REST endpoint ``GET /api/tools/{name}/manifest`` is
-unreachable for an agent connected over pure MCP/SSE; this tool closes that
+unreachable for an agent connected over pure MCP; this tool closes that
 gap (mcp-server-standards.md, rule 2b, L3+).
 """
 
 import logging
 import re
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as package_version
 from typing import Any
 
 from tools import TOOLS_VERSION
-from tools.manifests import get_all_manifests, make_manifest, register_manifest
+from tools.constants import DEV_TOOLS_ENABLED, MCP_TRANSPORT, REST_API_ENABLED
+from tools.manifests import (
+    active_profile_initialized,
+    get_all_manifests,
+    get_inactive_reasons,
+    make_manifest,
+    register_manifest,
+)
 from tools.utils import _error_response, _success_response
+from version import __version__
 
 _logger = logging.getLogger(__name__)
 
-CAPABILITIES_SCHEMA_VERSION = "1.0"
+CAPABILITIES_SCHEMA_VERSION = "1.1"
 
 # Category assignment rules: (regex_pattern, category_name).
 # Tools are matched in order; first match wins. Unmatched tools fall into "Other".
@@ -76,35 +86,96 @@ def _categorize_tool(name: str) -> str:
     return "Other"
 
 
-def _do_describe_ha_capabilities() -> dict[str, Any]:
-    """Build the capability catalog from registered tool manifests. Zero I/O.
+def _installed_version(distribution: str) -> str:
+    try:
+        return package_version(distribution)
+    except PackageNotFoundError:
+        return "unknown"
 
-    Returns:
-        Dict with schema_version, server name, tools_version, supported
-        transports, tool_count, the sorted list of tool manifests, and
-        a categories dict grouping tools by category.
-    """
-    manifests = get_all_manifests()
-    tools = sorted(manifests.values(), key=lambda m: str(m.get("name", "")))
 
-    # Group tools by category
+def _do_describe_ha_capabilities(
+    supported_names: set[str] | None = None,
+) -> dict[str, Any]:
+    """Build supported and active catalogs without contacting external dependencies."""
+    declared_manifests = get_all_manifests(active_only=False)
+    supported_manifests = (
+        declared_manifests
+        if supported_names is None
+        else {
+            name: manifest
+            for name, manifest in declared_manifests.items()
+            if name in supported_names
+        }
+    )
+    initialized = active_profile_initialized()
+    active_manifests = get_all_manifests(active_only=True) if initialized else {}
+    inactive_reasons = get_inactive_reasons() if initialized else {}
+    active_names = set(active_manifests) & set(supported_manifests)
+    tools = []
+    for manifest in supported_manifests.values():
+        item = dict(manifest)
+        name = str(item.get("name", ""))
+        runtime_active = name in active_names if initialized else None
+        item["runtime_active"] = runtime_active
+        if name in inactive_reasons:
+            item["inactive_reason"] = inactive_reasons[name]
+        tools.append(item)
+    tools.sort(key=lambda manifest: str(manifest.get("name", "")))
+
     categories: dict[str, dict[str, Any]] = {}
-    for t in tools:
-        name = str(t.get("name", ""))
-        cat_name = _categorize_tool(name)
-        if cat_name not in categories:
-            categories[cat_name] = {"tool_count": 0, "tools": []}
-        categories[cat_name]["tools"].append(
-            {"name": name, "description": str(t.get("description", ""))}
+    for tool in tools:
+        name = str(tool.get("name", ""))
+        category = _categorize_tool(name)
+        bucket = categories.setdefault(category, {"tool_count": 0, "tools": []})
+        bucket["tools"].append(
+            {
+                "name": name,
+                "description": str(tool.get("description", "")),
+                "active": tool.get("runtime_active"),
+                "inactive_reason": tool.get("inactive_reason"),
+            }
         )
-        categories[cat_name]["tool_count"] = len(categories[cat_name]["tools"])
+        bucket["tool_count"] = len(bucket["tools"])
 
+    supported_transports = ["stdio", "streamable-http"]
+    active_transport = "stdio" if MCP_TRANSPORT == "stdio" else "streamable-http"
+    compatibility_adapters = ["authenticated-rest"] if REST_API_ENABLED else []
+    protocol_versions = sorted(
+        {
+            str(revision)
+            for manifest in tools
+            for revision in manifest.get("protocol_revisions", [])
+            if revision
+        }
+    )
+    active_count = len(active_names) if initialized else len(tools)
     return {
         "schema_version": CAPABILITIES_SCHEMA_VERSION,
         "server": "HA-Observer",
+        "server_version": __version__,
         "tools_version": TOOLS_VERSION,
-        "transports": ["sse", "rest"],
-        "tool_count": len(tools),
+        "sdk": {
+            "family": "fastmcp",
+            "distribution": "fastmcp",
+            "version": _installed_version("fastmcp"),
+        },
+        "protocol_versions": protocol_versions,
+        "supported_transports": supported_transports,
+        "active_transports": [active_transport],
+        "compatibility_adapters": compatibility_adapters,
+        "transports": supported_transports + compatibility_adapters,
+        "profile": {
+            "mcp_transport": active_transport,
+            "dev_tools_enabled": DEV_TOOLS_ENABLED,
+            "rest_api_enabled": REST_API_ENABLED,
+        },
+        "tool_count": active_count,
+        "supported_tool_count": len(tools),
+        "active_profile_initialized": initialized,
+        "active_tool_count": active_count,
+        "inactive_tool_count": len(tools) - active_count if initialized else None,
+        "supported_component_counts": {"tools": len(tools), "resources": 0, "prompts": 0},
+        "active_component_counts": {"tools": active_count, "resources": 0, "prompts": 0},
         "tools": tools,
         "categories": categories,
     }
@@ -113,30 +184,33 @@ def _do_describe_ha_capabilities() -> dict[str, Any]:
 def register_capability_tools(mcp: Any) -> None:
     """Register the capability introspection tool on the MCP server."""
 
-    register_manifest(
-        "describe_ha_capabilities",
-        make_manifest("describe_ha_capabilities", timeout_ms=1000, latency="instant"),
-    )
+    manifest = make_manifest("describe_ha_capabilities", timeout_ms=1000, latency="interactive")
+    manifest["extensions"]["target_binding"] = {
+        "kind": "deployment-resource",
+        "target": "runtime",
+        "revalidation": "per-invocation",
+    }
+    register_manifest("describe_ha_capabilities", manifest)
 
     @mcp.tool()
     async def describe_ha_capabilities() -> str:
-        """Return the catalog of registered tools with their capability manifests.
+        """Return the supported catalog and active deployment profile.
 
         This is a zero-I/O introspection tool. It lets an AI agent inspect
-        every tool's risk level, side effects, determinism, latency and other
-        manifest metadata without invoking the tools themselves. Unlike the
-        REST-only manifest endpoint, this works over the MCP/SSE transport.
+        every governed capability's risk, side effects, activation state and
+        inactive reason without invoking the operation itself.
 
         Args:
             None.
 
         Returns:
-            JSON string with a ``success`` flag and a payload containing
-            ``schema_version``, ``tools_version``, supported ``transports``,
-            ``tool_count`` and the list of tool manifests.
+            JSON string with a ``success`` flag and a payload containing the
+            supported and active catalog counts plus per-tool manifests.
         """
         try:
-            return _success_response(_do_describe_ha_capabilities())
+            names = getattr(mcp, "names", None)
+            supported_names = names() if callable(names) else None
+            return _success_response(_do_describe_ha_capabilities(supported_names=supported_names))
         except Exception as exc:
             _logger.error("describe_ha_capabilities failed: %s", exc)
             return _error_response(str(exc))

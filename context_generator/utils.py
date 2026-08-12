@@ -13,6 +13,9 @@ import requests
 import yaml
 
 from . import constants
+from .provenance import record_count
+from .runtime import current_config, current_provenance
+from .storage_policy import sanitize_model_visible_storage
 
 _logger = logging.getLogger(__name__)
 
@@ -34,7 +37,48 @@ BLOCKED_REGISTRIES = frozenset(
 _CACHE_STATS: dict[str, int] = {"hits": 0, "misses": 0, "blocked": 0, "total": 0}
 
 
-def invalidate_registry_cache():
+def _config_path() -> Path:
+    config = current_config()
+    return config.config_path if config is not None else Path(constants.HA_CONFIG_PATH)
+
+
+def _network_settings() -> tuple[str, str, bool, str]:
+    config = current_config()
+    if config is None:
+        return "", "", False, "unconfigured"
+    return config.ha_url, config.ha_token, config.network_enabled, config.mode
+
+
+def _record_source(
+    source: str,
+    *,
+    method: str,
+    status: str,
+    data: Any = None,
+    reason: str | None = None,
+    requested: str | None = None,
+) -> None:
+    provenance = current_provenance()
+    if provenance is None:
+        return
+    size = 0
+    if data is not None:
+        try:
+            size = len(json.dumps(data, ensure_ascii=False, default=str).encode("utf-8"))
+        except (TypeError, ValueError):
+            size = len(repr(data).encode("utf-8", errors="replace"))
+    provenance.record(
+        source,
+        method=method,
+        status=status,  # type: ignore[arg-type]
+        records=record_count(data),
+        size_bytes=size,
+        reason=reason,
+        requested=requested,
+    )
+
+
+def invalidate_registry_cache() -> None:
     """Clears registry cache."""
     global _registry_cache, _registry_cache_timestamps
     with _CACHE_LOCK:
@@ -74,9 +118,15 @@ def load_registry(name: str, use_cache: bool = True) -> dict:
     if name in BLOCKED_REGISTRIES or any(name.startswith(prefix) for prefix in ("auth_provider.",)):
         with _CACHE_LOCK:
             _CACHE_STATS["blocked"] += 1
+        _record_source(
+            f"storage:{name}",
+            method="storage",
+            status="skipped",
+            reason="policy: credential-bearing source blocked",
+        )
         return {}
 
-    cache_key = f"{constants.HA_CONFIG_PATH}:{name}"
+    cache_key = f"{_config_path()}:{name}"
     now = datetime.now().timestamp()
 
     # Check cache
@@ -90,16 +140,34 @@ def load_registry(name: str, use_cache: bool = True) -> dict:
         _CACHE_STATS["misses"] += 1
 
     try:
-        path = Path(constants.HA_CONFIG_PATH) / ".storage" / name
+        path = _config_path() / ".storage" / name
         if path.exists():
             with open(path, encoding="utf-8") as f:
-                data = json.load(f)
+                raw = json.load(f)
+                data = sanitize_model_visible_storage(name, raw)
+                if data is None:
+                    with _CACHE_LOCK:
+                        _CACHE_STATS["blocked"] += 1
+                    _record_source(
+                        f"storage:{name}",
+                        method="storage",
+                        status="skipped",
+                        reason="policy: .storage schema is not allowlisted for model-visible context",
+                    )
+                    return {}
                 with _CACHE_LOCK:
                     _registry_cache[cache_key] = data
                     _registry_cache_timestamps[cache_key] = now
+                _record_source(f"storage:{name}", method="storage", status="complete", data=data)
                 return data
+        _record_source(
+            f"storage:{name}", method="storage", status="unavailable", reason="source not found"
+        )
     except Exception as e:
         _logger.warning("Error loading registry %s: %s", name, e)
+        _record_source(
+            f"storage:{name}", method="storage", status="unavailable", reason=type(e).__name__
+        )
 
     return {}
 
@@ -107,56 +175,85 @@ def load_registry(name: str, use_cache: bool = True) -> dict:
 def make_ha_request(
     endpoint: str, method: str = "GET", data: Any = None, timeout: int = 15
 ) -> dict[str, Any]:
-    """
-    Executes request to HA API with retry.
-    Based on test_utils.py make_ha_request.
-    """
+    """Execute an HA API request for the current isolated generation run."""
+    ha_url, ha_token, network_enabled, mode = _network_settings()
+    source = f"rest:{endpoint.split('?', maxsplit=1)[0]}"
+    if not network_enabled:
+        reason = "offline mode" if mode == "offline" else "HA credentials unavailable"
+        _record_source(
+            source,
+            method="rest",
+            status="skipped" if mode == "offline" else "unavailable",
+            reason=reason,
+            requested=endpoint,
+        )
+        return {"success": False, "error": reason, "error_code": "OFFLINE"}
+
     headers = {
-        "Authorization": f"Bearer {constants.HA_TOKEN}",
+        "Authorization": f"Bearer {ha_token}",
         "Content-Type": "application/json",
     }
 
-    for attempt in range(3):
+    # Context collection follows the same conservative no-automatic-retry
+    # contract as public READ operations. A failed source is recorded in the
+    # provenance matrix rather than being retried implicitly.
+    normalized_method = method.upper()
+    try:
+        if normalized_method == "GET":
+            response = requests.get(f"{ha_url}{endpoint}", headers=headers, timeout=timeout)
+        elif normalized_method == "POST":
+            response = requests.post(
+                f"{ha_url}{endpoint}", headers=headers, json=data, timeout=timeout
+            )
+        else:
+            reason = f"Unsupported method: {method}"
+            _record_source(
+                source,
+                method="rest",
+                status="unavailable",
+                reason=reason,
+                requested=endpoint,
+            )
+            return {"success": False, "error": reason}
+
+        response.raise_for_status()
         try:
-            if method == "GET":
-                response = requests.get(
-                    f"{constants.HA_URL}{endpoint}", headers=headers, timeout=timeout
-                )
-            elif method == "POST":
-                response = requests.post(
-                    f"{constants.HA_URL}{endpoint}", headers=headers, json=data, timeout=timeout
-                )
-            else:
-                return {"success": False, "error": f"Unsupported method: {method}"}
+            payload: Any = response.json()
+        except ValueError:
+            payload = response.text
+        _record_source(source, method="rest", status="complete", data=payload, requested=endpoint)
+        return {"success": True, "data": payload}
 
-            response.raise_for_status()
-            return {"success": True, "data": response.json()}
-
-        except requests.exceptions.HTTPError as e:
-            return {
-                "success": False,
-                "error": f"HTTP {e.response.status_code}: {str(e)}",
-            }
-        except requests.exceptions.Timeout:
-            if attempt < 2:
-                continue
-            return {"success": False, "error": "Request timeout after 3 attempts"}
-        except Exception as e:
-            if attempt < 2:
-                continue
-            return {"success": False, "error": str(e)}
-
-    return {"success": False, "error": "Max retries exceeded"}
+    except requests.exceptions.HTTPError as e:
+        reason = f"HTTP {e.response.status_code}: {str(e)}"
+        _record_source(
+            source, method="rest", status="unavailable", reason=reason, requested=endpoint
+        )
+        return {"success": False, "error": reason}
+    except requests.exceptions.Timeout:
+        reason = "Request timeout"
+        _record_source(
+            source, method="rest", status="unavailable", reason=reason, requested=endpoint
+        )
+        return {"success": False, "error": reason}
+    except Exception as e:
+        reason = type(e).__name__
+        _record_source(
+            source, method="rest", status="unavailable", reason=reason, requested=endpoint
+        )
+        return {"success": False, "error": str(e)}
 
 
 def load_yaml_file(filepath: str) -> Any:
     """Loads YAML file with error handling."""
-    path = Path(filepath) if os.path.isabs(filepath) else Path(constants.HA_CONFIG_PATH) / filepath
+    path = Path(filepath) if os.path.isabs(filepath) else _config_path() / filepath
     if not path.exists():
         return None
     try:
         with open(path, encoding="utf-8") as f:
-            return yaml.load(f, Loader=constants.HomeAssistantLoader)
+            return yaml.load(  # nosec B506 -- HomeAssistantLoader extends yaml.SafeLoader
+                f, Loader=constants.HomeAssistantLoader
+            )
     except Exception as e:
         _logger.warning("YAML error %s: %s", filepath, e)
         return None
@@ -168,7 +265,9 @@ def validate_yaml_syntax(yaml_content: str) -> dict[str, Any]:
     Based on test_config.py validate_yaml_syntax.
     """
     try:
-        yaml.load(yaml_content, Loader=constants.HomeAssistantLoader)
+        yaml.load(  # nosec B506 -- HomeAssistantLoader extends yaml.SafeLoader
+            yaml_content, Loader=constants.HomeAssistantLoader
+        )
         return {"syntax_valid": True, "issues": []}
     except yaml.YAMLError as e:
         return {"syntax_valid": False, "error": f"YAML syntax error: {str(e)}"}

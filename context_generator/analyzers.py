@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from . import constants
+from .runtime import current_config
 from .utils import (
     extract_controlled_entities,
     extract_entities_from_data,
@@ -27,10 +28,20 @@ from .utils import (
 )
 
 
+def _active_config_path() -> Path:
+    config = current_config()
+    return config.config_path if config is not None else Path(constants.HA_CONFIG_PATH)
+
+
+def _active_log_hours() -> int:
+    config = current_config()
+    return config.log_hours if config is not None else constants.LOG_HOURS_BACK
+
+
 class RegistryCollector:
     """Collects and integrates data from HA registries with caching."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.entities: list[dict] = []
         self.devices: list[dict] = []
         self.areas: list[dict] = []
@@ -77,8 +88,14 @@ class RegistryCollector:
             self.states = states_result["data"]
             print(f"   ({len(self.states)} entities)")
         else:
-            print(f"   Error: {states_result.get('error')}")
-            return False
+            print(f"   Unavailable: {states_result.get('error')}")
+            config = current_config()
+            if config is None or config.network_required:
+                return False
+            # Offline and hybrid generation remain useful from local registries
+            # and configuration files. Missing states are made explicit in the
+            # provenance matrix and data-quality section.
+            self.states = []
 
         self._build_maps()
         self._compute_config_entry_health()
@@ -382,7 +399,7 @@ def _analyze_choose_branches(actions: list[dict[str, Any]]) -> dict[str, Any]:
 class AutomationAnalyzer:
     """Analyzes automations, scripts, and scenes with full conflict detection."""
 
-    def __init__(self, registry: RegistryCollector):
+    def __init__(self, registry: RegistryCollector) -> None:
         self.registry = registry
         self.automations: list[dict] = []
         self.scripts: dict = {}
@@ -416,7 +433,7 @@ class AutomationAnalyzer:
         # Conflicting entities
         self.conflicting_entities: dict[str, dict] = {}
 
-    def collect(self):
+    def collect(self) -> None:
         """Collects data about HA logic."""
         print("Loading logic (automations, scripts, scenes)...")
 
@@ -449,7 +466,7 @@ class AutomationAnalyzer:
         Collects blueprints.
         Based on test_blueprints.py list_blueprints.
         """
-        blueprints_dir = Path(constants.HA_CONFIG_PATH) / "blueprints"
+        blueprints_dir = _active_config_path() / "blueprints"
         if not blueprints_dir.exists():
             return
 
@@ -481,7 +498,7 @@ class AutomationAnalyzer:
 
         print(f"   Blueprints: {len(self.blueprints)}")
 
-    def analyze(self):
+    def analyze(self) -> None:
         """Analyzes logic and builds dependency graphs."""
         print("Analyzing logic and dependencies...")
 
@@ -714,17 +731,17 @@ class AutomationAnalyzer:
 class DashboardAnalyzer:
     """Analyzes entity usage in dashboards with extended custom card support."""
 
-    def __init__(self, registry: RegistryCollector):
+    def __init__(self, registry: RegistryCollector) -> None:
         self.registry = registry
         self.entity_in_dashboards: dict[str, list[dict]] = defaultdict(list)
         self.dashboards_found: list[dict] = []  # CHANGE: now Dict with metadata
         self.missing_entities: dict[str, list[str]] = defaultdict(list)  # NEW
 
-    def analyze(self):
+    def analyze(self) -> None:
         """Analyzes all dashboards."""
         print("Analyzing Lovelace dashboards...")
 
-        storage_path = Path(constants.HA_CONFIG_PATH) / ".storage"
+        storage_path = _active_config_path() / ".storage"
         if not storage_path.exists():
             print("   Warning: Missing .storage folder")
             return
@@ -951,12 +968,12 @@ class DashboardAnalyzer:
 class TemplateEntityCollector:
     """Collects template entities with YAML validation."""
 
-    def __init__(self, registry: RegistryCollector):
+    def __init__(self, registry: RegistryCollector) -> None:
         self.registry = registry
         self.template_entities: list[dict] = []
         self.validation_errors: list[dict] = []
 
-    def collect(self):
+    def collect(self) -> None:
         """Collects template entities."""
         print("Collecting template entities...")
 
@@ -1152,7 +1169,7 @@ class TemplateEntityCollector:
 class LogAnalyzer:
     """Analyzes HA logs with categorization per component."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.errors: list[dict] = []
         self.warnings: list[dict] = []
         self.error_patterns: dict[str, dict] = defaultdict(
@@ -1173,14 +1190,16 @@ class LogAnalyzer:
         self.api_errors: list[dict] = []
         self.startup_errors: list[dict] = []  # NOWE
 
-    def analyze(self, hours: int = constants.LOG_HOURS_BACK):
+    def analyze(self, hours: int | None = None) -> None:
         """
         Analyzes logs from the last X hours.
         Based on test_real_ha.py get_log_insights.
         """
+        if hours is None:
+            hours = _active_log_hours()
         print(f"Analyzing logs (last {hours}h)...")
 
-        log_path = Path(constants.HA_CONFIG_PATH) / "home-assistant.log"
+        log_path = _active_config_path() / "home-assistant.log"
         if not log_path.exists():
             print("   Warning: Missing home-assistant.log file")
             return
@@ -1453,12 +1472,12 @@ class LogAnalyzer:
 class HistoryAnalyzer:
     """Analyzes entity change history."""
 
-    def __init__(self, registry: RegistryCollector):
+    def __init__(self, registry: RegistryCollector) -> None:
         self.registry = registry
         self.recent_changes: list[dict] = []
         self.change_frequency: dict[str, int] = Counter()
 
-    def analyze(self, hours: int = 1, batch_size: int = 25):
+    def analyze(self, hours: int = 1, batch_size: int = 25) -> None:
         """
         Analyzes recent entity changes.
         Fetches history in batches of batch_size entities to avoid URL limits.
@@ -1580,14 +1599,14 @@ class HistoryAnalyzer:
 class PersonAnalyzer:
     """Collects person entities, linked trackers, and location data."""
 
-    def __init__(self, registry: RegistryCollector):
+    def __init__(self, registry: RegistryCollector) -> None:
         self.registry = registry
         self.persons: list[dict] = []
         self.person_states: dict[str, dict] = {}
         self.trackers: dict[str, list[dict]] = defaultdict(list)
         self.tracker_states: dict[str, dict] = {}
 
-    def collect(self):
+    def collect(self) -> None:
         """Collect person and tracker data from registry and API states."""
         print("Collecting person / tracking data...")
 
@@ -1636,13 +1655,13 @@ class PersonAnalyzer:
 class ZoneAnalyzer:
     """Collects zone definitions and presence mapping."""
 
-    def __init__(self, registry: RegistryCollector):
+    def __init__(self, registry: RegistryCollector) -> None:
         self.registry = registry
         self.zones: list[dict] = []
         self.zone_states: dict[str, dict] = {}
         self.persons_in_zones: dict[str, list[str]] = defaultdict(list)
 
-    def collect(self):
+    def collect(self) -> None:
         """Collect zone data from registry and API states."""
         print("Collecting zone / geofence data...")
 
@@ -1702,13 +1721,13 @@ class ZoneAnalyzer:
 class EnergyAnalyzer:
     """Collects energy dashboard data and consumption analysis."""
 
-    def __init__(self, registry: RegistryCollector):
+    def __init__(self, registry: RegistryCollector) -> None:
         self.registry = registry
         self.energy_data: dict[str, Any] = {}
         self.consumption_by_device: dict[str, dict] = {}
         self.energy_sensors: list[dict] = []
 
-    def collect(self):
+    def collect(self) -> None:
         """Collect energy data from API."""
         print("Collecting energy dashboard data...")
 
@@ -1766,7 +1785,7 @@ class EnergyAnalyzer:
 class HelperAnalyzer:
     """Collects timers, counters, and input helpers."""
 
-    def __init__(self, registry: RegistryCollector):
+    def __init__(self, registry: RegistryCollector) -> None:
         self.registry = registry
         self.timers: list[dict] = []
         self.counters: list[dict] = []
@@ -1778,7 +1797,7 @@ class HelperAnalyzer:
         self.input_buttons: list[dict] = []
         self.nfc_tags: list[dict] = []
 
-    def collect(self):
+    def collect(self) -> None:
         """Collect helper entity data from states and registry."""
         print("Collecting helper entities...")
 
@@ -1846,12 +1865,12 @@ class HelperAnalyzer:
 class ServiceCatalogAnalyzer:
     """Collects available Home Assistant services."""
 
-    def __init__(self, registry: RegistryCollector):
+    def __init__(self, registry: RegistryCollector) -> None:
         self.registry = registry
         self.services: dict[str, list[dict]] = {}
         self.total_services = 0
 
-    def collect(self):
+    def collect(self) -> None:
         """Collect available services from API."""
         print("Collecting service catalog...")
 
@@ -1880,13 +1899,13 @@ class ServiceCatalogAnalyzer:
 class HacsAnalyzer:
     """Collects HACS data and custom components."""
 
-    def __init__(self, registry: RegistryCollector):
+    def __init__(self, registry: RegistryCollector) -> None:
         self.registry = registry
         self.hacs_repos: list[dict] = []
         self.custom_components: list[dict] = []
-        self.custom_components_dir = os.path.join(constants.HA_CONFIG_PATH, "custom_components")
+        self.custom_components_dir = str(_active_config_path() / "custom_components")
 
-    def collect(self):
+    def collect(self) -> None:
         """Collect HACS and custom component data."""
         print("Collecting HACS / custom components...")
 
@@ -1950,11 +1969,11 @@ class HacsAnalyzer:
 class CacheAnalyzer:
     """Analyzes registry cache performance."""
 
-    def __init__(self, registry: RegistryCollector):
+    def __init__(self, registry: RegistryCollector) -> None:
         self.registry = registry
         self.cache_stats: dict[str, Any] = {}
 
-    def collect(self):
+    def collect(self) -> None:
         """Collects cache statistics."""
         self.cache_stats = get_cache_stats()
         hit_rate = self.cache_stats.get("hit_rate_percent", 0)

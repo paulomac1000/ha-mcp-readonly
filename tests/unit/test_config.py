@@ -211,6 +211,48 @@ class TestSearchConfigByParams:
         assert data["success"] is False
 
 
+class TestSearchConfigPrefilter:
+    """Raw-text pre-filter must skip non-matching files without losing matches."""
+
+    def test_file_mentions_any(self, tmp_path):
+        from tools.config import _file_mentions_any
+
+        hit = tmp_path / "hit.yaml"
+        hit.write_text("entity_id: light.room\n", encoding="utf-8")
+        assert _file_mentions_any(str(hit), ["light.room"]) is True
+        assert _file_mentions_any(str(hit), ["other.term"]) is False
+        assert _file_mentions_any(str(hit), ["light.room", "other.term"]) is True
+
+    def test_prefilter_keeps_matches_from_any_file(self, mock_mcp, tmp_path, monkeypatch):
+        from tools import config as config_mod
+        from tools.config import _do_search_config_by_params
+
+        (tmp_path / "configuration.yaml").write_text(
+            "homeassistant:\n  name: Home\n", encoding="utf-8"
+        )
+        (tmp_path / "entity_refs.yaml").write_text(
+            "sensor:\n  - platform: template\n    entity_id: light.room\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "unrelated.yaml").write_text("sensor:\n  - platform: mqtt\n", encoding="utf-8")
+
+        parsed: list[str] = []
+        original = config_mod._load_yaml_file_internal
+
+        def _record(file_path, config_path):
+            parsed.append(str(file_path).rsplit("/", 1)[-1])
+            return original(file_path, config_path)
+
+        monkeypatch.setattr(config_mod, "_load_yaml_file_internal", _record)
+        data = _do_search_config_by_params(entity_id="light.room", config_path=str(tmp_path))
+        assert data["success"] is True
+        assert "entity_refs.yaml" in parsed
+        assert "unrelated.yaml" not in parsed
+        assert data["summary"]["files_searched"] == 3
+        assert data["summary"]["total_matches"] >= 1
+        assert any("entity_refs.yaml" in r["file"] for r in data["results"])
+
+
 # ============================================================
 # Additional tests for uncovered areas
 # ============================================================

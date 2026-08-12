@@ -1,87 +1,204 @@
-name: Create and publish a Docker image
+# ai-skills-policy-profile: protected-release
+# Candidate code can reach only an isolated quarantine credential. The protected
+# publisher never checks out, loads, builds, or runs candidate code/images.
+name: Publish tested container
 
 on:
-  workflow_run:
-    workflows: [CI]
-    types: [completed]
-    branches: [main]
   push:
-    tags:
-      - "v*"
+    tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      release_ref:
+        description: Existing v* tag or full 40-character commit SHA reachable from the default branch
+        required: true
+        type: string
+
+permissions:
+  contents: read
 
 concurrency:
-  group: publish-${{ github.ref }}
-  cancel-in-progress: true
+  group: publish-${{ github.event_name == 'workflow_dispatch' && inputs.release_ref || github.ref }}
+  cancel-in-progress: false
 
 env:
-  REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
 
 jobs:
-  build-and-push-image:
-    runs-on: ubuntu-latest
-    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
-    permissions:
-      contents: write
-      packages: write
-      attestations: write
-      id-token: write
-
+  validate-build:
+    name: Build, quarantine, and test exact digest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    outputs:
+      release_sha: ${{ steps.revision.outputs.sha }}
+      release_tag: ${{ steps.revision.outputs.tag }}
+      quarantine_ref: ${{ steps.quarantine.outputs.ref }}
+      quarantine_digest: ${{ steps.quarantine.outputs.digest }}
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v6
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v6
         with:
+          fetch-depth: 0
           persist-credentials: false
-          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5  # v4
-
-      - name: Log in to the Container registry
-        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee  # v4
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Extract metadata (tags, labels) for Docker
-        id: meta
-        uses: docker/metadata-action@80c7e94dd9b9319bd5eb7a0e0fe9291e23a2a2e9  # v6
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=semver,pattern={{major}}
-            type=sha,format=short
-            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v') }}
-
-      - name: Build and push Docker image
-        id: push
-        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf  # v7
-        with:
-          context: .
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          platforms: linux/amd64,linux/arm64
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      - name: Generate artifact attestation
-        uses: actions/attest@281a49d4cbb0a72c9575a50d18f6deb515a11deb  # v4
-        with:
-          subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          subject-digest: ${{ steps.push.outputs.digest }}
-          push-to-registry: true
-
-      - name: Create GitHub Release
-        if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda  # v3
-        with:
-          generate_release_notes: true
-          make_latest: true
+      - name: Resolve and constrain release identity
+        id: revision
+        shell: bash
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_REF_NAME: ${{ github.ref_name }}
+          REQUESTED_REF: ${{ github.event_name == 'workflow_dispatch' && inputs.release_ref || github.ref }}
+        run: |
+          set -euo pipefail
+          requested="$REQUESTED_REF"
+          release_tag=""
+          if [[ "$EVENT_NAME" == "push" ]]; then
+            release_tag="$EVENT_REF_NAME"
+            requested="refs/tags/$release_tag"
+          fi
+          if [[ "$requested" =~ ^[0-9a-f]{40}$ ]]; then
+            release_sha="$requested"
+          else
+            case "$requested" in
+              refs/tags/v*) release_tag="${requested#refs/tags/}" ;;
+              v*) release_tag="$requested" ;;
+              *) echo "release_ref must be an existing v* tag or full commit SHA" >&2; exit 1 ;;
+            esac
+            git show-ref --verify --quiet "refs/tags/$release_tag" || {
+              echo "Tag not found: $release_tag" >&2
+              exit 1
+            }
+            release_sha="$(git rev-parse "refs/tags/$release_tag^{commit}")"
+          fi
+          [[ "$release_sha" =~ ^[0-9a-f]{40}$ ]]
+          git cat-file -e "$release_sha^{commit}"
+          git merge-base --is-ancestor "$release_sha" "origin/$DEFAULT_BRANCH" || {
+            echo "Selected revision is not reachable from origin/$DEFAULT_BRANCH" >&2
+            exit 1
+          }
+          git checkout --detach "$release_sha"
+          test "$(git rev-parse HEAD)" = "$release_sha"
+          echo "sha=$release_sha" >> "$GITHUB_OUTPUT"
+          echo "tag=$release_tag" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
+        with:
+          python-version: "3.13"
+          cache: pip
+      - name: Test exact release source and build wheel
+        env:
+          RELEASE_SHA: ${{ steps.revision.outputs.sha }}
+        run: |
+          python -m pip install -c constraints-ci.txt '.[dev]'
+          ruff check .
+          ruff format --check .
+          mypy server.py tools/ context_generator/core.py context_generator/config.py \
+            context_generator/runtime.py context_generator/provenance.py context_generator/snapshot.py \
+            scripts/verify_runtime_endpoints.py --strict
+          pytest tests/unit tests/protocol -q
+          python -m build --wheel --no-isolation
+          test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
+      - uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4
+      - uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4
+      - name: Log in only to isolated quarantine registry
+        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4
+        with:
+          registry: ghcr.io
+          username: ${{ secrets.QUARANTINE_REGISTRY_USERNAME }}
+          password: ${{ secrets.QUARANTINE_REGISTRY_TOKEN }}
+      - name: Build multi-platform candidate once into quarantine
+        id: quarantine
+        shell: bash
+        env:
+          RELEASE_SHA: ${{ steps.revision.outputs.sha }}
+        run: |
+          set -euo pipefail
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          quarantine_ref="ghcr.io/${owner}/ha-mcp-readonly-quarantine:sha-${RELEASE_SHA}"
+          docker buildx build \
+            --file Dockerfile.release \
+            --platform linux/amd64,linux/arm64 \
+            --label "org.opencontainers.image.revision=${RELEASE_SHA}" \
+            --tag "$quarantine_ref" \
+            --push .
+          digest="$(docker buildx imagetools inspect "$quarantine_ref" --format '{{.Manifest.Digest}}')"
+          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          echo "ref=$quarantine_ref" >> "$GITHUB_OUTPUT"
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+      - name: Smoke exact quarantined digest on every published platform
+        shell: bash
+        env:
+          QUARANTINE_REF: ${{ steps.quarantine.outputs.ref }}
+          QUARANTINE_DIGEST: ${{ steps.quarantine.outputs.digest }}
+        run: |
+          set -euo pipefail
+          image_ref="${QUARANTINE_REF%:*}@${QUARANTINE_DIGEST}"
+          trap 'docker rm -f ha-mcp-quarantine-amd64 ha-mcp-quarantine-arm64 2>/dev/null || true' EXIT
+          for arch in amd64 arm64; do
+            docker run --rm --platform "linux/$arch" --entrypoint=id "$image_ref" -u | grep -qx '10001'
+            docker run --rm --platform "linux/$arch" --entrypoint=python \
+              -e MCP_TRANSPORT=stdio -e MCP_DEV_TOOLS_ENABLED=0 \
+              "$image_ref" -c 'import server; assert server.get_tool_count() == 145'
+            name="ha-mcp-quarantine-$arch"
+            docker run -dit --rm --platform "linux/$arch" --name "$name" "$image_ref"
+            for attempt in $(seq 1 60); do
+              state="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{end}}' "$name")"
+              [[ "$state" == healthy ]] && break
+              [[ "$state" == unhealthy ]] && { docker logs "$name"; exit 1; }
+              sleep 1
+            done
+            test "$(docker inspect --format '{{.State.Health.Status}}' "$name")" = healthy
+            docker rm -f "$name"
+          done
+
+  publish:
+    name: Promote exact tested digest
+    needs: validate-build
+    environment: release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4
+      # Docker credentials are keyed by registry hostname, so two ghcr.io logins
+      # overwrite each other. Keep this protected environment credential out of
+      # the candidate job and grant it only read access to quarantine plus write
+      # access to the release package.
+      - name: Log in with protected promotion credential
+        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4
+        with:
+          registry: ghcr.io
+          username: ${{ secrets.PROMOTION_REGISTRY_USERNAME }}
+          password: ${{ secrets.PROMOTION_REGISTRY_TOKEN }}
+      - name: Promote exact tested digest without loading candidate image
+        id: promote
+        shell: bash
+        env:
+          QUARANTINE_REF: ${{ needs.validate-build.outputs.quarantine_ref }}
+          EXPECTED_DIGEST: ${{ needs.validate-build.outputs.quarantine_digest }}
+          RELEASE_SHA: ${{ needs.validate-build.outputs.release_sha }}
+          RELEASE_TAG: ${{ needs.validate-build.outputs.release_tag }}
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          repository="ghcr.io/${GITHUB_REPOSITORY,,}"
+          source_ref="${QUARANTINE_REF%:*}@${EXPECTED_DIGEST}"
+          immutable_ref="$repository:sha-$RELEASE_SHA"
+          docker buildx imagetools create --tag "$immutable_ref" "$source_ref"
+          test "$(docker buildx imagetools inspect "$immutable_ref" --format '{{.Manifest.Digest}}')" = "$EXPECTED_DIGEST"
+          if [[ -n "$RELEASE_TAG" ]]; then
+            for tag in "$RELEASE_TAG" latest; do
+              docker buildx imagetools create --tag "$repository:$tag" "$source_ref"
+              test "$(docker buildx imagetools inspect "$repository:$tag" --format '{{.Manifest.Digest}}')" = "$EXPECTED_DIGEST"
+            done
+          fi
+          echo "digest=$EXPECTED_DIGEST" >> "$GITHUB_OUTPUT"
+          echo "subject_name=$repository" >> "$GITHUB_OUTPUT"
+      - name: Attest promoted digest
+        uses: actions/attest-build-provenance@96b4a1ef7235a096b17240c259729fdd70c83d45 # v3
+        with:
+          subject-name: ${{ steps.promote.outputs.subject_name }}
+          subject-digest: ${{ steps.promote.outputs.digest }}
+          push-to-registry: true

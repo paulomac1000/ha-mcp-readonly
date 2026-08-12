@@ -1,8 +1,9 @@
-# Home Assistant MCP Server Dependencies
-fastmcp>=2.0.0,<4.0.0
-requests>=2.28.0
-pyyaml>=6.0
-starlette>=0.27.0
-uvicorn>=0.22.0
-python-dateutil>=2.8.0
-pydantic>=2.0.0,<3.0.0
+# Direct runtime dependencies. CI builds the wheel once and installs this exact project metadata.
+fastmcp>=3.4.6,<3.5
+requests>=2.34.2,<2.35
+pyyaml>=6.0.3,<6.1
+starlette>=1.0,<2
+uvicorn>=0.52,<0.53
+python-dateutil>=2.9.0.post0,<3
+pydantic>=2.13.4,<2.14
+websockets>=17.0,<18

@@ -49,7 +49,7 @@ repos:
       # ── Types ──
       - id: mypy
         name: mypy strict
-        entry: mypy tools/ --strict
+        entry: mypy server.py tools/ --strict
         language: system
         types: [python]
         pass_filenames: false
@@ -60,7 +60,7 @@ repos:
       # ── Security ──
       - id: bandit
         name: Bandit security scan
-        entry: bandit -r tools/ -ll
+        entry: bandit -r server.py tools/ context_generator/ ha_graph/ -ll
         language: system
         types: [python]
         pass_filenames: false
@@ -92,7 +92,7 @@ repos:
       # ── Semgrep (security, runs before docs) ──
       - id: semgrep
         name: Semgrep security scan
-        entry: bash -c 'if command -v semgrep >/dev/null 2>&1; then semgrep --config=p/auto --config=p/secrets --config=p/owasp-top-ten --error --quiet . || exit 1; fi'
+        entry: bash -c 'if command -v semgrep >/dev/null 2>&1; then rm -f /tmp/ha-mcp-semgrep.sarif; semgrep scan --sarif --output=/tmp/ha-mcp-semgrep.sarif --config=p/auto --config=p/secrets --config=p/owasp-top-ten . && python3 scripts/check_semgrep_sarif.py /tmp/ha-mcp-semgrep.sarif --repository-root .; else echo "Semgrep CLI not installed; exact-head Semgrep Security Scan remains a required CI gate"; fi'
         language: system
         pass_filenames: false
         always_run: true
@@ -123,8 +123,8 @@ repos:
 
       # ── Docs ──
       - id: afds-docs
-        name: AFDS documentation validation
-        entry: bash -c 'if [ -f afds_config.yaml ] && command -v curl >/dev/null 2>&1; then curl -sS https://raw.githubusercontent.com/paulomac1000/ai-skills/main/skills/afds-doc-writer/docs_validate.py | python3 - --config afds_config.yaml --baseline .afds-baseline.json docs/ ./README.md ./CHANGELOG.md ./AGENTS.md ./CONTRIBUTING.md ./SECURITY.md; fi'
+        name: AFDS documentation validation (vendored pinned validator)
+        entry: make docs-check
         language: system
         pass_filenames: false
         always_run: true

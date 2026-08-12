@@ -21,6 +21,8 @@ _logger = logging.getLogger(__name__)
 
 TOOLS_VERSION = "1.0.0"
 
+_SEARCH_MAX_FILES = 3000
+
 
 # ========================================
 # INTERNAL HELPERS
@@ -33,6 +35,33 @@ def _load_yaml_file_internal(file_path: str, config_path: str) -> Any | None:
     if not full_path.exists():
         return None
     return load_yaml_file(str(full_path))
+
+
+def _file_mentions_any(file_path: str, terms: list[str]) -> bool:
+    """Streaming raw-text pre-filter with no false negatives after 4 MiB.
+
+    The old implementation inspected only the first 4 MiB and could report a
+    complete negative result even when a match appeared later. This scans the
+    complete file in bounded chunks while keeping a small overlap so a term
+    split across chunk boundaries is still detected.
+    """
+    if not terms:
+        return True
+    overlap = max(len(term) for term in terms) - 1
+    tail = ""
+    try:
+        with open(file_path, encoding="utf-8", errors="ignore") as handle:
+            while True:
+                chunk = handle.read(1024 * 1024)
+                if not chunk:
+                    return False
+                text = tail + chunk
+                if any(term in text for term in terms):
+                    return True
+                tail = text[-overlap:] if overlap > 0 else ""
+    except OSError:
+        # Fail open to the full YAML parser when the cheap filter cannot read.
+        return True
 
 
 def _sanitize_config(obj: Any) -> Any:
@@ -393,7 +422,6 @@ def _do_search_config_by_params(
 ) -> dict[str, Any]:
     if not any([entity_id, service, platform, device_class]):
         return {"success": False, "error": "At least one search parameter required"}
-    results = []
     search_files = []
     for root, dirs, files in os.walk(config_path):  # type: ignore[type-var]
         dirs[:] = [d for d in dirs if not d.startswith(".") and d != "__pycache__"]  # type: ignore[union-attr]
@@ -404,8 +432,13 @@ def _do_search_config_by_params(
                 if file_pattern and not fnmatch(relative_path, file_pattern):
                     continue
                 search_files.append((file_path, relative_path))
-    for file_path, relative_path in search_files:
+    bounded_files = search_files[:_SEARCH_MAX_FILES]
+    terms = [term for term in (entity_id, service, platform, device_class) if term]
+    results: list[dict[str, Any]] = []
+    for file_path, relative_path in bounded_files:
         try:
+            if terms and not _file_mentions_any(file_path, terms):
+                continue
             data = _load_yaml_file_internal(relative_path, config_path)  # type: ignore[arg-type]
             if not data:
                 continue
@@ -437,7 +470,10 @@ def _do_search_config_by_params(
             "file_pattern": file_pattern,
         },
         "summary": {
-            "files_searched": len(search_files),
+            "files_discovered": len(search_files),
+            "files_searched": len(bounded_files),
+            "search_truncated": len(search_files) > len(bounded_files),
+            "max_files": _SEARCH_MAX_FILES,
             "files_with_matches": len(results),
             "total_matches": sum(r["match_count"] for r in results),
         },
@@ -619,6 +655,9 @@ def register_config_tools(  # type: ignore[no-untyped-def]
     def get_main_configuration() -> str:
         """[READ] Fetches main configuration from file `configuration.yaml`.
         Returns structured YAML, with sensitive data (passwords, tokens) redacted.
+
+        Returns:
+            JSON with sanitized configuration data as a YAML string.
         """
         try:
             result = _do_get_main_configuration(config_path)
@@ -629,7 +668,12 @@ def register_config_tools(  # type: ignore[no-untyped-def]
 
     @mcp.tool()
     def list_custom_components() -> str:
-        """[READ] Fetches list of installed custom components (custom_components/)."""
+        """[READ] Fetches list of installed custom components (custom_components/).
+
+        Returns:
+            JSON with total component count and per-component name, path,
+            version, and domain metadata.
+        """
         try:
             result = _do_list_custom_components(config_path)
             return _success_response(result)

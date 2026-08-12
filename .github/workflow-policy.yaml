@@ -1,0 +1,10 @@
+schema_version: 1
+workflows:
+  .github/workflows/ai-skills-policy.yml: pull-request
+  .github/workflows/ci.yml: pull-request
+  .github/workflows/migration-evidence.yml: trusted-ci
+  .github/workflows/official-client.yml: pull-request
+  .github/workflows/precommit.yml: pull-request
+  .github/workflows/publish.yml: protected-release
+  .github/workflows/semgrep.yml: trusted-ci
+  .github/workflows/semgrep-scheduled.yml: trusted-ci

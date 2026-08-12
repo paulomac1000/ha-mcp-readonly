@@ -2,17 +2,27 @@ services:
   ha-mcp-readonly:
     image: ghcr.io/paulomac1000/ha-mcp-readonly:latest
     container_name: ha-mcp-readonly
-    env_file: .env
+    environment:
+      HA_URL: ${HA_URL:-http://homeassistant:8123}
+      HA_TOKEN: ${HA_TOKEN:?Set HA_TOKEN}
+      HA_CONFIG_PATH: /config
+      MCP_TRANSPORT: http
+      MCP_BIND_HOST: 0.0.0.0
+      MCP_AUTH_TOKEN: ${MCP_AUTH_TOKEN:?Set a strong MCP_AUTH_TOKEN}
+      MCP_ALLOWED_HOSTS: "${MCP_ALLOWED_HOSTS:-localhost,127.0.0.1,[::1]}"
+      HEALTH_SERVER_ENABLED: "1"
+      REST_API_ENABLED: "0"
     ports:
-      - "9091:9091"  # health
-      - "9092:9092"  # MCP SSE
-      - "9093:9093"  # REST API
+      - "127.0.0.1:9091:9091"
+      - "127.0.0.1:9092:9092"
     volumes:
-      - /path/to/ha/config:/config:ro
+      - ${HA_CONFIG_HOST_PATH:?Set HA_CONFIG_HOST_PATH}:/config:ro
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+      - /app/output:size=256m,mode=0750,uid=10001,gid=10001
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://localhost:9091/health"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 15s

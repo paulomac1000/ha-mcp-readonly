@@ -1174,6 +1174,9 @@ def register_state_tools(mcp, ha_url, ha_token, config_path: str | None = None) 
 
         Args:
             domain: Optional domain filter (e.g., 'light', 'switch'). If None, returns all.
+
+        Returns:
+            JSON with the list of available services, optionally filtered by domain.
         """
         cache_key = f"services_{domain}"
         cached = _get_cached(cache_key)
@@ -1237,6 +1240,10 @@ def register_state_tools(mcp, ha_url, ha_token, config_path: str | None = None) 
     async def get_domains_summary() -> str:
         """[READ] Return summary of how many entities are in each domain.
         Useful for quick system overview without fetching all states.
+
+        Returns:
+            JSON with total entity and domain counts, and per-domain totals
+            broken down by unavailable and unknown states.
         """
         cache_key = "domains_summary"
         cached = _get_cached(cache_key)

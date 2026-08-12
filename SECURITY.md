@@ -1,10 +1,20 @@
+---
+description: Supported versions, vulnerability reporting, and security boundaries for HA-MCP-Readonly.
+doc_id: reference.ha-mcp-security-policy
+type: reference
+status: active
+rigor: normative
+owners: [repository-maintainers]
+verification: Run the security-boundary unit tests, Bandit, authenticated runtime checks, and context redaction tests.
+---
+
 # Security Policy
 
 ## Supported Versions
 
 | Version | Supported          |
 | ------- | ------------------ |
-| 1.5.x   | :white_check_mark: |
+| 1.6.x   | Supported |
 
 ## Reporting a Vulnerability
 
@@ -32,22 +42,31 @@ This project is intentionally read-only. It **cannot**:
 
 ### Token Handling
 
-- `HA_TOKEN` is never exposed in tool outputs
-- Credentials are redacted from all log output
-- Environment variables are never logged
+- `HA_TOKEN` and caller bearer tokens are never exposed in tool outputs.
+- Context snapshots recursively redact credential-bearing fields, bearer tokens, JWTs, and secret query values.
+- Credential stores and secrets files are excluded from context content.
+- Environment variables are never logged.
 
 ### Filesystem Restrictions
 
-- Access is limited to the `/config` directory (Home Assistant configuration)
-- Path traversal attempts (e.g., `../etc/passwd`) are blocked
-- Maximum file size: 10MB
-- Maximum directory depth: 20 levels
-- Auth files (`auth`, `auth_provider.*`, `onboarding`) are explicitly blocked
+- Generic tools are limited to configured roots and reject traversal, sibling-prefix, and symlink escapes.
+- Generic reads block `.storage`, secrets files, environment files, and authentication records.
+- The context generator uses a separate reviewed collector, records provenance, applies source and output limits, and publishes atomically below `CONTEXT_OUTPUT_ROOT`.
+- Auth files (`auth`, `auth_provider.*`, `onboarding`, cloud credentials, and UUID records) are explicitly blocked from context content.
 
 ### Network
 
-- Only outbound HTTP/HTTPS connections to the configured `HA_URL`
-- No inbound connections other than the exposed API ports
+- Outbound Home Assistant traffic is limited to the configured `HA_URL`; offline context mode creates no network client.
+- Stdio is the default MCP transport. Network MCP and optional REST require bearer authentication.
+- Health, MCP, and REST ports should remain loopback-bound unless a trusted reverse proxy and network policy are in place.
+
+### Release trust boundary
+
+- Candidate source is built and exercised before the protected publication step.
+- Release images are pushed first to an isolated quarantine repository and identified by an exact registry digest.
+- The protected publisher does not check out, build, load, or run candidate source or images; it only promotes the already tested digest and verifies that the promoted digest is identical.
+- Every published architecture (`linux/amd64`, `linux/arm64`) is smoke-tested from the exact quarantined manifest before promotion.
+- Candidate quarantine-write credentials and the protected promotion credential must be distinct. Because source and destination both use `ghcr.io`, the protected promotion credential is a single package-scoped credential with **read-only** access to the quarantine package and **write** access to the release package; it must not be exposed to candidate build/test jobs.
 
 ## Dependencies
 

@@ -1,8 +1,6 @@
-#!/usr/bin/env bash
-set -e
-
-if [ $# -gt 0 ]; then
-    exec "$@"
-else
-    exec python3 server.py
+#!/usr/bin/env sh
+set -eu
+if [ "$#" -gt 0 ]; then
+  exec "$@"
 fi
+exec ha-mcp-readonly

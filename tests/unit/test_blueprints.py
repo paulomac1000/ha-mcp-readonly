@@ -318,3 +318,124 @@ class TestGetBlueprintInstancesExtended:
         assert data["success"] is True
         assert data["usage_count"] == 1
         assert data["instances"][0]["alias"] == "Real Auto"
+
+
+class TestIterBlueprintInstances:
+    """Direct tests for _iter_blueprint_instances (single-pass collection)."""
+
+    def test_collects_automation_and_script_instances(self, tmp_path):
+        from tools.blueprints import _iter_blueprint_instances
+
+        (tmp_path / "automations.yaml").write_text(
+            "- id: '1'\n"
+            "  alias: Auto A\n"
+            "  use_blueprint:\n"
+            "    path: automation/motion.yaml\n"
+            "    input: {motion: binary_sensor.motion}\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "scripts.yaml").write_text(
+            "script_b:\n"
+            "  alias: Script B\n"
+            "  use_blueprint:\n"
+            "    path: script/confirm.yaml\n"
+            "    input: {}\n",
+            encoding="utf-8",
+        )
+
+        instances = _iter_blueprint_instances(str(tmp_path))
+        assert len(instances) == 2
+        auto = next(i for i in instances if i["type"] == "automation")
+        script = next(i for i in instances if i["type"] == "script")
+        assert auto["blueprint_path"] == "automation/motion.yaml"
+        assert auto["id"] == "1"
+        assert auto["inputs"] == {"motion": "binary_sensor.motion"}
+        assert script["blueprint_path"] == "script/confirm.yaml"
+        assert script["id"] == "script_b"
+
+    def test_skips_entries_without_blueprint_or_bad_shape(self, tmp_path):
+        from tools.blueprints import _iter_blueprint_instances
+
+        (tmp_path / "automations.yaml").write_text(
+            "- id: '1'\n  alias: No Blueprint\n"
+            "- just a string\n"
+            "- id: '2'\n  use_blueprint: 42\n"
+            "- id: '3'\n  use_blueprint:\n    path: 42\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "scripts.yaml").write_text("script_plain:\n  alias: Plain\n", encoding="utf-8")
+
+        instances = _iter_blueprint_instances(str(tmp_path))
+        assert instances == []
+
+    def test_string_use_blueprint_form(self, tmp_path):
+        from tools.blueprints import _iter_blueprint_instances
+
+        (tmp_path / "automations.yaml").write_text(
+            "- id: '7'\n  alias: String Path\n  use_blueprint: automation/motion.yaml\n",
+            encoding="utf-8",
+        )
+
+        instances = _iter_blueprint_instances(str(tmp_path))
+        assert len(instances) == 1
+        assert instances[0]["blueprint_path"] == "automation/motion.yaml"
+        assert instances[0]["inputs"] == {}
+
+
+class TestUsageSummaryOptimized:
+    """The optimized summary must match per-blueprint instance counting."""
+
+    def test_summary_counts_match_instance_scan(self, tmp_path):
+        from tools.blueprints import _do_get_blueprint_instances, _do_get_blueprint_usage_summary
+
+        bp_dir = tmp_path / "blueprints" / "automation"
+        bp_dir.mkdir(parents=True)
+        (bp_dir / "motion.yaml").write_text(
+            "blueprint:\n  name: Motion\n  domain: automation\n  input: {}\n",
+            encoding="utf-8",
+        )
+        (bp_dir / "orphan.yaml").write_text(
+            "blueprint:\n  name: Orphan\n  domain: automation\n  input: {}\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "automations.yaml").write_text(
+            "- id: '1'\n"
+            "  alias: Auto\n"
+            "  use_blueprint:\n"
+            "    path: automation/motion.yaml\n"
+            "    input: {}\n",
+            encoding="utf-8",
+        )
+        script_dir = tmp_path / "blueprints" / "script"
+        script_dir.mkdir(parents=True)
+        (script_dir / "notify.yaml").write_text(
+            "blueprint:\n  name: Notify\n  domain: script\n  input: {}\n",
+            encoding="utf-8",
+        )
+        (tmp_path / "scripts.yaml").write_text(
+            "notify_from_blueprint:\n"
+            "  alias: Notify\n"
+            "  use_blueprint:\n"
+            "    path: script/notify.yaml\n"
+            "    input: {}\n",
+            encoding="utf-8",
+        )
+
+        summary = json.loads(_do_get_blueprint_usage_summary(str(tmp_path)))
+        per_blueprint = json.loads(
+            _do_get_blueprint_instances("automation/motion.yaml", str(tmp_path))
+        )
+
+        assert summary["success"] is True
+        script_instances = json.loads(
+            _do_get_blueprint_instances("script/notify.yaml", str(tmp_path))
+        )
+        assert summary["total_blueprints"] == 3
+        assert summary["total_instances"] == 2
+        assert per_blueprint["usage_count"] == 1
+        assert script_instances["usage_count"] == 1
+        assert script_instances["summary"]["scripts"] == 1
+        used = next(s for s in summary["most_used"] if s["path"] == "automation/motion.yaml")
+        assert used["usage_count"] == 1
+        unused = [s for s in summary["unused"] if s["path"] == "automation/orphan.yaml"]
+        assert unused and unused[0]["usage_count"] == 0

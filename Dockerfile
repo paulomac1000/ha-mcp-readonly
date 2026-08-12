@@ -1,44 +1,36 @@
-# Home Assistant MCP Readonly Server
-# Multi-stage build for minimal production image
+ARG PYTHON_IMAGE=python:3.13.5-slim-bookworm@sha256:4c2cf9917bd1cbacc5e9b07320025bdb7cdf2df7b0ceaccb55e9dd7e30987419
+FROM ${PYTHON_IMAGE} AS builder
 
-FROM python:3.14-slim AS builder
-
-WORKDIR /app
-
-COPY requirements.txt .
-RUN pip install --no-cache-dir --user -r requirements.txt
-
-FROM python:3.14-slim
-
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
-
-WORKDIR /app
-
-ENV PYTHONUNBUFFERED=1 \
-    PYTHONDONTWRITEBYTECODE=1
-
-COPY --from=builder /root/.local /root/.local
-
-COPY server.py .
-COPY version.py .
-COPY context_generator/ ./context_generator/
+WORKDIR /build
+ENV PIP_DISABLE_PIP_VERSION_CHECK=1 PIP_NO_CACHE_DIR=1
+COPY pyproject.toml README.md LICENSE version.py server.py ./
 COPY tools/ ./tools/
+COPY context_generator/ ./context_generator/
 COPY ha_graph/ ./ha_graph/
-COPY start.sh .
-RUN chmod +x start.sh
+RUN python -m pip install --no-cache-dir build==1.5.0 setuptools==83.0.0 wheel==0.47.0 \
+    && python -m build --wheel --no-isolation
 
-ENV PATH=/root/.local/bin:$PATH
+FROM ${PYTHON_IMAGE} AS runtime
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    MCP_TRANSPORT=stdio \
+    MCP_BIND_HOST=127.0.0.1 \
+    HEALTH_SERVER_ENABLED=1 \
+    REST_API_ENABLED=0
 
-# Explicit USER: container runs as root (required for docker.sock, journal, dbus access)
-# nosemgrep: dockerfile.security.last-user-is-root.last-user-is-root
-USER root
-
-# Ports: 9091 (health), 9092 (MCP SSE), 9093 (REST API)
-EXPOSE 9091 9092 9093
-
+RUN groupadd --gid 10001 haobserver \
+    && useradd --uid 10001 --gid 10001 --create-home --shell /usr/sbin/nologin haobserver \
+    && mkdir -p /app/output /config \
+    && chown -R haobserver:haobserver /app /config
+WORKDIR /app
+COPY constraints-ci.txt /tmp/runtime-constraints.txt
+COPY --from=builder /build/dist/*.whl /tmp/
+RUN python -m pip install --no-cache-dir -c /tmp/runtime-constraints.txt /tmp/*.whl \
+    && python -m pip check \
+    && rm /tmp/*.whl /tmp/runtime-constraints.txt
+USER 10001:10001
+EXPOSE 9091 9092
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD curl -fsS http://localhost:9091/health || exit 1
-
-ENTRYPOINT ["./start.sh"]
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9091/ready', timeout=3)" || exit 1
+ENTRYPOINT ["ha-mcp-readonly"]

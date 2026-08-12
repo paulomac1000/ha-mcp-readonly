@@ -1,0 +1,148 @@
+name: Migration evidence
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: migration-evidence-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+  MCP_TRANSPORT: stdio
+  MCP_DEV_TOOLS_ENABLED: "0"
+  HA_CONFIG_PATH: /tmp
+  ASSESSED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+
+jobs:
+  source-gates:
+    name: Credential-free source gates
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v6
+        with:
+          ref: ${{ env.ASSESSED_SHA }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install project and exact source-gate tools
+        run: |
+          python -m pip install -c constraints-ci.txt '.[dev]'
+          python -m pip install 'pre-commit==4.3.0'
+
+      - name: Verify source contracts and coverage policy
+        shell: bash
+        env:
+          COVERAGE_BASE_SHA: ${{ github.event.pull_request.base.sha || 'origin/main' }}
+        run: |
+          set -euo pipefail
+          ruff check .
+          ruff format --check .
+          mypy server.py tools/ context_generator/core.py context_generator/config.py \
+            context_generator/runtime.py context_generator/provenance.py context_generator/snapshot.py \
+            scripts/verify_runtime_endpoints.py --strict
+          bandit -r server.py tools/ context_generator/ ha_graph/ -ll
+          make docs-check
+          pre-commit run --all-files --show-diff-on-failure
+          pytest tests/unit -q \
+            --cov=tools \
+            --cov=context_generator.core \
+            --cov=context_generator.config \
+            --cov=context_generator.runtime \
+            --cov=context_generator.provenance \
+            --cov=context_generator.snapshot \
+            --cov-report=term-missing \
+            --cov-report=json:coverage.json \
+            --cov-fail-under=85
+          python scripts/check_coverage_policy.py coverage.json --base-ref "$COVERAGE_BASE_SHA"
+          pytest tests/protocol -q
+
+      - name: Build exact constrained wheel runtime and exercise stdio with independent official client
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install -c constraints-ci.txt 'build==1.5.0' 'setuptools==83.0.0' 'wheel==0.47.0'
+          python -m build --wheel --no-isolation
+          python -m venv /tmp/migration-wheel
+          /tmp/migration-wheel/bin/python -m pip install -c constraints-ci.txt dist/*.whl
+          /tmp/migration-wheel/bin/python -m pip check
+          /tmp/migration-wheel/bin/python - <<'PY'
+          import importlib.metadata
+
+          assert importlib.metadata.version("fastmcp") == "3.4.6"
+          assert importlib.metadata.version("mcp") == "1.29.0"
+          assert importlib.metadata.version("starlette") == "1.4.1"
+          PY
+          python -m venv /tmp/migration-official-client
+          /tmp/migration-official-client/bin/python -m pip install 'mcp==1.29.0'
+          MCP_EXPECTED_VERSION=2.0.0 \
+            /tmp/migration-official-client/bin/python scripts/verify_official_mcp_client.py stdio \
+              --command /tmp/migration-wheel/bin/ha-mcp-readonly --config-path /tmp
+
+      - name: Publish credential-free source evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
+        with:
+          name: migration-source-evidence-${{ env.ASSESSED_SHA }}
+          path: |
+            ai-skills.lock.yaml
+            dist/*.whl
+          if-no-files-found: error
+          retention-days: 7
+
+  evidence:
+    name: Migration evidence
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    needs: source-gates
+    env:
+      # Immutable reviewed collector revision with strict success-only job conclusions.
+      EVIDENCE_COLLECTOR_REVISION: c2d5d921d9434fa78ee750d6bd15b5525ce7a7af
+    steps:
+      - name: Checkout immutable reviewed evidence collector
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v6
+        with:
+          ref: ${{ env.EVIDENCE_COLLECTOR_REVISION }}
+          path: trusted-collector
+          persist-credentials: false
+
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
+        with:
+          python-version: "3.13"
+
+      - name: Install collector-only dependency
+        run: python -m pip install 'PyYAML==6.0.3'
+
+      - name: Download credential-free source evidence
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          name: migration-source-evidence-${{ env.ASSESSED_SHA }}
+          path: source-evidence
+
+      - name: Correlate exact-head policy, CI, official-client, and artifact evidence
+        working-directory: trusted-collector
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_LANE_RESULT: ${{ needs.source-gates.result }}
+          ASSESSED_LOCK_PATH: ../source-evidence/ai-skills.lock.yaml
+          LOCAL_WHEEL_GLOB: ../source-evidence/dist/*.whl
+          EVIDENCE_OUTPUT_DIR: ../evidence
+        run: PYTHONSAFEPATH=1 python scripts/collect_migration_evidence.py
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
+        with:
+          name: migration-evidence-${{ env.ASSESSED_SHA }}
+          path: evidence/
+          if-no-files-found: error
+          retention-days: 30

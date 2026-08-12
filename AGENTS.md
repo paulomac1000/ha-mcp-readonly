@@ -1,3 +1,15 @@
+---
+description: Mandatory engineering and testing instructions for agents contributing to HA-MCP-Readonly.
+doc_id: reference.ha-mcp-agent-instructions
+type: reference
+status: active
+rigor: normative
+owners: [repository-maintainers]
+verification: Run the complete local quality, unit, protocol, package, and runtime gates documented in this file.
+---
+
+<!-- agents-md: waive context-budget reason="This file is the repository operating contract for a large read-only MCP server and must keep security, HA API, coverage, and gate rules visible in every session." -->
+
 # Agent Instructions — HA-MCP-Readonly
 
 > **Read before writing any tool, test, or documentation.**
@@ -21,7 +33,7 @@
 - First line of `@mcp.tool()` docstring MUST be a complete sentence describing what the tool does.
 - NO emoji in tool description first lines.
 - NO emoji in API response strings (status labels, messages).
-- Every docstring must include `Args` and `Returns` sections.
+- Public tool/function docstrings MUST include meaningful `Args` and `Returns` sections when the callable accepts arguments or returns a value; module, class, and exception docstrings MUST NOT contain empty placeholder sections.
 - Use plain text status labels: `"OK"` not `"✅ OK"`, `"FAILED"` not `"❌ FAILED"`.
 
 ### Parameter Descriptions
@@ -43,7 +55,7 @@
 
 ### Test Rules
 
-1. **Unit tests:** Zero I/O, all dependencies mocked via `unittest.mock.patch`. Run without credentials.
+1. **Unit tests:** No network, Home Assistant, operator-filesystem, or external-service I/O. Ephemeral `tmp_path` I/O is allowed only when filesystem/path semantics are the behavior under test; all other dependencies are mocked. Run without credentials.
 2. **Smoke tests:** Direct REST API calls (`requests` library), no MCP wrapper needed. Skip if no `HA_TOKEN`.
 3. **Integration tests:** Real HA via MCP wrapper (`MCPWrapper` from `tests/integration/conftest.py`). Skip if no `HA_TOKEN`.
 4. **E2E tests:** Full pipeline (context generator) + REST API endpoints. Skip if no `HA_TOKEN`.
@@ -68,8 +80,8 @@ Before writing any tool that calls the HA REST API:
    ```
    If it returns `404` or `401`, the endpoint is NOT accessible via LLAT.
 3. **Write unit tests** (mocked) in `tests/unit/` — minimum 80% coverage for new code
-4. **Add a smoke test** in `tests/smoke/` for basic functional verification
-5. **Add an integration test** in `tests/integration/` for real HA validation
+4. **Add a smoke test** in `tests/smoke/test_critical_tools.py` for basic functional verification
+5. **Add an integration test** in `tests/integration/test_integration.py` for real HA validation
 
 ### The `get_automation_traces` Incident (v1.1.0)
 
@@ -98,14 +110,16 @@ Home Assistant has **two separate authentication scopes** for its REST API:
 ### Before Implementing Any New HA API Tool
 
 1. **Verify the endpoint in official docs** first:
-   - [HA REST API docs](https://developers.home-assistant.io/docs/api/rest/)
-   - If the endpoint is NOT listed there, it is **not a public REST API endpoint**
+   - [HA REST API docs](https://developers.home-assistant.io/docs/api/rest/) — consult this
+     reference before implementing any tool that calls the HA REST API; it decides
+     whether an endpoint is part of the documented public REST surface. Documentation establishes API shape, not the privileges of a particular token.
+   - If the endpoint is NOT listed there, do not claim public REST support without separate authoritative evidence.
 
 2. **Test the endpoint with curl BEFORE writing any code:**
    ```bash
    curl -s -H "Authorization: Bearer $HA_TOKEN" "http://HA_IP:8123/the/endpoint"
    ```
-   If it returns `404` or `401`, the endpoint is not accessible via LLAT.
+   Use the same class of LLAT intended for production. Support is documented only after this request succeeds with that credential class; `401`/`403`/`404` means the LLAT-access claim is not verified.
 
 3. **Never assume** an endpoint exists only because you saw it in:
    - WebSocket API docs (different transport)
@@ -172,11 +186,15 @@ tools/
 └── composite.py             # Composite diagnostic tools
 
 context_generator/
-├── constants.py             # Configuration, patterns, YAML loader
-├── analyzers.py             # Data collectors (RegistryCollector, AutomationAnalyzer, and others)
-├── formatters.py            # ReportGenerator — markdown output
-├── core.py                  # main() and generate_context_file() entry points
-└── utils.py                 # Registry cache, HA API client, YAML helpers
+├── config.py                # Immutable per-run generation configuration
+├── runtime.py               # Context-local runtime and provenance binding
+├── provenance.py            # Completeness matrix and recursive redaction
+├── snapshot.py              # Safe filesystem, REST, and WebSocket snapshot collector
+├── constants.py             # Legacy patterns and YAML loader
+├── analyzers.py             # Domain analyzers
+├── formatters.py            # Atomic bounded Markdown report writer
+├── core.py                  # Isolated generation entry points
+└── utils.py                 # Runtime-aware registry and Home Assistant adapters
 ```
 
 ---
@@ -200,7 +218,7 @@ context_generator/
 - `.env` is gitignored — never commit credentials
 - `BLOCKED_REGISTRIES` prevents loading `auth`, `auth_provider.*`, `onboarding` registries
 - `sanitize_log_line()` redacts JWTs, tokens, passwords, IPs from log output
-- Path traversal blocked in `filesystem_explorer.py` — `..` and `~` rejected
+- Path traversal blocked in `tools/filesystem_explorer.py` — `..` and `~` rejected
 
 ### Risk Prefix (L2+)
 
@@ -223,8 +241,9 @@ context_generator/
 
 - All documentation files in `docs/` conform to AI-First Documentation Standard.
 - `afds_config.yaml` — project-specific validator configuration in repository root.
-- Validate docs: `python3 /var/apps/ai-skills/skills/afds-doc-writer/docs_validate.py --config afds_config.yaml docs/`
-- Reference: `/var/apps/ai-skills/skills/afds-doc-writer/docs_standards.md`
+- Validate governed docs: `make docs-check`
+- `README.md` and `CHANGELOG.md` are explicit AFDS exceptions: README keeps normal user-facing Markdown and CHANGELOG follows Keep a Changelog; both remain subject to their separate repository checks.
+- Reference: `scripts/vendor/afds_validate_b54fc6b2.py` (vendored validator pinned to `b54fc6b27ea80b36a70d5de73445970e17f55789` in `ai-skills.lock.yaml`)
 
 ---
 
@@ -244,34 +263,60 @@ context_generator/
 
 The context generator produces a comprehensive Markdown snapshot of the HA instance.
 
-- **Analyzers:** 12 total (6 original + 6 new in v1.0)
-- **Output sections:** 18 (entities, automations, scripts, scenes, templates, dashboards, logs, history, dependencies, conflicts, persons, zones, energy, helpers, services, HACS, blueprint usage, quick reference)
-- **Modes:** `offline` (filesystem only), `online` (API only), `hybrid` (both, default)
-- **Env vars:** `HA_URL`, `HA_TOKEN`, `HA_CONFIG_PATH` — MUST be set before import or explicitly via `generate_context_file()` params
+- **Modes:** `offline` (filesystem only and network-disabled), `online` (API required), `hybrid` (local plus available API sources)
+- **Completeness contract:** every supported source is recorded as complete, partial, unavailable, skipped, or policy-excluded.
+- **Safe snapshot:** discovers local storage/configuration plus supported REST and WebSocket sources, including calendar events, to-do items, and advertised weather forecasts.
+- **Isolation:** configuration is immutable per run and passed through a context-local runtime; do not mutate module globals or `os.environ` during generation.
+- **Limits:** preserve source, output, history, logbook, calendar, process-deadline, redaction, and atomic-publication bounds.
 
 ---
 
 ## Common Pitfalls
 
-1. **Module-level imports bind early:** `from .constants import HA_URL` binds the value at import time. Changing `constants.HA_URL` later does NOT affect already-imported modules. Set env vars BEFORE importing context_generator.
+1. **Generation configuration is per-run:** create `GenerationConfig` in the composition root and use `generation_scope()`. Do not update `constants`, mutate `os.environ`, or reuse credentials between tasks.
 
 2. **`_get_automation_by_id_or_alias` needs strings:** Pass `None` → crash. Always validate `automation_id` before calling internal helpers.
 
 3. **`list_automations` response:** Must include `id` field (unique_id from automations.yaml) so clients can call `get_automation_code`.
 
-4. **Fixture resolution:** Pytest auto-discovers only `conftest.py` files, NOT `__init__.py`. Put test fixtures in `conftest.py`.
+4. **Fixture resolution:** Pytest auto-discovers only `conftest.py` files, not package
+   init markers. Put test fixtures in `conftest.py`.
 
-5. **Mock MCP pattern:** Unit tests use `MagicMock` with a custom `tool` decorator that stores tools in `mcp._tools[func.__name__]`. Tools are called via `await mock_mcp._tools["tool_name"](args)`.
+5. **Mock MCP pattern:** Unit tests use `MagicMock` with a custom `tool` decorator that stores tools in `mcp._tools[func.__name__]`. Tools are called by awaiting the stored tool with the arguments dict passed as keyword arguments.
 
 6. **Response format:** Every tool MUST return `{"success": True/False, ...}`. Some older tools (get_lovelace_dashboards, get_persons, get_zones, get_hacs_data, trigger_health_report) historically returned plain JSON — always verify with curl after writing a new tool.
 
 7. **Parameter naming consistency:** Use snake_case for all parameters. `read_file` uses `file_path` (not `path`), matching `read_config_file(file_path=...)`. Keep parameter names consistent between similar tools.
 
-8. **UI-created automations:** `_load_automations()` only reads `automations.yaml`. UI-created automations exist only in HA state engine. Tools like `get_automation_usage_stats` must fall back to searching `/api/states` for `automation.*` entities.
+8. **UI-created automations:** `_load_automations()` only reads the HA automations
+   YAML file. UI-created automations exist only in HA state engine. Tools like
+   `get_automation_usage_stats` must fall back to searching `/api/states` for
+   `automation.*` entities.
 
-9. **Smoke test response format check:** `tests/smoke/test_response_format.py` iterates all tools and verifies `success` field. New tools with required parameters must be added to `_REQUIRES_PARAMS` set or the test will fail.
+9. **Smoke test response format check:** `tests/smoke/test_response_format.py` iterates all tools and verifies the `success` field. Tools that require parameters return HTTP 400 `INVALID_ARGUMENTS` and are skipped automatically; heavy environment-dependent tools are listed in `_KNOWN_ENV_FAIL`.
 
 10. **Integration conftest:** New tool modules must be registered in `tests/integration/conftest.py` (import + `register_*_tools()` call) or integration tests won't find them.
+
+---
+
+## Definition of Done
+
+A change is complete only when:
+
+- Every new tool has a registered manifest, unit tests, and a smoke test, and the
+  manifest validates against the pinned canonical schema.
+- `ruff check .`, `ruff format --check .`, `mypy server.py tools/ --strict`,
+  and `bandit -r server.py tools/ context_generator/ ha_graph/ -ll` all pass.
+- `pytest tests/unit/ tests/protocol/ -q` passes and no test in the same process
+  depends on state mutated by another test.
+- Backend suites were executed against the running deployment when credentials and
+  a server are available: `pytest tests/smoke/ -q`, `pytest tests/e2e/ -q`,
+  `pytest tests/integration/ -q`.
+- `pre-commit run --all-files` and `make docs-check` pass without skips, and `CHANGELOG.md` records the change under the unreleased section.
+- For every newly supported Home Assistant REST/WebSocket surface, official documentation establishes the API shape, the intended LLAT class succeeds against a real instance, a sanitized recorded upstream cassette covers the request, and protocol/smoke coverage verifies catalog/capability consistency.
+
+Report the exact revision, the gates that were executed, skipped checks, and any
+residual risk before completion.
 
 ---
 

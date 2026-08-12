@@ -929,6 +929,10 @@ def register_log_tools(  # type: ignore[no-untyped-def]
         Args:
             log_source: "current" or "previous"
             max_results: Maximum number of results (default: 50)
+
+        Returns:
+            JSON with error and warning counts, most common errors, component
+            breakdowns, device issues, and recent tracebacks.
         """
         try:
             result = _do_analyze_log_errors(
@@ -949,6 +953,10 @@ def register_log_tools(  # type: ignore[no-untyped-def]
         Args:
             lines: Number of last lines (default: 100, max 500)
             level: Level filter - "all", "error", "warning", "info", "debug"
+
+        Returns:
+            JSON with requested and returned line counts, level filter, and
+            the raw log content string.
         """
         try:
             result = _do_get_recent_logs(lines=lines, level=level, config_path=config_path)
@@ -965,6 +973,10 @@ def register_log_tools(  # type: ignore[no-untyped-def]
         Args:
             lines: Number of last lines (default: 100, max 500)
             level: Level filter - "all", "error", "warning", "info", "debug"
+
+        Returns:
+            JSON with requested and returned line counts, level filter, and
+            the raw log content string.
         """
         try:
             result = _do_get_previous_logs(lines=lines, level=level, config_path=config_path)
@@ -988,6 +1000,10 @@ def register_log_tools(  # type: ignore[no-untyped-def]
             log_source: "current", "previous", or "both"
             max_results: Maximum number of results
             context_lines: Number of context lines before and after (0-5)
+
+        Returns:
+            JSON with search term, total matches, and per-match source, line
+            number, content, and optional surrounding context.
         """
         try:
             result = _do_search_logs(
@@ -1013,6 +1029,10 @@ def register_log_tools(  # type: ignore[no-untyped-def]
             component_name: Component name (e.g. "homeassistant.core")
             log_source: "current", "previous", or "both"
             max_results: Maximum number of results
+
+        Returns:
+            JSON with component name, total matches, and log entries with
+            source, timestamp, level, and message.
         """
         try:
             result = _do_get_component_logs(
@@ -1029,7 +1049,11 @@ def register_log_tools(  # type: ignore[no-untyped-def]
 
     @mcp.tool()
     def get_startup_errors() -> str:
-        """[READ] Analyzes startup logs and returns errors/warnings from last startup."""
+        """Analyzes startup logs and returns errors/warnings from last startup.
+
+        Returns:
+            JSON with startup errors and warnings, and total counts for each.
+        """
         try:
             result = _do_get_startup_errors(config_path=config_path)
             if isinstance(result, dict) and "error" in result:
@@ -1045,6 +1069,10 @@ def register_log_tools(  # type: ignore[no-untyped-def]
         Args:
             hours: Number of hours back (1-24, default: 1)
             log_source: "current" or "previous"
+
+        Returns:
+            JSON with log source, time range, total and returned event counts,
+            and a timeline of error and warning entries.
         """
         try:
             result = _do_get_log_timeline(

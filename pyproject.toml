@@ -1,14 +1,14 @@
 [build-system]
-requires = ["setuptools>=64", "wheel"]
+requires = ["setuptools==83.0.0", "wheel==0.47.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "ha-mcp-readonly"
-version = "1.6.0"
+version = "2.0.0"
 description = "Read-only MCP server for Home Assistant observation by AI assistants"
 readme = "README.md"
-license = { text = "MIT" }
-requires-python = ">=3.11"
+license = "MIT"
+requires-python = ">=3.11,<3.15"
 authors = [
     { name = "Pawel Maciejewski", email = "paulomac1000@users.noreply.github.com" }
 ]
@@ -16,7 +16,6 @@ keywords = ["home-assistant", "mcp", "model-context-protocol", "ai", "llm", "iot
 classifiers = [
     "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
@@ -26,27 +25,30 @@ classifiers = [
     "Topic :: Home Automation",
 ]
 dependencies = [
-    "fastmcp>=2.0.0,<4.0.0",
-    "requests>=2.28.0",
-    "pyyaml>=6.0",
-    "starlette>=0.27.0",
-    "uvicorn>=0.22.0",
-    "python-dateutil>=2.8.0",
-    "pydantic>=2.0.0,<3.0.0",
+    "fastmcp>=3.4.6,<3.5",
+    "requests>=2.34.2,<2.35",
+    "pyyaml>=6.0.3,<6.1",
+    "starlette>=1.0,<2",
+    "uvicorn>=0.52,<0.53",
+    "python-dateutil>=2.9.0.post0,<3",
+    "pydantic>=2.13.4,<2.14",
+    "websockets>=17.0,<18",
 ]
 
 [project.scripts]
-ha-mcp-readonly = "server:run_rest_api"
+ha-mcp-readonly = "server:main"
 
 [project.optional-dependencies]
 dev = [
-    "pytest>=7.0.0",
-    "pytest-asyncio>=0.21.0",
-    "pytest-mock>=3.10.0",
-    "pytest-cov>=4.0.0",
-    "ruff>=0.5.0",
-    "mypy>=1.8.0",
-    "bandit>=1.7.0",
+    "pytest==9.1.1",
+    "pytest-asyncio==1.4.0",
+    "pytest-mock==3.15.1",
+    "pytest-cov==7.1.0",
+    "ruff==0.16.1",
+    "mypy==2.3.0",
+    "bandit==1.9.4",
+    "build==1.5.0",
+    "wheel==0.47.0",
 ]
 
 [project.urls]
@@ -55,19 +57,26 @@ Repository = "https://github.com/paulomac1000/ha-mcp-readonly"
 Issues = "https://github.com/paulomac1000/ha-mcp-readonly/issues"
 Changelog = "https://github.com/paulomac1000/ha-mcp-readonly/blob/main/CHANGELOG.md"
 
+[tool.setuptools]
+py-modules = ["server", "version"]
+
 [tool.setuptools.packages.find]
-include = ["tools*", "context_generator*"]
+include = ["tools*", "context_generator*", "ha_graph*"]
+
+[tool.setuptools.package-data]
+tools = ["tool_manifests.json"]
 
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+extend-exclude = ["scripts/vendor/afds_validate_b54fc6b2.py"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "W", "UP"]
 extend-ignore = ["E501"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["tools", "context_generator"]
+known-first-party = ["tools", "context_generator", "ha_graph"]
 extra-standard-library = ["starlette", "fastmcp"]
 
 [tool.pytest.ini_options]
@@ -86,7 +95,7 @@ markers = [
 
 [tool.mypy]
 strict = true
-python_version = "3.14"
+python_version = "3.11"
 warn_unused_ignores = true
 exclude = [
     "tests/",
@@ -95,6 +104,19 @@ exclude = [
 disable_error_code = [
     "untyped-decorator",
 ]
+
+[[tool.mypy.overrides]]
+module = [
+    "context_generator.analyzers",
+    "context_generator.formatters",
+    "context_generator.utils",
+    "context_generator.constants",
+    "ha_graph",
+    "ha_graph.*",
+]
+# Legacy modules predate the strict runtime contract. New context runtime modules are
+# intentionally excluded from this override and are checked with --strict in CI.
+ignore_errors = true
 
 [[tool.mypy.overrides]]
 module = [
@@ -114,7 +136,7 @@ exclude = ["tests/", "build/"]
 skips = ["B101", "B303", "B311", "B404", "B603"]
 
 [tool.coverage.run]
-source = ["tools"]
+source = ["tools", "context_generator"]
 omit = ["tests/*"]
 
 [tool.coverage.report]

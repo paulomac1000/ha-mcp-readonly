@@ -879,16 +879,19 @@ def register_composite_tools(  # type: ignore[no-untyped-def]
         entity_id: str,
         include_automation_code: bool = False,
     ) -> str:
-        """[READ] Composite: full entity context + automations + conflicts in one call.
+        """Composite: full entity context + automations + conflicts in one call.
 
         Replaces multiple calls: get_entity_context + search_automations_by_entity
-        + get_automation_conflicts. Returns JSON with entity_info, device_info,
-        area_info, current_state, related_entities, automations,
-        conflict_analysis, issues, recommendations, warnings.
+        + get_automation_conflicts.
 
         Args:
             entity_id: Entity id (e.g., "light.yeelink_color2_0510_light").
             include_automation_code: Include full automation YAML (default: False).
+
+        Returns:
+            JSON with entity_info, device_info, area_info, current_state,
+            related_entities, automations, conflict_analysis, data_quality,
+            issues, recommendations, and warnings.
         """
         try:
             data = _do_get_entity_with_automations(
@@ -908,7 +911,7 @@ def register_composite_tools(  # type: ignore[no-untyped-def]
         include_history: bool = False,
         hours_back: int = 24,
     ) -> str:
-        """[READ] Super function: comprehensive diagnostics for entity/area in one call.
+        """Super function: comprehensive diagnostics for entity/area in one call.
 
         Replaces multiple queries (search_entities, get_entity_context,
         get_entity_state, automation searches, area overview, conflict analysis,
@@ -919,6 +922,11 @@ def register_composite_tools(  # type: ignore[no-untyped-def]
             include_automation_code: Include full automation YAML (default: False).
             include_history: Include history of primary entity (default: False).
             hours_back: History window in hours (default: 24, max: 168).
+
+        Returns:
+            JSON with matched_entities, area_context, automations, conflicts,
+            related_sensors, optional history, data_quality, issues,
+            recommendations, summary, and warnings.
         """
         try:
             data = _do_investigate_entity(
@@ -943,20 +951,20 @@ def register_composite_tools(  # type: ignore[no-untyped-def]
         include_automations: bool = True,
         include_sensors: bool = True,
     ) -> str:
-        """[READ] Full area/room diagnostics in a single query: devices, entities, automations, and sensor readings.
+        """Full area/room diagnostics in a single query: devices, entities, automations, and sensor readings.
 
         Replaces: get_area_overview() + search_automations(area)
                    + get_entity_state_batch()
         Savings: 3-5 queries → 1 (reduction ~70% tokens)
 
-        Returns JSON:
-            area_info, entities_by_domain, sensor_readings,
-            automations, issues, recommendations, warnings
-
         Args:
             area_name: Area name or id (e.g. "living_room", "kitchen")
             include_automations: Search automations (default: True)
             include_sensors: Include sensor readings (default: True)
+
+        Returns:
+            JSON with area_info, entities_by_domain, sensor_readings,
+            automations, data_quality, issues, recommendations, and warnings.
         """
         try:
             data = _do_get_area_diagnostic(
@@ -976,7 +984,7 @@ def register_composite_tools(  # type: ignore[no-untyped-def]
 
     @mcp.tool(name="audit_config_orphans")
     async def audit_config_orphans() -> str:
-        """[READ] Find orphan entities, never-triggered automations, broken entity references, and unused blueprints.
+        """Find orphan entities, never-triggered automations, broken entity references, and unused blueprints.
 
         Scans entity registry, automations, scripts, scenes, dashboards, and blueprints
         to identify configuration drift and unused resources.

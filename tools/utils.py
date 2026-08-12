@@ -65,7 +65,7 @@ _SENSITIVE_PATTERNS: list[tuple[re.Pattern[str], str]] = [
         re.compile(r"eyJ[A-Za-z0-9_\-]{10,}\.eyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]+"),
         "[JWT_REDACTED]",
     ),
-    (re.compile(r"Bearer\s+[A-Za-z0-9._\-]+"), "Bearer [REDACTED]"),
+    (re.compile(r"Bearer\s+[A-Za-z0-9._~+/=\-]+"), "Bearer [REDACTED]"),
     (re.compile(r"(?i)\b(password|passwd|pwd)\s*[=:]\s*\S+"), r"\1=[REDACTED]"),
     (
         re.compile(r"(?i)\b(token|access_token|refresh_token)\s*[=:]\s*\S+"),
@@ -123,11 +123,15 @@ def make_ha_request(
     method: str = "GET",
     data: dict[str, Any] | None = None,
     timeout: int = 10,
-    retries: int = 3,
+    retries: int = 1,
     backoff: float = 1.0,
 ) -> dict[str, Any]:
     """
-    Execute HTTP request to Home Assistant API with exponential-backoff retry.
+    Execute an HA API request. Automatic retries are disabled by default.
+
+    A caller may opt into multiple attempts only when its operation contract
+    explicitly permits retry and the request is safe to repeat. POST requests
+    are never retried by this shared helper.
 
     Returns ``{"success": True, "data": ...}`` on success,
     ``{"success": False, "error": "..."}`` on failure.
@@ -139,6 +143,17 @@ def make_ha_request(
             "error_code": "CONFIG_ERROR",
             "retryable": False,
         }
+    if retries < 1:
+        raise ValueError("retries must be at least 1")
+    if not isinstance(method, str):
+        raise ValueError("HTTP method must be a string")
+    normalized_method = method.upper()
+    if normalized_method not in {"GET", "POST"}:
+        raise ValueError(f"Unsupported HTTP method: {method}")
+    if normalized_method == "POST" and retries != 1:
+        raise ValueError(
+            "POST retries require operation-specific handling and are not supported here"
+        )
 
     url = f"{ha_url}{endpoint}"
     headers = {
@@ -150,12 +165,26 @@ def make_ha_request(
     last_code = "HTTP_ERROR"
     last_retryable = True
 
+    # The invocation kernel exposes one absolute deadline for queueing and
+    # execution. Nested HTTP requests must not start a retry that cannot finish
+    # inside that same budget.
+    from tools.invocation import remaining_budget_seconds
+
     for attempt in range(retries):
+        remaining = remaining_budget_seconds()
+        if remaining is not None and remaining <= 0:
+            return {
+                "success": False,
+                "error": "Invocation deadline exceeded",
+                "error_code": "TIMEOUT",
+                "retryable": True,
+            }
+        request_timeout = timeout if remaining is None else max(0.001, min(timeout, remaining))
         try:
-            if method == "POST":
-                response = requests.post(url, headers=headers, json=data, timeout=timeout)
+            if normalized_method == "POST":
+                response = requests.post(url, headers=headers, json=data, timeout=request_timeout)
             else:
-                response = requests.get(url, headers=headers, timeout=timeout)
+                response = requests.get(url, headers=headers, timeout=request_timeout)
 
             response.raise_for_status()
 
@@ -177,7 +206,13 @@ def make_ha_request(
                 last_code = "HTTP_ERROR"
                 last_retryable = True
             if attempt < retries - 1:
-                time.sleep(backoff * (2**attempt))
+                sleep_for = backoff * (2**attempt)
+                remaining = remaining_budget_seconds()
+                if remaining is not None:
+                    if remaining <= sleep_for:
+                        break
+                    sleep_for = min(sleep_for, remaining)
+                time.sleep(sleep_for)
 
     # ``error`` stays a string for backward compatibility; ``error_code`` and
     # ``retryable`` are the structured (extended error contract) siblings.

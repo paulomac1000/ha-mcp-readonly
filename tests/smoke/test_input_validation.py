@@ -3,10 +3,13 @@
 import pytest
 import requests
 
-from .conftest import HA_TOKEN, REST_API_URL, _server_running
+from .conftest import HA_TOKEN, REST_API_URL, REST_AUTH_CONFIGURED, REST_HEADERS, _server_running
 
 pytestmark = pytest.mark.skipif(
-    not _server_running() or not HA_TOKEN or HA_TOKEN in ("", "your_long_lived_access_token_here"),
+    not _server_running()
+    or not HA_TOKEN
+    or not REST_AUTH_CONFIGURED
+    or HA_TOKEN in ("", "your_long_lived_access_token_here"),
     reason="MCP server not running or HA_TOKEN not configured",
 )
 
@@ -15,6 +18,7 @@ def _call_tool(tool_name, **params):
     resp = requests.post(
         f"{REST_API_URL}/api/tools/{tool_name}",
         json=params,
+        headers=REST_HEADERS,
         timeout=30,
     )
     return resp

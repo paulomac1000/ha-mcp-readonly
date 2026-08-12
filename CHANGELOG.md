@@ -1,14 +1,100 @@
 ---
-description: Release history for HA-MCP-Readonly following Keep a Changelog
-last_verified: 2026-06-01
+description: Release history for HA-MCP-Readonly following Keep a Changelog.
+doc_id: reference.ha-mcp-changelog
+type: reference
+status: active
+rigor: informative
+owners: [repository-maintainers]
+verification: Confirm release entries against signed tags, package metadata, and the release workflow for the named version.
 ---
 
 # Changelog
 
 All notable changes to this project will be documented in this file.
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]
+
+## [2.0.0] - 2026-08-12
+
+### Live-HA Verification
+- Operator validation performed during PR #22 against deployed revision `4dd4ada` on Home Assistant 2026.5.1 reported 1,251 unit/protocol, 87 smoke, 278 integration, and 174 e2e checks green, with 158 MCP tools (145 without dev tools) and a healthy container. This operator record is distinct from the checked-in revision-bound evidence in `docs/evidence-live-27d32c9b.md`, which applies only to the revision named there and must not be used to certify later heads.
+- Dependency drift resolved: the plain `Dockerfile` now installs the runtime with `-c constraints-ci.txt` and runs `pip check`, matching the pinned `Dockerfile.release` dependency graph (fastmcp 3.4.6, starlette 1.4.1, uvicorn 0.52.1).
+- Smoke and e2e filesystem tests discover the configuration root from `list_directory` instead of hardcoding `/config`; verified against a container running with `HA_CONFIG_PATH=/srv/ha-config`.
+- TrustedHost x auth matrix verified: allowed LAN host + bearer succeeds, disallowed host rejected (400), missing/wrong bearer rejected (401), `MCP_ALLOWED_HOSTS=*` fails configuration.
+- Script/scene tests verified standalone (no order dependence) with pure v2 JSON envelope responses.
+- Redaction verified with artificial secrets (9/9), log sanitization, and real tool responses.
+- Context generation failure/recovery verified: parallel generate yields controlled 409 CONFLICT, deadline-killed workers leave no zombies, next generate starts cleanly.
+- Performance verified: no regression of `diagnose_automation_aliases` to ~120s (1.7-4.6s), 8 parallel read-tools succeed without BUSY or executor leak.
+
+### Breaking Changes
+- Removed the legacy two-endpoint HTTP+SSE transport. The supported MCP transports are now stdio and Streamable HTTP only.
+- The network MCP deployment now uses an explicit hardened ASGI application with bounded request/header sizes, trusted Host policy, exact-origin CORS policy, connection limits, and explicit stateless/stateful mode.
+- Public capability discovery now separates supported and active transports/components and reports server, SDK, protocol, and deployment-profile identity.
+- The project major version is now 2.0.0 because transport and public health/discovery semantics changed incompatibly from the 1.x line.
+
+### Security Hardening
+- Final tool responses are recursively redacted at the application-owned operation boundary using key-aware credential filtering plus token/JWT/IP pattern sanitization.
+- Blocking coroutine adapters in the storage tool family run through the bounded invocation executor instead of blocking the MCP event loop.
+- Async admission cancellation no longer leaks semaphore permits while a background semaphore acquire is still running.
+- REST and MCP HTTP request bodies and aggregate headers are bounded before application parsing.
+
+### Verification Added
+- Added official `mcp` Python SDK interoperability smoke tests for the exact installed wheel over stdio and the exact container over authenticated Streamable HTTP.
+- Added regression tests for credential redaction, async admission cancellation, blocking-coroutine isolation, JSON-schema generation for unions/generics, HTTP request limits, and manifest/server version consistency.
+
+### Added — ai-skills Standard Alignment
+- Added `ai-skills.lock.yaml` binding this repository to the pinned
+  `paulomac1000/ai-skills` revision `b54fc6b27ea80b36a70d5de73445970e17f55789` with per-skill content digests.
+- Re-pinned the CI documentation validator and adoption target to the immutable
+  `b54fc6b27ea80b36a70d5de73445970e17f55789` revision from the
+  `fix/unified-contract-release-hardening` line; the consumer lock, validator, and
+  migration evidence now identify the same immutable revision.
+- AGENTS.md now passes the `agents-md-architect` strict validation: explicit
+  completion contract (Definition of Done), reasoned context-budget waiver,
+  repository-relative references, and no path-like code spans.
+- Added a recorded real-Home-Assistant cassette test
+  (`tests/protocol/cassettes/recorded_ha_upstream.json`) that replays sanitized
+  real REST and WebSocket payloads through the snapshot collector, satisfying the
+  AGENTS.md requirement for recorded (not hand-crafted) upstream data.
+
+### Fixed — Real-Instance Defects Found by the Live Test Run
+- `diagnose_automation_aliases` no longer reloads the full automations file once
+  per duplicate group; it passes the already-loaded automations into
+  `_compute_overlap`. On a live 131-automation instance this cut the tool from
+  >120 seconds (where it silently starved the shared invocation pool) to ~4.5s.
+- `_augment_result` now merges the invocation envelope into tool-provided `_meta`
+  instead of overwriting it, preserving pagination markers such as `truncated`
+  and `total_count` on `get_entity_registry` and friends.
+- The backend health probe now retries for up to 10 seconds at startup and a
+  background reconciliation thread re-probes a degraded backend, so a transient
+  startup failure no longer permanently disables every `ha.read` capability.
+- `search_files`, `get_area_automation_summary`, `diagnose_energy_setup`,
+  `get_automation_conflicts` received realistic deadlines matching measured
+  cold latency on a live instance (5480-file config scans).
+- `Dockerfile` copied the built wheel to a directory instead of a filename,
+  fixing `Invalid wheel filename` when building the development image.
+
+### Changed
+- Integration tests now build the MCP server through the production composition
+  root (`server.create_mcp_server()`) instead of hand-registering tools on a
+  bare FastMCP instance, exercising the operation registry, fail-closed
+  manifests, and invocation kernel against real Home Assistant.
+- The public `/health` endpoint is deliberately minimal (liveness only); the e2e
+  test now asserts tool counts through `/api/health/details`.
+- The e2e context-generator overwrite test asserts a single document header
+  instead of near-identical file sizes, which are inherently unstable on a live
+  instance.
+- Unit and protocol tests no longer hardcode the tool catalog size and an
+  autouse fixture restores `tools.manifests` global state, removing cross-test
+  pollution between suites.
+- Updated stale test counts in README and the response-format smoke skip set.
+
+### Tests
+
+- Exact-head hosted CI verifies 1,234 unit tests and 17 protocol tests across supported Python lanes, plus clean-install wheel and amd64/arm64 container artifact gates.
+- Live Home Assistant smoke, integration, and E2E results are separate operator validation for deployed revision `4dd4ada`, not provider-backed exact-head evidence for later commits. The checked-in `docs/evidence-live-27d32c9b.md` remains bound to `27d32c9b` and does not certify later branch heads.
 
 ## [1.6.0] - 2026-06-11
 
@@ -78,7 +164,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed — Bugs
 - `get_lovelace_entity_usage` — wrong registry key `lovelace.dashboards` (dot) →
-  `lovelace_dashboards` (underscore)
+  `lovelace_dashboards` (underscore), matching Home Assistant's actual storage
+  convention. Previously returned empty results.
 - `get_history_batch` and `investigate_entity` — removed `urllib.parse.quote` from
   history URL construction, preventing API errors on some HA versions
 - `search_automations_by_entity` — now detects entity references in
@@ -375,7 +462,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Smoke tests:** Created from scratch — 84 tests covering connectivity,
   critical tools (67 unique tools), response format compliance, and input validation.
 - **E2E tests:** Created from scratch — 24 tests covering context generator
-  pipeline (all 3 modes), REST API endpoints, and SSE transport.
+  pipeline (all 3 modes), REST API endpoints, SSE transport.
 - **Total tests:** 621 → 895 (+274).
 - **Tool coverage:** 88/117 (75%) → 116/117 (99%).
 - **Code coverage tools/:** 83% → 89%.
@@ -419,8 +506,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Tests for `automation_validate_triggers` — validates trigger IDs against their
   handlers in choose/if/parallel blocks, detects orphaned triggers, duplicate IDs,
   and missing handler references.
-- Tests for `diagnose_person_tracking` — person state, tracker freshness, zone
-  proximity, automation references.
+- Tests for `diagnose_person_tracking` — person state, tracker freshness analysis,
+  automation references.
 - Tests for `get_area_automation_summary` — area intelligence with device mappings,
   entity breakdown, and automation linking.
 - Tests for `server.py` REST API endpoints: tool calling, context generation,

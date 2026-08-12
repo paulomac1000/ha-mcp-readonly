@@ -3,12 +3,16 @@ Unit test fixtures — mocked dependencies, no real connections.
 """
 
 import asyncio
+import copy
 import inspect
 import json
+import sys
+from collections.abc import Iterator
 from unittest.mock import MagicMock
 
 import pytest
 
+import tools.manifests as manifests_module
 from tests.fixtures import (
     MOCK_AREA_REGISTRY,
     MOCK_CONFIG_ENTRIES,
@@ -16,6 +20,43 @@ from tests.fixtures import (
     MOCK_ENTITY_REGISTRY,
     MOCK_SAMPLE_STATES,
 )
+
+
+@pytest.fixture(autouse=True)
+def _restore_manifest_state() -> Iterator[None]:
+    """Restore global manifest and active-profile state after every unit test.
+
+    Unit tests register synthetic manifests and mutate the active tool set
+    through ``tools.manifests`` module globals. Without restoration those
+    mutations leak into later tests in the same process (for example the
+    protocol suite), breaking counts and activation assertions.
+    """
+    manifests = copy.deepcopy(manifests_module._TOOL_MANIFESTS)
+    active = manifests_module._ACTIVE_TOOL_NAMES
+    reasons = dict(manifests_module._INACTIVE_REASONS)
+    server_module = sys.modules.get("server")
+    server_state = None
+    if server_module is not None:
+        server_state = (
+            getattr(server_module, "_MCP_SERVER", None),
+            dict(getattr(server_module, "_TOOL_CATALOG", {})),
+            copy.deepcopy(getattr(server_module, "HEALTH_STATE", {})),
+        )
+    try:
+        yield
+    finally:
+        manifests_module._TOOL_MANIFESTS.clear()
+        manifests_module._TOOL_MANIFESTS.update(manifests)
+        manifests_module._ACTIVE_TOOL_NAMES = active
+        manifests_module._INACTIVE_REASONS.clear()
+        manifests_module._INACTIVE_REASONS.update(reasons)
+        if server_module is not None and server_state is not None:
+            mcp_server, catalog, health = server_state
+            server_module._MCP_SERVER = mcp_server
+            server_module._TOOL_CATALOG.clear()
+            server_module._TOOL_CATALOG.update(catalog)
+            server_module.HEALTH_STATE.clear()
+            server_module.HEALTH_STATE.update(health)
 
 
 @pytest.fixture

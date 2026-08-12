@@ -1,259 +1,160 @@
-"""E2E tests: REST API endpoints."""
+"""E2E tests for authenticated network adapters against a real HA instance."""
 
+from __future__ import annotations
+
+import os
+import socket
 import time
+from typing import Any
 
 import pytest
 import requests
 
 from .conftest import HA_TOKEN, REST_API_URL, _server_running
 
+REST_API_TOKEN = os.getenv("REST_API_TOKEN") or os.getenv("MCP_AUTH_TOKEN", "")
+REST_HEADERS = {"Authorization": f"Bearer {REST_API_TOKEN}"}
+
 pytestmark = pytest.mark.skipif(
-    not HA_TOKEN or not _server_running(),
-    reason="HA_TOKEN and running server required for e2e tests",
+    not HA_TOKEN or not REST_API_TOKEN or not _server_running(),
+    reason="HA_TOKEN, REST_API_TOKEN and a running REST adapter are required",
 )
 
 
-class TestRESTAPI:
-    """Server REST API integration tests."""
+def _get(path: str, **kwargs: Any) -> requests.Response:
+    headers = {**REST_HEADERS, **kwargs.pop("headers", {})}
+    kwargs.setdefault("timeout", 10)
+    return requests.get(f"{REST_API_URL}{path}", headers=headers, **kwargs)
 
-    def test_health_endpoint(self):
-        """GET /health should return healthy."""
-        resp = requests.get(f"{REST_API_URL}/health", timeout=5)
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["status"] == "healthy"
-        assert data["tool_count"] > 100
 
-    def test_api_health(self):
-        """GET /api/health should also work."""
-        resp = requests.get(f"{REST_API_URL}/api/health", timeout=5)
-        assert resp.status_code == 200
-        assert resp.json()["status"] == "healthy"
+def _post(path: str, **kwargs: Any) -> requests.Response:
+    headers = {**REST_HEADERS, **kwargs.pop("headers", {})}
+    kwargs.setdefault("timeout", 10)
+    return requests.post(f"{REST_API_URL}{path}", headers=headers, **kwargs)
 
-    def test_list_tools(self):
-        """GET /api/tools should list all tools."""
-        resp = requests.get(f"{REST_API_URL}/api/tools", timeout=10)
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["success"] is True
-        assert data["total"] > 100
-        tools_raw = data.get("categories", data.get("tools"))
-        if isinstance(tools_raw, dict):
-            tool_names = [t["name"] for entries in tools_raw.values() for t in entries]
-        else:
-            tool_names = [t["name"] for t in tools_raw]
-        assert "get_entity_state" in tool_names
-        assert "list_automations" in tool_names
-        assert "diagnose_system_health" in tool_names
 
-    def test_openapi_schema(self):
-        """GET /api/openapi.json should return valid schema."""
-        resp = requests.get(f"{REST_API_URL}/api/openapi.json", timeout=10)
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["openapi"] == "3.0.0"
-        assert "/api/tools/get_entity_state" in data["paths"]
+class TestRESTAdapter:
+    """REST compatibility adapter must authenticate and use the shared catalog."""
 
-    def test_call_tool_via_rest(self):
-        """POST /api/tools/{name} should execute a tool."""
-        resp = requests.post(
-            f"{REST_API_URL}/api/tools/get_entity_state",
+    def test_public_health_endpoint(self):
+        response = requests.get(f"{REST_API_URL}/health", timeout=5)
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["status"] in {"ready", "live"}
+        assert payload["version"]
+        details = _get("/api/health/details", timeout=5).json()
+        assert details["tool_count"] > 100
+
+    def test_anonymous_catalog_is_rejected(self):
+        response = requests.get(f"{REST_API_URL}/api/tools", timeout=5)
+        assert response.status_code == 401
+        assert response.json()["error"]["code"] == "UNAUTHORIZED"
+
+    def test_catalog_and_schema_are_authenticated(self):
+        catalog = _get("/api/tools", timeout=10)
+        assert catalog.status_code == 200
+        tools = catalog.json()["tools"]
+        assert len(tools) > 100
+        names = {entry["name"] for entry in tools}
+        assert {"get_entity_state", "list_automations", "diagnose_system_health"} <= names
+
+        schema = _get("/api/openapi.json", timeout=10)
+        assert schema.status_code == 200
+        payload = schema.json()
+        assert payload["openapi"].startswith("3.")
+        assert "/api/tools/get_entity_state" in payload["paths"]
+
+    def test_tool_invocation_and_validation(self):
+        response = _post(
+            "/api/tools/get_entity_state",
             json={"entity_id": "sun.sun"},
             timeout=30,
         )
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["success"] is True
-        assert data["tool"] == "get_entity_state"
+        assert response.status_code == 200
+        assert response.json()["tool"] == "get_entity_state"
 
-    def test_nonexistent_tool_returns_404(self):
-        """Calling a non-existent tool should return 404."""
-        resp = requests.post(
-            f"{REST_API_URL}/api/tools/nonexistent_tool_xyz",
-            json={},
-            timeout=10,
-        )
-        assert resp.status_code == 404
-        data = resp.json()
-        assert data["success"] is False
+        invalid = _post("/api/tools/get_entity_state", json={}, timeout=10)
+        assert invalid.status_code == 400
+        assert invalid.json()["error"]["code"] == "INVALID_ARGUMENTS"
 
-    def test_context_modes_endpoint(self):
-        """GET /api/context/modes should list generation modes."""
-        resp = requests.get(f"{REST_API_URL}/api/context/modes", timeout=10)
-        assert resp.status_code == 200
-        modes = resp.json()["modes"]
-        mode_ids = [m["id"] for m in modes]
-        assert "hybrid" in mode_ids
-        assert "offline" in mode_ids
-        assert "online" in mode_ids
+    def test_unknown_tool_and_invalid_json_are_stable(self):
+        missing = _post("/api/tools/not_a_real_tool", json={}, timeout=10)
+        assert missing.status_code == 404
+        assert missing.json()["error"]["code"] == "NOT_FOUND"
 
-    def test_tool_call_missing_required_args(self):
-        """POST without required entity_id should return 400."""
-        resp = requests.post(
-            f"{REST_API_URL}/api/tools/get_entity_state",
-            json={},
-            timeout=10,
-        )
-        assert resp.status_code in (400, 500)
-
-    def test_tool_call_invalid_json(self):
-        """POST with invalid JSON should not crash."""
-        resp = requests.post(
-            f"{REST_API_URL}/api/tools/get_entity_state",
-            data="not json",
+        invalid = _post(
+            "/api/tools/get_entity_state",
+            data="not-json",
             headers={"Content-Type": "text/plain"},
             timeout=10,
         )
-        assert resp.status_code in (200, 400, 415, 500)
-
-    def test_openapi_tool_paths_complete(self):
-        """Every tool should have a path in OpenAPI schema."""
-        tools_resp = requests.get(f"{REST_API_URL}/api/tools", timeout=10)
-        tools_data = tools_resp.json()
-        tools_raw = tools_data.get("categories", tools_data.get("tools"))
-        if isinstance(tools_raw, dict):
-            tool_names = [t["name"] for entries in tools_raw.values() for t in entries]
-        else:
-            tool_names = [t["name"] for t in tools_raw]
-
-        schema_resp = requests.get(f"{REST_API_URL}/api/openapi.json", timeout=10)
-        schema_data = schema_resp.json()
-
-        missing = []
-        for name in tool_names[:10]:
-            path = f"/api/tools/{name}"
-            if path not in schema_data["paths"]:
-                missing.append(name)
-
-        assert len(missing) == 0, f"Missing OpenAPI paths for: {missing}"
+        assert invalid.status_code == 400
+        assert invalid.json()["error"]["code"] == "INVALID_JSON"
 
 
-class TestContextGeneratorREST:
-    """Context generator REST API endpoint tests."""
+class TestContextArtifacts:
+    """Generated context artifacts are bound to the authenticated principal."""
 
-    def test_context_generate_starts(self):
-        """POST /api/context/generate should start generation and return success."""
-        resp = requests.post(
-            f"{REST_API_URL}/api/context/generate",
+    def test_modes_and_offline_generation(self):
+        modes = _get("/api/context/modes", timeout=5)
+        assert modes.status_code == 200
+        assert modes.json()["modes"] == ["offline", "online", "hybrid"]
+
+        generation = _post(
+            "/api/context/generate",
             json={"mode": "offline"},
             timeout=10,
         )
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["success"] is True
-        assert data["message"] in (
-            "Context generation started",
-            "Generation already in progress",
-        )
+        assert generation.status_code in (202, 409)
+        if generation.status_code == 202:
+            assert generation.json()["status"] == "running"
 
-    def test_context_status_returns_status(self):
-        """GET /api/context/status should return status."""
-        resp = requests.get(f"{REST_API_URL}/api/context/status", timeout=5)
-        assert resp.status_code == 200
-        data = resp.json()
-        assert "status" in data
-
-    def test_context_download_after_wait(self):
-        """After generation completes, download should return markdown."""
-        # Trigger generation
-        requests.post(
-            f"{REST_API_URL}/api/context/generate",
-            json={"mode": "offline"},
-            timeout=10,
-        )
-        # Wait for completion
+    def test_status_and_download_contract(self):
+        _post("/api/context/generate", json={"mode": "offline"}, timeout=10)
+        terminal = {"completed", "error", "deadline_exceeded"}
+        status_payload: dict[str, Any] = {}
         for _ in range(30):
-            status_resp = requests.get(f"{REST_API_URL}/api/context/status", timeout=5)
-            if status_resp.json().get("status") in ("completed", "error"):
+            status = _get("/api/context/status", timeout=5)
+            assert status.status_code == 200
+            status_payload = status.json()
+            if status_payload.get("status") in terminal:
                 break
-            time.sleep(2)
+            time.sleep(1)
 
-        # Download
-        resp = requests.get(
-            f"{REST_API_URL}/api/context/download",
-            timeout=30,
-        )
-        assert resp.status_code in (200, 404, 409)
-
-    def test_context_generate_offline_mode(self):
-        """Offline mode generation should work without API access."""
-        resp = requests.post(
-            f"{REST_API_URL}/api/context/generate",
-            json={"mode": "offline"},
-            timeout=10,
-        )
-        assert resp.status_code in (200, 409)
-        data = resp.json()
-        assert data["success"] is True
+        download = _get("/api/context/download", timeout=30)
+        if status_payload.get("status") == "completed":
+            assert download.status_code == 200
+            assert download.headers["content-type"].startswith("text/markdown")
+        else:
+            assert download.status_code == 404
 
 
-class TestSSETransport:
-    """E2E tests for MCP SSE transport on port 9092."""
+class TestStreamableHTTPTransport:
+    """Network MCP is exposed at /mcp and requires bearer authentication."""
 
-    def test_sse_endpoint_accepts_connection(self):
-        """GET /sse should return SSE stream headers."""
-        import os
-
-        mcp_port = int(os.getenv("MCP_SSE_PORT", "9092"))
-        resp = requests.get(
-            f"http://localhost:{mcp_port}/sse",
-            timeout=5,
-            stream=True,
-        )
-        assert resp.status_code == 200
-        assert "text/event-stream" in resp.headers.get("content-type", "")
-        resp.close()
-
-    def test_messages_endpoint_accepts_post(self):
-        """POST /messages should accept MCP messages."""
-        import os
-
-        mcp_port = int(os.getenv("MCP_SSE_PORT", "9092"))
-        resp = requests.post(
-            f"http://localhost:{mcp_port}/messages",
+    def test_mcp_endpoint_rejects_anonymous_requests(self):
+        mcp_port = int(os.getenv("MCP_PORT", "9092"))
+        response = requests.post(
+            f"http://localhost:{mcp_port}/mcp",
             json={
                 "jsonrpc": "2.0",
-                "method": "tools/list",
                 "id": 1,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2025-11-25",
+                    "capabilities": {},
+                    "clientInfo": {"name": "anonymous-auth-probe", "version": "1"},
+                },
             },
-            timeout=10,
+            headers={
+                "Accept": "application/json, text/event-stream",
+                "Content-Type": "application/json",
+            },
+            timeout=5,
         )
-        assert resp.status_code in (200, 400, 404)
+        assert response.status_code in (401, 403)
 
-
-class TestContextGeneratorFullPipeline:
-    """E2E: full context generation + download pipeline via REST API."""
-
-    def test_full_pipeline_generate_status_download(self):
-        """POST generate → poll status → GET download should work end-to-end."""
-        import time
-
-        # 1. Generate
-        resp = requests.post(
-            f"{REST_API_URL}/api/context/generate",
-            json={"mode": "offline"},
-            timeout=10,
-        )
-        assert resp.status_code in (200, 409)
-
-        # 2. Wait and poll
-        for _ in range(30):
-            status_resp = requests.get(f"{REST_API_URL}/api/context/status", timeout=5)
-            status = status_resp.json().get("status", "unknown")
-            if status in ("completed", "error"):
-                break
-            time.sleep(2)
-
-        # 3. Download
-        download_resp = requests.get(
-            f"{REST_API_URL}/api/context/download",
-            params={"format": "markdown"},
-            timeout=30,
-        )
-        assert download_resp.status_code in (200, 404, 409)
-
-        # 4. Verify format
-        if download_resp.status_code == 200:
-            content = download_resp.text
-            assert len(content) > 1000
-            assert "Home Assistant Context for AI" in content
+    def test_mcp_port_is_listening(self):
+        mcp_port = int(os.getenv("MCP_PORT", "9092"))
+        with socket.create_connection(("localhost", mcp_port), timeout=3):
+            pass

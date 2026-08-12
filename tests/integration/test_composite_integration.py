@@ -1,11 +1,11 @@
 """
 Integration Tests — Composite tools against real Home Assistant.
 
-These tests require a running HA instatece.
+These tests require a running HA instance.
 Skipped automatically when HA_URL / HA_TOKEN are not set.
 
 Run:
-    HA_URL=http://192.168.0.10:8123 HA_TOKEN=xxx \
+    HA_URL=http://home-assistant.local:8123 HA_TOKEN=xxx \
         pytest tests/integration/test_composite_integration.py -v -s
 """
 
@@ -23,54 +23,28 @@ _skip = not (HA_URL and HA_TOKEN)
 pytestmark = pytest.mark.skipif(_skip, reason="HA_URL / HA_TOKEN not set")
 
 
-@pytest.fixture(scope="module")
-def mcp():
-    """Register composite tools against real HA."""
-    from fastmcp import FastMCP
-
-    from tools.composite import register_composite_tools
-
-    server = FastMCP("integration_test")
-    register_composite_tools(server, HA_CONFIG_PATH, HA_URL, HA_TOKEN)
-    return server
-
-
-def _get_fn(mcp, name):
-    tools = mcp._tool_manager._tools if hasattr(mcp, "_tool_manager") else {}
-    tool = tools.get(name)
-    if tool is None:
-        pytest.skip(f"Tool {name} not available")
-    return tool.fn if hasattr(tool, "fn") else tool
-
-
 # ====================================================================
 #  investigate_entity — real HA
 # ====================================================================
 
 
 class TestInvestigateEntityReal:
-    @pytest.mark.asyncio
-    async def test_returns_success(self, mcp):
-        fn = _get_fn(mcp, "investigate_entity")
-        raw = await fn(search_term="light")
+    def test_returns_success(self, real_mcp):
+        raw = real_mcp.call_tool("investigate_entity", search_term="light")
         data = json.loads(raw)
         assert data["success"] is True
         assert data["summary"]["entities_found"] > 0
 
-    @pytest.mark.asyncio
-    async def test_csv_multiterm(self, mcp):
-        fn = _get_fn(mcp, "investigate_entity")
-        raw = await fn(search_term="light,sensor")
+    def test_csv_multiterm(self, real_mcp):
+        raw = real_mcp.call_tool("investigate_entity", search_term="light,sensor")
         data = json.loads(raw)
         assert data["success"] is True
         domains = {e.get("domain") for e in data["matched_entities"]}
         assert "light" in domains or "sensor" in domains
 
-    @pytest.mark.asyncio
-    async def test_output_size_under_budget(self, mcp):
-        fn = _get_fn(mcp, "investigate_entity")
+    def test_output_size_under_budget(self, real_mcp):
         t0 = time.time()
-        raw = await fn(search_term="light")
+        raw = real_mcp.call_tool("investigate_entity", search_term="light")
         elapsed = time.time() - t0
 
         size_kb = len(raw) / 1024
@@ -92,13 +66,15 @@ class TestInvestigateEntityReal:
 
 
 class TestGetEntityWithAutomationsReal:
-    @pytest.mark.asyncio
-    async def test_nonexistent_entity(self, mcp):
-        fn = _get_fn(mcp, "get_entity_with_automations")
-        raw = await fn(entity_id="light.definitely_does_not_exist_xyz")
+    def test_nonexistent_entity(self, real_mcp, missing_entity_id: str):
+        raw = real_mcp.call_tool(
+            "get_entity_with_automations",
+            entity_id=missing_entity_id,
+        )
         data = json.loads(raw)
         assert data["success"] is False
         assert "suggestions" in data or "error" in data
+        assert "_meta" in data
 
 
 # ====================================================================
@@ -107,22 +83,29 @@ class TestGetEntityWithAutomationsReal:
 
 
 class TestGetAreaDiagnosticReal:
-    @pytest.mark.asyncio
-    async def test_nonexistent_area(self, mcp):
-        fn = _get_fn(mcp, "get_area_diagnostic")
-        raw = await fn(area_name="definitely_nonexistent_room_xyz")
+    def test_nonexistent_area(self, real_mcp, missing_area_name: str):
+        raw = real_mcp.call_tool("get_area_diagnostic", area_name=missing_area_name)
         data = json.loads(raw)
         assert data["success"] is False
-        assert "available_areas" in data
+        assert data["error"] == f"Area '{missing_area_name}' not found"
+        assert "_meta" in data
 
-    @pytest.mark.asyncio
-    async def test_area_output_has_warnings_field(self, mcp):
-        fn = _get_fn(mcp, "get_area_diagnostic")
-        raw = await fn(area_name="definitely_nonexistent_room_xyz")
+    def test_area_output_has_warnings_field(self, real_mcp):
+        from tools.composite import _load_registries
+
+        _, _, areas = _load_registries(HA_CONFIG_PATH)
+        if not areas:
+            pytest.skip("Area registry is empty")
+        area = areas[0]
+        area_name = area.get("name") or area.get("id")
+        assert area_name, "Area registry entry lacks both name and id"
+
+        raw = real_mcp.call_tool("get_area_diagnostic", area_name=area_name)
         data = json.loads(raw)
-        if data.get("success") is False:
-            pytest.skip(f"Area not found: {data.get('error')}")
+        assert data["success"] is True
         assert "warnings" in data
+        assert isinstance(data["warnings"], list)
+        assert "_meta" in data
 
 
 # ====================================================================
@@ -131,7 +114,7 @@ class TestGetAreaDiagnosticReal:
 
 
 class TestCachePerformanceReal:
-    def test_cache_hit_rate_after_warmup(self):
+    def test_cache_hit_rate_after_warmup(self, registry_cache_state):
         from tools.utils import (
             get_registry_cache_stats,
             invalidate_registry_cache,
@@ -148,8 +131,10 @@ class TestCachePerformanceReal:
         ):
             load_registry(name, HA_CONFIG_PATH)
 
-        # Warm loads (×3 each)
-        for _ in range(3):
+        stats_after_cold = get_registry_cache_stats()
+
+        # Warm loads — should all hit cache
+        for _ in range(5):
             for name in (
                 "core.entity_registry",
                 "core.device_registry",
@@ -157,8 +142,6 @@ class TestCachePerformanceReal:
             ):
                 load_registry(name, HA_CONFIG_PATH)
 
-        stats = get_registry_cache_stats()
-        print(f"\n  Cache stats: {stats}")
-        assert stats["hit_rate_percent"] >= 70.0, (
-            f"Hit rate {stats['hit_rate_percent']}% below 70% target"
-        )
+        stats_after_warm = get_registry_cache_stats()
+        new_hits = stats_after_warm["hits"] - stats_after_cold["hits"]
+        assert new_hits >= 15

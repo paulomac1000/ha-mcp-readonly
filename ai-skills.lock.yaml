@@ -1,0 +1,28 @@
+# ai-skills consumer lock — binds this repository to the adopted standard revision.
+# Generated from the unified contract release hardening branch of paulomac1000/ai-skills.
+# Update together with migration-assessment.yaml; content digests are sha256 of the
+# normative entrypoint file at the pinned revision.
+schema_version: 1
+repository: paulomac1000/ai-skills
+revision: b54fc6b27ea80b36a70d5de73445970e17f55789
+skills:
+  mcp-server-architect:
+    version: 1.2.0
+    revision: b54fc6b27ea80b36a70d5de73445970e17f55789
+    normative_entrypoint: skills/mcp-server-architect/STANDARD.md
+    content_digest: sha256:7028ab59a9b9c0b00658aac25c961137e3d2eb25d54386a34e0d96a85237c623
+  ci-cd-architect:
+    version: 1.2.0
+    revision: b54fc6b27ea80b36a70d5de73445970e17f55789
+    normative_entrypoint: skills/ci-cd-architect/STANDARD.md
+    content_digest: sha256:00c922c41d369da2a3db14409fe81beb317984588ae8eafd3517c48bcfec9009
+  afds-doc-writer:
+    version: 1.2.0
+    revision: b54fc6b27ea80b36a70d5de73445970e17f55789
+    normative_entrypoint: skills/afds-doc-writer/STANDARD.md
+    content_digest: sha256:9778379becd51fcfb98bb9908801269754e780571bd45f54772e056489deabb6
+  agents-md-architect:
+    version: 1.2.0
+    revision: b54fc6b27ea80b36a70d5de73445970e17f55789
+    normative_entrypoint: skills/agents-md-architect/STANDARD.md
+    content_digest: sha256:22e4bac1e86dc524ff6a53f885ed34df90e36269384bfebc05c4bb08cf41e342

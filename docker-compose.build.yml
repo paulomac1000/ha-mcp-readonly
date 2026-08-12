@@ -8,13 +8,13 @@ services:
     env_file: .env
     ports:
       - "9091:9091"  # health
-      - "9092:9092"  # MCP SSE
+      - "9092:9092"  # MCP Streamable HTTP
       - "9093:9093"  # REST API
     volumes:
       - /path/to/ha/config:/config:ro
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://localhost:9091/health"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9091/ready', timeout=3)"]
       interval: 30s
       timeout: 5s
       retries: 3

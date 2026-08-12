@@ -1487,11 +1487,16 @@ def _do_diagnose_performance(
             for a in automation_states[:10]
         ]
 
-    logbook_res = make_ha_request(
-        ha_url,
-        ha_token,
-        f"/api/logbook/{(datetime.now(UTC) - timedelta(hours=24)).isoformat()}",
-    )
+    logbook_window_hours: int | None = None
+    logbook_res: dict[str, Any] = {"success": False, "data": []}
+    for candidate_window_hours in (24, 6, 1):
+        start = (datetime.now(UTC) - timedelta(hours=candidate_window_hours)).isoformat()
+        logbook_res = make_ha_request(
+            ha_url, ha_token, f"/api/logbook/{start}", timeout=60, retries=1
+        )
+        if logbook_res.get("success"):
+            logbook_window_hours = candidate_window_hours
+            break
     if logbook_res.get("success"):
         trigger_counts: Counter[str] = Counter()
         for entry in logbook_res.get("data", []):
@@ -1502,6 +1507,7 @@ def _do_diagnose_performance(
         result["most_triggered"] = [
             {"entity_id": eid, "trigger_count": count} for eid, count in most_common
         ]
+    result["logbook_window_hours"] = logbook_window_hours
 
     if config_path:
         auto_path = Path(config_path) / "automations.yaml"
@@ -2450,6 +2456,10 @@ def register_diagnostics_tools(mcp, ha_url, ha_token, config_path) -> None:  # t
 
         Args:
             domain: Integration domain (e.g. "mqtt", "tuya", "zha").
+
+        Returns:
+            JSON with domain, health status, entity statistics, recent log
+            issues, unavailable entity samples, and recommendations.
         """
         try:
             result = _do_get_integration_health(
@@ -2469,6 +2479,10 @@ def register_diagnostics_tools(mcp, ha_url, ha_token, config_path) -> None:  # t
 
         Args:
             area_id: Area id (e.g. "living_room") or name (e.g. "Living Room").
+
+        Returns:
+            JSON with area info, intelligence counts, linked automations,
+            current state summary, and entity breakdown.
         """
         try:
             result = _do_get_area_automation_summary(
@@ -2484,7 +2498,12 @@ def register_diagnostics_tools(mcp, ha_url, ha_token, config_path) -> None:  # t
 
     @mcp.tool()
     def get_notification_history() -> str:
-        """[READ] Check active persistent notifications in Home Assistant."""
+        """[READ] Check active persistent notifications in Home Assistant.
+
+        Returns:
+            JSON with active persistent notifications, recent notifications
+            from the last 24 hours, and counts for both.
+        """
         try:
             result = _do_get_notification_history(
                 ha_url=ha_url,
@@ -2497,7 +2516,12 @@ def register_diagnostics_tools(mcp, ha_url, ha_token, config_path) -> None:  # t
 
     @mcp.tool()
     def get_energy_dashboard_data() -> str:
-        """[READ] Get energy dashboard summary: current power, tariff info, daily consumption, and cost analysis."""
+        """[READ] Get energy dashboard summary: current power, tariff info, daily consumption, and cost analysis.
+
+        Returns:
+            JSON with tariff status, consumption figures, detected sensor
+            counts, and recommendations.
+        """
         try:
             result = _do_get_energy_dashboard_data(
                 ha_url=ha_url,

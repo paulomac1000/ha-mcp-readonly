@@ -399,7 +399,12 @@ def register_health_reporter_tools(
 
     @mcp.tool()
     def trigger_health_report() -> str:
-        """[READ] Generate system health report (read-only). Returns JSON with metrics, logs, entity and automation health."""
+        """Generate system health report (read-only). Returns JSON with metrics, logs, entity and automation health.
+
+        Returns:
+            JSON with health score, system metrics, log summary, entity health,
+            automation health, and generation timestamp.
+        """
         try:
             return _do_trigger_health_report(ha_url, ha_token, config_path)
         except Exception as e:

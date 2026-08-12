@@ -1,3 +1,13 @@
+---
+description: Contribution workflow and quality requirements for HA-MCP-Readonly changes.
+doc_id: guide.ha-mcp-contributing
+type: guide
+status: active
+rigor: operational
+owners: [repository-maintainers]
+verification: Run Ruff, strict mypy, Bandit, unit tests, protocol tests, and the applicable package or runtime checks before opening a pull request.
+---
+
 # Contributing to HA-MCP-Readonly
 
 Thank you for your interest in contributing! This document provides guidelines for contributing to the project.
@@ -24,7 +34,7 @@ Thank you for your interest in contributing! This document provides guidelines f
 2. Create a feature branch (`git checkout -b feature/amazing-feature`)
 3. Make your changes
 4. Add or update tests as needed
-5. Ensure all tests pass: `pytest tests/unit/ -v`
+5. Run the deterministic gates from `docs/testing-guidelines.md` in a virtual environment
 6. Update documentation if needed
 7. Commit with clear messages
 8. Open a Pull Request
@@ -36,7 +46,7 @@ git clone https://github.com/paulomac1000/ha-mcp-readonly.git
 cd ha-mcp-readonly
 python -m venv venv
 source venv/bin/activate
-pip install -r requirements.txt
+python -m pip install -c constraints-ci.txt '.[dev]'
 ```
 
 ## Coding Standards
@@ -45,7 +55,7 @@ pip install -r requirements.txt
 - **Style**: Follow PEP 8
 - **Docstrings**: Use Google-style docstrings for all public functions
 - **Type hints**: Include type hints for function signatures
-- **Tests**: Minimum 80% code coverage for new code
+- **Tests**: Repository unit coverage must be at least 85%; registered tool modules must be at least 80%; new executable `tools/*.py` lines must be greater than 80%
 - **Error handling**: Always return JSON with `success` field
 
 ## Adding a New Tool
@@ -79,10 +89,10 @@ async def my_new_tool(entity_id: str) -> str:
 
 ## Testing
 
-### Unit Tests (no credentials needed)
+### Unit and protocol tests (no credentials needed)
 
 ```bash
-pytest tests/unit/ tests/smoke/ -v --tb=short
+pytest tests/unit/ tests/protocol/ -v --tb=short
 ```
 
 ### Smoke Tests (requires REST API + HA_TOKEN)
@@ -110,19 +120,51 @@ pytest tests/e2e/ -v
 ### All Tests
 
 ```bash
-pytest tests/unit/ tests/smoke/ tests/e2e/ -v
+pytest tests/unit/ tests/protocol/ tests/smoke/ tests/e2e/ tests/integration/ -v
 ```
 
-### Coverage
+### Coverage and static gates
 
 ```bash
-pytest tests/unit/ --cov=tools --cov-report=html
+pytest tests/unit/ -q \
+  --cov=tools \
+  --cov=context_generator.core \
+  --cov=context_generator.config \
+  --cov=context_generator.runtime \
+  --cov=context_generator.provenance \
+  --cov=context_generator.snapshot \
+  --cov-report=term-missing \
+  --cov-report=json:coverage.json \
+  --cov-fail-under=85
+python scripts/check_coverage_policy.py coverage.json --base-ref origin/main
+ruff check .
+ruff format --check .
+mypy server.py tools/ context_generator/core.py context_generator/config.py context_generator/runtime.py context_generator/provenance.py context_generator/snapshot.py scripts/verify_runtime_endpoints.py --strict
+bandit -r server.py tools/ context_generator/ ha_graph/ -ll
 ```
+
+The legacy analyzer/formatter and graph modules have a deliberately scoped mypy override documented in `docs/testing-guidelines.md`; do not extend that exemption to new code.
+
+### Hosted CI during branch iteration
+
+The repository follows the pinned `ai-skills` cost-aware CI model. The current `CI` workflow supports a cheap manual path and an explicit full path:
+
+```bash
+# Fast quality/contracts feedback on the selected branch.
+gh workflow run ci.yml --ref <branch>
+
+# Full Python matrix, coverage policy, wheel, stdio, and container gate.
+gh workflow run ci.yml --ref <branch> -f full=true
+```
+
+Do not run the hosted full matrix after every intermediate agent commit. Run local deterministic checks while iterating, then use the full hosted gate for an acceptance candidate. A full run is valid evidence only for the exact SHA that executed it; any later branch commit makes that evidence stale.
+
+Automatic pull-request full gates remain enabled while newly introduced workflow paths complete GitHub's `workflow_dispatch` default-branch bootstrap. See `docs/testing-guidelines.md` for the migration and acceptance rules.
 
 ## Release Checklist
 
-- [ ] All tests passing
-- [ ] Code coverage > 80%
+- [ ] All applicable tests passing
+- [ ] Repository coverage policy passes (overall >=85%, tools aggregate >85%, registered tool modules >=80%, new executable tool lines >80%)
 - [ ] Documentation updated
 - [ ] Security review completed
 - [ ] No hardcoded credentials
