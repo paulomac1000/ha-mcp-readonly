@@ -9,6 +9,7 @@ from typing import Literal
 
 GenerationMode = Literal["offline", "online", "hybrid"]
 DEFAULT_MAX_OUTPUT_BYTES = 96 * 1024 * 1024
+MAX_CONTEXT_ARTIFACT_BYTES = 128 * 1024 * 1024
 
 
 @dataclass(frozen=True, slots=True)
