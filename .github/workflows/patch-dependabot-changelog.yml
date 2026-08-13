@@ -1,0 +1,42 @@
+name: Patch dependency changelog
+
+on:
+  push:
+    branches: ["agent/consolidate-dependabot-updates"]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: agent/consolidate-dependabot-updates
+      - name: Add unreleased dependency maintenance entry
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("CHANGELOG.md")
+          text = path.read_text(encoding="utf-8")
+          marker = "### Changed — Dependency Maintenance\n"
+          if marker not in text:
+              entry = (
+                  "### Changed — Dependency Maintenance\n"
+                  "- Updated pinned GitHub Actions revisions from Dependabot PR #24 while preserving the current publish build-backend validation.\n"
+                  "- Added Dependabot guards for MCP 2.x while FastMCP 3.4.x requires `mcp<2`, and for standalone `pydantic-core` updates because Pydantic pins its core dependency exactly.\n\n"
+              )
+              text = text.replace("## [Unreleased]\n\n", "## [Unreleased]\n\n" + entry, 1)
+              path.write_text(text, encoding="utf-8")
+          PY
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add CHANGELOG.md
+          git diff --cached --quiet && exit 0
+          git commit -m "docs: record dependency maintenance"
+          git push origin HEAD:agent/consolidate-dependabot-updates
