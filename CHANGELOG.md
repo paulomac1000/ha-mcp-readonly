@@ -16,6 +16,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Changed — Dependency Maintenance
+- Updated pinned GitHub Actions revisions from Dependabot PR #24 while preserving the current publish build-backend validation.
+- Added Dependabot guards for MCP 2.x while FastMCP 3.4.x requires `mcp<2`, and for standalone `pydantic-core` updates because Pydantic pins its core dependency exactly.
+
 ## [2.0.0] - 2026-08-12
 
 ### Live-HA Verification
