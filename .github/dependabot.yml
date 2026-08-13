@@ -17,6 +17,15 @@ updates:
       interval: "weekly"
     cooldown:
       default-days: 7
+    ignore:
+      # FastMCP 3.4.x requires mcp>=1.24,<2. Keep this guard until the
+      # application intentionally migrates to a FastMCP line supporting MCP 2.x.
+      - dependency-name: "mcp"
+        update-types:
+          - "version-update:semver-major"
+      # Pydantic pins an exact pydantic-core version. Let pydantic updates move
+      # the pair together instead of accepting an independently bumped core.
+      - dependency-name: "pydantic-core"
     groups:
       pip:
         patterns:

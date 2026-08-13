@@ -35,7 +35,7 @@ jobs:
       quarantine_ref: ${{ steps.quarantine.outputs.ref }}
       quarantine_digest: ${{ steps.quarantine.outputs.digest }}
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -79,7 +79,7 @@ jobs:
           test "$(git rev-parse HEAD)" = "$release_sha"
           echo "sha=$release_sha" >> "$GITHUB_OUTPUT"
           echo "tag=$release_tag" >> "$GITHUB_OUTPUT"
-      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
         with:
           python-version: "3.13"
           cache: pip
@@ -97,9 +97,9 @@ jobs:
           python -m build --wheel --no-isolation
           test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
       - uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4
-      - uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4
+      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
       - name: Log in only to isolated quarantine registry
-        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
         with:
           registry: ghcr.io
           username: ${{ secrets.QUARANTINE_REGISTRY_USERNAME }}
@@ -161,13 +161,13 @@ jobs:
       id-token: write
       attestations: write
     steps:
-      - uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4
+      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
       # Docker credentials are keyed by registry hostname, so two ghcr.io logins
       # overwrite each other. Keep this protected environment credential out of
       # the candidate job and grant it only read access to quarantine plus write
       # access to the release package.
       - name: Log in with protected promotion credential
-        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
         with:
           registry: ghcr.io
           username: ${{ secrets.PROMOTION_REGISTRY_USERNAME }}
