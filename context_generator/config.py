@@ -34,6 +34,11 @@ class GenerationConfig:
             raise ValueError("history_hours, log_hours and calendar_days cannot be negative")
         if self.max_output_bytes < 1024 or self.max_source_bytes < 1024:
             raise ValueError("generation size limits are too small")
+        if self.max_output_bytes > MAX_CONTEXT_ARTIFACT_BYTES:
+            raise ValueError(
+                "HA_CONTEXT_MAX_OUTPUT_BYTES exceeds the supported artifact size "
+                f"({MAX_CONTEXT_ARTIFACT_BYTES} bytes)"
+            )
 
     @property
     def network_enabled(self) -> bool:
