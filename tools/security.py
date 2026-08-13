@@ -157,7 +157,15 @@ class PathPolicy:
 
 
 def resolve_output_path(raw_path: str | Path, output_root: str | Path) -> Path:
-    """Resolve a context artifact path below the configured output root."""
+    """Resolve a context artifact path below the configured output root.
+
+    Args:
+        raw_path: Candidate artifact path to validate and resolve.
+        output_root: Configured root that must contain the artifact.
+
+    Returns:
+        The resolved artifact path within the configured output root.
+    """
     policy = PathPolicy.from_paths(
         [Path(output_root)],
         max_file_size=MAX_CONTEXT_ARTIFACT_BYTES,
