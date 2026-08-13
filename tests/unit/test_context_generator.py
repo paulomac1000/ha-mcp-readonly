@@ -1263,3 +1263,60 @@ class TestProvenanceAndComprehensiveSnapshot:
         assert websocket["todo_items"]["todo.tasks"]["items"][0]["uid"] == "1"
         assert websocket["weather_forecasts"]["weather.home"]["daily"][0]["condition"] == "sunny"
         assert provenance.as_dict()["system_health_ws"]["status"] == "complete"
+
+
+class TestComprehensiveSnapshotFilePolicy:
+    def test_runtime_logs_are_excluded_from_config_tree(self, tmp_path):
+        """Runtime log files must not bloat the config snapshot."""
+        from context_generator.provenance import ProvenanceTracker
+        from context_generator.snapshot import ComprehensiveSnapshotCollector
+
+        (tmp_path / "home-assistant.log").write_text("x" * 1024 * 1024)
+        (tmp_path / "notifications.log").write_text("x" * 1024 * 1024)
+        (tmp_path / "configuration.yaml").write_text("homeassistant:\n")
+
+        config = GenerationConfig(
+            config_path=tmp_path,
+            output_path=tmp_path / "out.md",
+            ha_url="",
+            ha_token="",
+            mode="offline",
+        )
+        provenance = ProvenanceTracker()
+        collector = ComprehensiveSnapshotCollector(config, provenance)
+        collector._collect_files()
+
+        tree = collector.data["files"]["config_tree"]
+        assert "home-assistant.log" not in tree
+        assert "notifications.log" not in tree
+        assert "configuration.yaml" in tree
+
+
+class TestSnapshotRestPolicy:
+    def test_runtime_log_endpoints_are_not_collected(self, tmp_path):
+        """Full error_log/history/logbook payloads must not bloat the snapshot."""
+        from context_generator.provenance import ProvenanceTracker
+        from context_generator.snapshot import ComprehensiveSnapshotCollector
+
+        config = GenerationConfig(
+            config_path=tmp_path,
+            output_path=tmp_path / "out.md",
+            ha_url="http://ha:8123",
+            ha_token="token",
+            mode="online",
+        )
+        provenance = ProvenanceTracker()
+
+        def fake_request(endpoint: str, **kwargs):
+            del kwargs
+            return {"success": True, "data": [{"x": "y"}]}
+
+        collector = ComprehensiveSnapshotCollector(config, provenance)
+        with patch("context_generator.snapshot.make_ha_request", side_effect=fake_request):
+            collector._collect_rest()
+
+        rest = collector.data["rest"]
+        assert "error_log_api" not in rest
+        assert "history_api" not in rest
+        assert "logbook_api" not in rest
+        assert "states_api" in rest

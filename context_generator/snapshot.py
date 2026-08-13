@@ -25,6 +25,8 @@ _BLOCKED_NAMES = {
     "auth",
     "onboarding",
     "core.restore_state",
+    "home-assistant.log",
+    "notifications.log",
 }
 _BLOCKED_PREFIXES = ("auth_provider.",)
 _BLOCKED_DIRS = {"backups", "backup", "media", "www", "tts", "deps", ".git"}
@@ -38,7 +40,6 @@ _REST_SOURCES: tuple[tuple[str, str], ...] = (
     ("components_api", "/api/components"),
     ("system_health_api", "/api/system_health"),
     ("energy_dashboard_api", "/api/energy/dashboard"),
-    ("error_log_api", "/api/error_log"),
 )
 
 
@@ -199,43 +200,6 @@ class ComprehensiveSnapshotCollector:
                 )
 
         now = datetime.now(UTC)
-        history_start = now - timedelta(hours=self.config.history_hours)
-        history_endpoint = "/api/history/period/" + history_start.isoformat()
-        history_endpoint += "?" + urlencode(
-            {"end_time": now.isoformat(), "minimal_response": "0", "no_attributes": "0"}
-        )
-        result = make_ha_request(history_endpoint)
-        if result.get("success"):
-            self._store(
-                "rest", "history_api", result.get("data"), method="rest", requested=history_endpoint
-            )
-        else:
-            self._unavailable(
-                "rest",
-                "history_api",
-                method="rest",
-                reason=str(result.get("error") or "request failed"),
-                requested=history_endpoint,
-            )
-
-        log_start = now - timedelta(hours=self.config.log_hours)
-        log_endpoint = (
-            "/api/logbook/" + log_start.isoformat() + "?" + urlencode({"end_time": now.isoformat()})
-        )
-        result = make_ha_request(log_endpoint)
-        if result.get("success"):
-            self._store(
-                "rest", "logbook_api", result.get("data"), method="rest", requested=log_endpoint
-            )
-        else:
-            self._unavailable(
-                "rest",
-                "logbook_api",
-                method="rest",
-                reason=str(result.get("error") or "request failed"),
-                requested=log_endpoint,
-            )
-
         calendars = make_ha_request("/api/calendars")
         calendar_rows: list[dict[str, Any]] = []
         if calendars.get("success") and isinstance(calendars.get("data"), list):
