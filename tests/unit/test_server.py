@@ -397,9 +397,7 @@ def test_context_status_maps_budget_exceeded_errors(monkeypatch, tmp_path) -> No
     assert payload["error_code"] == "BUDGET_EXCEEDED"
 
 
-def test_download_serves_last_known_good_after_failed_regeneration(
-    monkeypatch, tmp_path
-) -> None:
+def test_download_serves_last_known_good_after_failed_regeneration(monkeypatch, tmp_path) -> None:
     """A failed regeneration must not wedge downloads of the last-good artifact (#34)."""
     config_root = tmp_path / "config"
     output_root = tmp_path / "output"
