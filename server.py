@@ -8,6 +8,7 @@ import inspect
 import json
 import logging
 import multiprocessing
+import secrets
 import socket
 import subprocess
 import sys
@@ -544,6 +545,26 @@ def _normalize_context_options(params: dict[str, Any]) -> dict[str, Any]:
     return options
 
 
+_CONTEXT_ERROR_CODES = {
+    "TimeoutError": "DEADLINE_EXCEEDED",
+    "ValueError": "INVALID_ARGUMENTS",
+    "GenerationError": "GENERATION_FAILED",
+    "OSError": "DEPENDENCY_UNAVAILABLE",
+}
+
+
+class ContextGenerationFailed(RuntimeError):
+    """Raise when the generation child reports a terminal failure.
+
+    Carries a stable, machine-readable error code derived from the child
+    exception type; child messages are never propagated to public output.
+    """
+
+    def __init__(self, error_code: str) -> None:
+        super().__init__(f"Context generation failed: {error_code}")
+        self.error_code = error_code
+
+
 @dataclass
 class GenerationTask:
     task_id: str
@@ -600,7 +621,8 @@ class ContextTaskManager:
                 raise RuntimeError("Context generator exited without a result")
             status, payload = receive.recv()
             if status != "ok":
-                raise RuntimeError(f"Context generation failed: {payload}")
+                error_code = _CONTEXT_ERROR_CODES.get(str(payload), "INTERNAL")
+                raise ContextGenerationFailed(error_code)
             if not isinstance(payload, dict) or not temporary.is_file():
                 raise RuntimeError("Context generator returned an invalid artifact")
             temporary.chmod(0o640)
@@ -638,7 +660,7 @@ class ContextTaskManager:
                 self._generate, safe_config, safe_output, mode, generation_options
             )
             self._task = GenerationTask(
-                task_id=uuid.uuid4().hex,
+                task_id=secrets.token_hex(16),
                 owner=owner,
                 output_path=safe_output,
                 started_at=time.monotonic(),
@@ -661,7 +683,18 @@ class ContextTaskManager:
             return {"status": "running", "task_id": task.task_id, "mode": task.mode}
         exception = task.future.exception()
         if exception is not None:
-            return {"status": "error", "task_id": task.task_id, "error": "Generation failed"}
+            if isinstance(exception, TimeoutError):
+                error_code = "DEADLINE_EXCEEDED"
+            elif isinstance(exception, ContextGenerationFailed):
+                error_code = exception.error_code
+            else:
+                error_code = "INTERNAL"
+            return {
+                "status": "error",
+                "task_id": task.task_id,
+                "error_code": error_code,
+                "error": "Generation failed",
+            }
         return {
             "status": "completed",
             "task_id": task.task_id,
@@ -898,7 +931,7 @@ def create_rest_app(auth_token: str | None = None) -> Any:
         try:
             params = await request.json()
         except (json.JSONDecodeError, TypeError):
-            params = {}
+            params = None
         if not isinstance(params, dict):
             return JSONResponse(
                 {
@@ -991,6 +1024,37 @@ def create_rest_app(auth_token: str | None = None) -> Any:
     async def openapi_schema(request: Request) -> JSONResponse:
         paths: dict[str, Any] = {
             "/api/tools": {"get": {"summary": "List tools", "security": [{"bearerAuth": []}]}},
+            "/api/context/generate": {
+                "post": {
+                    "summary": (
+                        "Start an asynchronous bounded context generation; accepts mode, "
+                        "profile, maxBytes, sections, repositoryFiles, storageRecords, "
+                        "include_files, detail, and onBudgetExceeded"
+                    ),
+                    "security": [{"bearerAuth": []}],
+                }
+            },
+            "/api/context/status": {
+                "get": {
+                    "summary": (
+                        "Return the caller's context generation task state including "
+                        "artifact stats, section manifest, and terminal error_code"
+                    ),
+                    "security": [{"bearerAuth": []}],
+                }
+            },
+            "/api/context/download": {
+                "get": {
+                    "summary": "Download the caller's generated context artifact as Markdown",
+                    "security": [{"bearerAuth": []}],
+                }
+            },
+            "/api/context/modes": {
+                "get": {
+                    "summary": "List supported context generation modes",
+                    "security": [{"bearerAuth": []}],
+                }
+            },
         }
         for name, operation in sorted(get_all_tools().items()):
             paths[f"/api/tools/{name}"] = {

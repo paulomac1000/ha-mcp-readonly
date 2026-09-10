@@ -447,3 +447,57 @@ class TestSnapshotSourceCategorySplit:
         assert records["filesystem_snapshot"]["status"] == "skipped"
         assert "disabled by request" in records["filesystem_snapshot"]["reason"]
         assert collector.data["files"]["config_tree"] == {}
+
+
+class TestOfflineRunResultContract:
+    """The public run result reflects the effective selection and timestamp contract."""
+
+    def test_offline_run_reports_effective_selection_and_iso_timestamp(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        from datetime import datetime
+        from unittest.mock import patch
+
+        from context_generator.core import generate_context_file
+
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        (config_dir / "configuration.yaml").write_text("homeassistant:\n", encoding="utf-8")
+        (config_dir / "automations.yaml").write_text("[]", encoding="utf-8")
+        (config_dir / "scripts.yaml").write_text("{}", encoding="utf-8")
+        (config_dir / "scenes.yaml").write_text("[]", encoding="utf-8")
+        output = tmp_path / "nested" / "context.md"
+
+        with (
+            patch("requests.get", side_effect=AssertionError("offline network access")),
+            patch("requests.post", side_effect=AssertionError("offline network access")),
+        ):
+            result = generate_context_file(
+                config_path=str(config_dir),
+                output_path=str(output),
+                ha_url="http://stale-ha:8123",
+                ha_token="stale-token",
+                mode="offline",
+                profile="agent",
+                include_sections=("topology",),
+            )
+
+        assert result["requested_sections"] == ["topology"]
+        assert result["selected_sections"] == [
+            "executive_summary",
+            "source_provenance",
+            "topology",
+        ]
+        assert result["rendered_sections"] == result["selected_sections"]
+        assert result["truncated"] is False
+        assert result["uncompressed_bytes"] == result["output_bytes"]
+        assert len(result["output_sha256"]) == 64
+
+        content = output.read_text(encoding="utf-8")
+        generated_lines = [
+            line for line in content.splitlines() if line.startswith("> **Generated:**")
+        ]
+        assert generated_lines, "artifact header must carry a Generated timestamp"
+        timestamp = generated_lines[0].split(":** ", 1)[1].strip()
+        parsed = datetime.fromisoformat(timestamp)
+        assert parsed.tzinfo is not None and parsed.utcoffset() is not None

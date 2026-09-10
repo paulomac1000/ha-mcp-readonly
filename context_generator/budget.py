@@ -168,7 +168,11 @@ class SectionManifest:
 
     @property
     def omitted_bytes(self) -> int:
-        """Return the total staged byte size of omitted sections."""
+        """Return the total staged byte size of omitted sections.
+
+        Returns:
+            Sum of ``section_bytes`` over all omitted sections.
+        """
         return sum(item.section_bytes for item in self.omitted)
 
     def to_json_dict(self) -> dict[str, Any]:
@@ -286,7 +290,12 @@ class BudgetedSectionWriter:
 
     @property
     def manifest(self) -> SectionManifest:
-        """Return an immutable snapshot of the current section manifest."""
+        """Return an immutable snapshot of the current section manifest.
+
+        Returns:
+            Manifest describing requested, selected, rendered, and omitted
+            sections together with the truncation flag.
+        """
         return SectionManifest(
             requested=tuple(self._requested),
             selected=tuple(self._selected),

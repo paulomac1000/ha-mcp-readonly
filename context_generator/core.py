@@ -38,7 +38,20 @@ class GenerationError(RuntimeError):
 
 
 def run_generation(config: GenerationConfig) -> dict[str, Any]:
-    """Run one complete generation without mutating process-wide configuration."""
+    """Run one complete generation without mutating process-wide configuration.
+
+    Args:
+        config: Immutable per-run configuration for this generation.
+
+    Returns:
+        Generation summary with artifact metrics, the section manifest, and
+        entity/registry counts. ``selected_sections`` reflects the effective
+        selection including the mandatory floor, not the raw request.
+
+    Raises:
+        GenerationError: When required data is unavailable or the artifact
+            exceeds the configured output limit.
+    """
     config.output_path.parent.mkdir(mode=0o750, parents=True, exist_ok=True)
     provenance = ProvenanceTracker()
     runtime = GenerationRuntime(config=config, provenance=provenance)
@@ -126,7 +139,8 @@ def run_generation(config: GenerationConfig) -> dict[str, Any]:
         "uncompressed_bytes": output_bytes,
         "output_sha256": artifact_digest(config.output_path),
         "profile": config.profile,
-        "selected_sections": list(resolve_sections(config.profile, config.include_sections)),
+        "requested_sections": list(resolve_sections(config.profile, config.include_sections)),
+        "selected_sections": list(manifest.selected),
         "rendered_sections": list(manifest.rendered),
         "omitted_sections": manifest.to_json_dict()["omitted"],
         "truncated": manifest.truncated,

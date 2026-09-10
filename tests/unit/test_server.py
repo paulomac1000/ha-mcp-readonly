@@ -292,3 +292,66 @@ async def test_mcp_principal_is_bound_from_each_request_token(monkeypatch) -> No
         "capabilities": frozenset({"filesystem.read"}),
         "targets": frozenset({"runtime", "home_assistant", "home_assistant_config"}),
     }
+
+
+def test_context_generate_rejects_malformed_json(client: TestClient) -> None:
+    response = client.post(
+        "/api/context/generate",
+        content=b"{not json",
+        headers={**AUTH, "Content-Type": "application/json"},
+    )
+
+    assert response.status_code == 400
+    payload = response.json()
+    assert payload["success"] is False
+    assert payload["error"]["code"] == "INVALID_ARGUMENTS"
+
+
+def test_context_status_exposes_stable_error_code(monkeypatch, tmp_path) -> None:
+    from concurrent.futures import Future
+
+    manager = server.ContextTaskManager(timeout_seconds=5)
+    failed: Future = Future()
+    failed.set_exception(server.ContextGenerationFailed("GENERATION_FAILED"))
+    monkeypatch.setattr(
+        manager,
+        "_task",
+        server.GenerationTask(
+            task_id="task-a",
+            owner="caller",
+            output_path=tmp_path / "context.md",
+            started_at=0.0,
+            future=failed,
+            mode="offline",
+        ),
+    )
+
+    payload = manager.status("caller")
+
+    assert payload["status"] == "error"
+    assert payload["error_code"] == "GENERATION_FAILED"
+
+
+def test_context_status_maps_deadline_errors(monkeypatch, tmp_path) -> None:
+    from concurrent.futures import Future
+
+    manager = server.ContextTaskManager(timeout_seconds=5)
+    timed_out: Future = Future()
+    timed_out.set_exception(TimeoutError("Context generation exceeded its deadline"))
+    monkeypatch.setattr(
+        manager,
+        "_task",
+        server.GenerationTask(
+            task_id="task-b",
+            owner="caller",
+            output_path=tmp_path / "context.md",
+            started_at=0.0,
+            future=timed_out,
+            mode="offline",
+        ),
+    )
+
+    payload = manager.status("caller")
+
+    assert payload["status"] == "error"
+    assert payload["error_code"] == "DEADLINE_EXCEEDED"

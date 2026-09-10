@@ -238,12 +238,14 @@ The generator can bound output at the source instead of emitting everything and 
 | Option | Values | Default | Effect |
 |--------|--------|---------|--------|
 | `profile` | `full`, `agent`, `compact` | `full` | Section preset. `full` renders everything (historical behavior); `agent` drops the heavy raw snapshot, log, and recent-changes sections; `compact` renders summary, provenance, system health, topology, and quick reference only. |
-| `maxBytes` | integer ≥ 1024 | `96 MiB` | Output byte budget. Sections that do not fit are omitted whole and reported. |
-| `sections` | section keys or aliases | profile default | Explicit selection overriding the profile. Aliases: `runtime`, `health`, `provenance`. |
+| `maxBytes` | integer ≥ 1024, ≤ 128 MiB | `HA_CONTEXT_MAX_OUTPUT_BYTES` (96 MiB when unset) | Output byte budget. Omitting `maxBytes` inherits the configured environment value. Sections that do not fit are omitted whole and reported. |
+| `sections` | section keys or aliases | profile default | Explicit selection overriding the profile. Aliases: `runtime`, `health`, `provenance`, `logs`. The executive summary and source provenance sections are always included. |
 | `repositoryFiles` / `include_files` | boolean | `true` | When `false`, the comprehensive raw snapshot does not collect or serialize config file bodies. Structured analysis sections (registries, automations, devices) remain derived-metadata views and are not affected. |
 | `storageRecords` | boolean | `true` | When `false`, the comprehensive raw snapshot does not collect safe `.storage` records. |
 | `detail` | `full`, `compact` | `full` | Alias that resolves to `profile=compact` when no explicit profile is given. |
-| `onBudgetExceeded` | `auto`, `fail`, `truncate` | `auto` | `fail` (the `full` default) fails the run when the budget is exceeded; `truncate` (the `agent`/`compact` default) omits whole sections that do not fit. |
+| `onBudgetExceeded` | `auto`, `fail`, `truncate` | `auto` | Resolved policy: `auto` behaves as `fail` for the `full` profile (preserving the historical fail-closed run) and as `truncate` for `agent`/`compact`; explicit `fail`/`truncate` always win. |
+
+REST option defaults are resolved by the REST layer as shown; they do not inherit their non-boolean defaults from the corresponding environment variables — only `maxBytes` falls back to its environment value.
 
 The generation result reports `output_bytes`, `uncompressed_bytes`, `output_sha256`, `profile`, `selected_sections`, `rendered_sections`, `omitted_sections` (with exact per-section byte sizes and reasons), and `truncated`. Disabling repository files or storage records records an explicit `policy:` skip in the provenance matrix — nothing is silently omitted. The executive summary and source provenance sections are always rendered, including under explicit section selections, so every artifact carries its completeness record.
 

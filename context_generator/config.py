@@ -65,14 +65,29 @@ class GenerationConfig:
 
     @property
     def network_enabled(self) -> bool:
+        """Report whether network sources are usable for this run.
+
+        Returns:
+            True when the mode permits network access and credentials exist.
+        """
         return self.mode != "offline" and bool(self.ha_url and self.ha_token)
 
     @property
     def network_required(self) -> bool:
+        """Report whether missing network access must fail the run.
+
+        Returns:
+            True when the mode is ``online``.
+        """
         return self.mode == "online"
 
     @classmethod
     def from_env(cls) -> GenerationConfig:
+        """Build one canonical run configuration from the process environment.
+
+        Returns:
+            Frozen configuration with budget aliases already normalized.
+        """
         mode = os.getenv("HA_CONTEXT_MODE", "hybrid").strip().casefold()
         if mode not in {"offline", "online", "hybrid"}:
             raise ValueError("HA_CONTEXT_MODE must be offline, online, or hybrid")
