@@ -9,7 +9,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from context_generator.budget import SECTION_ORDER
-from context_generator.config import GenerationConfig
+from context_generator.config import GenerationConfig, inherited_generation_defaults
 from context_generator.formatters import ReportGenerator
 from context_generator.provenance import ProvenanceTracker
 from context_generator.snapshot import ComprehensiveSnapshotCollector
@@ -150,6 +150,22 @@ class TestProfileEnvNormalization:
 
         with pytest.raises(ValueError, match="must be a boolean value"):
             GenerationConfig.from_env()
+
+    def test_token_without_ha_url_disables_network_collection(self, monkeypatch) -> None:
+        """A set token with no explicit HA_URL must never enable network access."""
+        monkeypatch.delenv("HA_URL", raising=False)
+        monkeypatch.setenv("HA_TOKEN", "unit-test-token")
+        monkeypatch.setenv("HA_CONTEXT_MODE", "hybrid")
+
+        config = GenerationConfig.from_env()
+        inherited = inherited_generation_defaults(include_max_output_bytes=False)
+
+        assert config.ha_url == ""
+        assert inherited["ha_url"] == ""
+        assert config.network_enabled is False
+
+        monkeypatch.setenv("HA_URL", "http://ha-unit-test:8123")
+        assert GenerationConfig.from_env().network_enabled is True
 
 
 class TestContextOptionNormalization:
@@ -774,7 +790,9 @@ class TestIssueAcceptanceRegressions:
                 profile="compact",
             )
 
-        assert Path(result["output_file"]).read_text(encoding="utf-8")
+        expected_output = (output_root / "context.md").resolve()
+        assert Path(result["output_file"]) == expected_output
+        assert expected_output.read_text(encoding="utf-8")
 
     def test_notice_that_cannot_fit_fails_as_explicit_budget_error(
         self, tmp_path: Path, monkeypatch

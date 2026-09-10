@@ -110,7 +110,10 @@ class GenerationConfig:
         return cls(
             config_path=Path(os.getenv("HA_CONFIG_PATH", "/config")),
             output_path=Path(output),
-            ha_url=os.getenv("HA_URL", "http://homeassistant:8123"),
+            # No implicit default host: an empty URL keeps network collection
+            # disabled so a set HA_TOKEN can never be transmitted to an
+            # implicit plain-HTTP endpoint (CWE-319).
+            ha_url=os.getenv("HA_URL", ""),
             ha_token=os.getenv("HA_TOKEN", ""),
             mode=mode,  # type: ignore[arg-type]
             history_hours=int(os.getenv("HA_CONTEXT_HISTORY_HOURS", "1")),
@@ -149,7 +152,10 @@ def inherited_generation_defaults(*, include_max_output_bytes: bool) -> dict[str
     values: dict[str, Any] = {
         "config_path": Path(os.getenv("HA_CONFIG_PATH", "/config")),
         "output_path": Path(os.getenv("OUTPUT_PATH", "ha-ai-context.md")),
-        "ha_url": os.getenv("HA_URL", "http://homeassistant:8123"),
+        # Empty when HA_URL is unset: network_enabled() requires a non-empty
+        # URL, so credentialed environments without an explicit host never
+        # fall back to implicit plain-HTTP collection (CWE-319).
+        "ha_url": os.getenv("HA_URL", ""),
         "ha_token": os.getenv("HA_TOKEN", ""),
         "history_hours": int(os.getenv("HA_CONTEXT_HISTORY_HOURS", "1")),
         "log_hours": int(os.getenv("HA_CONTEXT_LOG_HOURS", "24")),

@@ -2,7 +2,7 @@
 
 import json
 from starlette.testclient import TestClient
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -471,7 +471,7 @@ def test_worker_transmits_stable_budget_error_code(monkeypatch) -> None:
     import context_generator
     from context_generator.budget import BudgetExceededError
 
-    receive, send = server.multiprocessing.Pipe(duplex=False)
+    connection = MagicMock()
     monkeypatch.setattr(
         context_generator,
         "generate_context_file",
@@ -479,7 +479,7 @@ def test_worker_transmits_stable_budget_error_code(monkeypatch) -> None:
     )
 
     server._context_generation_worker(
-        send,
+        connection,
         "/config",
         "/tmp/context.md",
         "",
@@ -495,15 +495,15 @@ def test_worker_transmits_stable_budget_error_code(monkeypatch) -> None:
         },
     )
 
-    status, payload = receive.recv()
-    assert (status, payload) == ("error", "BUDGET_EXCEEDED")
+    connection.send.assert_called_once_with(("error", "BUDGET_EXCEEDED"))
+    connection.close.assert_called_once_with()
 
 
 def test_worker_transmits_dependency_unavailable_for_os_errors(monkeypatch) -> None:
     """OSError subclasses map to the stable DEPENDENCY_UNAVAILABLE code."""
     import context_generator
 
-    receive, send = server.multiprocessing.Pipe(duplex=False)
+    connection = MagicMock()
     monkeypatch.setattr(
         context_generator,
         "generate_context_file",
@@ -511,7 +511,7 @@ def test_worker_transmits_dependency_unavailable_for_os_errors(monkeypatch) -> N
     )
 
     server._context_generation_worker(
-        send,
+        connection,
         "/config",
         "/tmp/context.md",
         "",
@@ -527,8 +527,8 @@ def test_worker_transmits_dependency_unavailable_for_os_errors(monkeypatch) -> N
         },
     )
 
-    status, payload = receive.recv()
-    assert (status, payload) == ("error", "DEPENDENCY_UNAVAILABLE")
+    connection.send.assert_called_once_with(("error", "DEPENDENCY_UNAVAILABLE"))
+    connection.close.assert_called_once_with()
 
 
 def test_context_status_maps_parent_os_errors(monkeypatch, tmp_path) -> None:
