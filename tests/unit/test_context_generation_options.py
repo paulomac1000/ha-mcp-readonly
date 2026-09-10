@@ -576,6 +576,115 @@ class TestIssueAcceptanceRegressions:
         assert "hide-me" not in content
         assert "leak-me" not in content
 
+    def test_representative_large_instance_stays_bounded_under_operational_profile(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """A representative large HA instance yields a bounded operational context.
+
+        Unlike the synthetic 50 MB reproduction above, this fixture mirrors a
+        realistic large deployment - thousands of registered entities across
+        common domains, hundreds of devices and areas, and structured
+        automations - so issue #33 criterion 1 is proven with representative
+        data instead of filler bytes.
+        """
+        import json
+        from unittest.mock import patch
+
+        from context_generator.core import generate_context_file
+
+        config_dir = tmp_path / "config"
+        storage = config_dir / ".storage"
+        storage.mkdir(parents=True)
+        (config_dir / "configuration.yaml").write_text("homeassistant:\n", encoding="utf-8")
+        (config_dir / "scripts.yaml").write_text("{}", encoding="utf-8")
+        (config_dir / "scenes.yaml").write_text("[]", encoding="utf-8")
+
+        areas = [
+            {"area_id": f"area_{i:02d}", "name": f"Room {i:02d}", "floor_id": None}
+            for i in range(24)
+        ]
+        devices = [
+            {
+                "id": f"device_{i:04d}",
+                "name": f"Device {i:04d}",
+                "area_id": f"area_{i % 24:02d}",
+                "manufacturer": "Generic Corp",
+                "model": f"Model-{i % 7}",
+            }
+            for i in range(300)
+        ]
+        domains = ("light", "sensor", "switch", "binary_sensor", "climate", "cover")
+        entities = [
+            {
+                "entity_id": f"{domains[i % len(domains)]}.device_{i:04d}",
+                "name": f"Entity {i:04d}",
+                "device_id": f"device_{i % 300:04d}",
+                "area_id": f"area_{i % 24:02d}",
+                "platform": domains[i % len(domains)],
+                "disabled_by": None,
+            }
+            for i in range(3200)
+        ]
+        (storage / "core.area_registry").write_text(
+            json.dumps({"data": {"areas": areas}}), encoding="utf-8"
+        )
+        (storage / "core.device_registry").write_text(
+            json.dumps({"data": {"devices": devices}}), encoding="utf-8"
+        )
+        (storage / "core.entity_registry").write_text(
+            json.dumps({"data": {"entities": entities}}), encoding="utf-8"
+        )
+
+        automations = [
+            {
+                "id": f"automation_{i:03d}",
+                "alias": f"Automation {i:03d} evening scene",
+                "trigger": [{"platform": "state", "entity_id": f"sensor.device_{i:04d}"}],
+                "action": [
+                    {
+                        "service": "light.turn_on",
+                        "target": {"entity_id": f"light.device_{i:04d}"},
+                    }
+                ],
+                "mode": "single",
+            }
+            for i in range(150)
+        ]
+        (config_dir / "automations.yaml").write_text(json.dumps(automations), encoding="utf-8")
+
+        budget = 2 * 1024 * 1024
+        output = tmp_path / "context.md"
+        with (
+            patch("requests.get", side_effect=AssertionError("offline network access")),
+            patch("requests.post", side_effect=AssertionError("offline network access")),
+        ):
+            result = generate_context_file(
+                config_path=str(config_dir),
+                output_path=str(output),
+                ha_url="http://stale-ha:8123",
+                ha_token="stale-token",
+                mode="offline",
+                profile="agent",
+                on_budget_exceeded="auto",
+                max_output_bytes=budget,
+            )
+
+        assert result["output_bytes"] <= budget
+        assert result["registered_entities"] == 3200
+        assert result["devices"] == 300
+        assert result["areas"] == 24
+        assert result["automations"] == 150
+        heavy = {"snapshot", "logs", "recent_changes"}
+        assert heavy.isdisjoint(result["selected_sections"])
+        assert heavy.isdisjoint(result["rendered_sections"])
+
+        content = Path(result["output_file"]).read_text(encoding="utf-8")
+        assert "Automation 001 evening scene" in content
+        if result["truncated"]:
+            assert "## Generation Notes" in content
+            for item in result["omitted_sections"]:
+                assert item["section"] in content
+
     def test_large_source_would_exceed_old_guard_yields_bounded_artifact(
         self, tmp_path: Path, monkeypatch
     ) -> None:
