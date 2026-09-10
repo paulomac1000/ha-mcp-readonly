@@ -731,7 +731,7 @@ class ContextTaskManager:
                 generation_options,
                 owner,
             )
-            self._task = GenerationTask(
+            task = GenerationTask(
                 task_id=secrets.token_hex(16),
                 owner=owner,
                 output_path=safe_output,
@@ -739,7 +739,10 @@ class ContextTaskManager:
                 future=future,
                 mode=mode,
             )
-        return self._task
+            self._task = task
+        # Bind the local handle: a fast-completing generation must never let a
+        # subsequent start() replace the task returned to this caller.
+        return task
 
     def status(self, owner: str) -> dict[str, Any]:
         """Return the caller's context task state.
@@ -763,7 +766,11 @@ class ContextTaskManager:
             raise PermissionError("Task belongs to another principal")
         elapsed = time.monotonic() - task.started_at
         if not task.future.done() and elapsed > self.timeout_seconds:
-            return {"status": "deadline_exceeded", "task_id": task.task_id}
+            return {
+                "status": "deadline_exceeded",
+                "task_id": task.task_id,
+                "error_code": "DEADLINE_EXCEEDED",
+            }
         if not task.future.done():
             return {"status": "running", "task_id": task.task_id, "mode": task.mode}
         exception = task.future.exception()

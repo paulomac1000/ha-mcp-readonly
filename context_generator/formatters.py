@@ -25,6 +25,13 @@ from .config import DEFAULT_MAX_OUTPUT_BYTES, GenerationConfig
 from .provenance import ProvenanceTracker
 from .utils import is_ignorable_entity
 
+_COMPACT_TRUNCATION_NOTICE = (
+    "## Generation Notes\n\n"
+    "This artifact is budget-truncated; selected sections were omitted to honor "
+    "the configured byte budget. The generation result manifest lists every "
+    "omitted section with its exact size.\n\n"
+)
+
 
 class ReportGenerator:
     """Generates final MD report."""
@@ -151,13 +158,28 @@ class ReportGenerator:
             raise
         with binary:
             self._write_binary_header(binary)
-            budget = BudgetedSectionWriter(binary, maximum, policy)
+            reserve = 512 if policy == "truncate" else 0
+            budget = BudgetedSectionWriter(binary, maximum, policy, optional_reserve=reserve)
             for key in selected:
                 method = getattr(self, self._SECTION_WRITERS[key])
                 if key in self._MANDATORY_SECTIONS:
                     budget.write_mandatory(key, self._stage_text(method))
                 else:
                     budget.write_optional(key, self._stage_text(method))
+            if budget.manifest.omitted:
+                omissions = budget.manifest.to_json_dict()["omitted"]
+                names = ", ".join(item["section"] for item in omissions)
+                budget.write_notice(
+                    self._stage_text(lambda f: self._write_generation_notes(f, omissions)),
+                    self._stage_text(
+                        lambda f: f.write(
+                            "## Generation Notes\n\nBudget-truncated artifact. Omitted "
+                            f"sections: {names}. Details in the generation result "
+                            "manifest.\n\n"
+                        )
+                    ),
+                    self._stage_text(lambda f: f.write(_COMPACT_TRUNCATION_NOTICE)),
+                )
             binary.flush()
             os.fsync(binary.fileno())
 
@@ -174,6 +196,21 @@ class ReportGenerator:
         self._write_header(text)
         text.flush()
         text.detach()
+
+    def _write_generation_notes(self, f, omissions: list[dict]) -> None:
+        """Write the in-artifact budget omission notice for bounded runs."""
+        f.write("## Generation Notes\n\n")
+        f.write(
+            "> This artifact is budget-truncated. The following selected sections "
+            "were omitted in full to honor the configured byte budget:\n\n"
+        )
+        f.write("| Section | Reason | Staged bytes |\n|---|---|---|\n")
+        for item in omissions:
+            f.write(f"| {item['section']} | {item['reason']} | {item['section_bytes']} |\n")
+        f.write(
+            "\nRetrieve complete data for omitted areas through the normal read tools "
+            "(entity, automation, registry, and log queries) rather than this artifact.\n\n"
+        )
 
     def _stage_text(self, method: Callable[[TextIO], None]) -> Callable[[BinaryIO], None]:
         """
@@ -322,7 +359,10 @@ class ReportGenerator:
             f.write("> Provenance tracking was not available for this run.\n\n---\n\n")
             return
         summary = self.provenance.summary()
-        f.write(f"> **Artifact completeness:** {summary['completeness']}\n\n")
+        f.write(
+            f"> **Source completeness:** {summary['completeness']} (collection scope; "
+            "see Generation Notes for budget omissions when present)\n\n"
+        )
         f.write("| Source | Method | Status | Records | Bytes | Redactions | Reason |\n")
         f.write("|---|---|---:|---:|---:|---:|---|\n")
         for name, item in summary["sources"].items():

@@ -216,13 +216,22 @@ class BudgetedSectionWriter:
     _COPY_CHUNK_SIZE = 1024 * 1024
     _VALID_POLICIES = frozenset({"fail", "truncate"})
 
-    def __init__(self, handle: BinaryIO, max_bytes: int, policy: str) -> None:
+    def __init__(
+        self,
+        handle: BinaryIO,
+        max_bytes: int,
+        policy: str,
+        optional_reserve: int = 0,
+    ) -> None:
         """Initialize a budget-aware section writer.
 
         Args:
             handle: Open binary output handle positioned on the atomic temp artifact.
             max_bytes: Maximum permitted artifact size in bytes.
             policy: Resolved overflow policy: ``fail`` or ``truncate``.
+            optional_reserve: Bytes withheld from optional sections so a
+                post-loop notice is guaranteed to fit; mandatory sections are
+                still checked against the full budget.
 
         Raises:
             ValueError: If the policy is not a resolved overflow policy.
@@ -232,6 +241,7 @@ class BudgetedSectionWriter:
             raise ValueError(f"unknown resolved overflow policy {policy!r}; valid options: {valid}")
         self._handle = handle
         self._max_bytes = max_bytes
+        self._optional_reserve = optional_reserve
         self._handle.seek(0, os.SEEK_END)
         self._running_size = self._handle.tell()
         self._requested: list[str] = []
@@ -280,7 +290,7 @@ class BudgetedSectionWriter:
             self._requested.append(section)
             self._selected.append(section)
 
-            if self._running_size + size > self._max_bytes:
+            if self._running_size + size + self._optional_reserve > self._max_bytes:
                 self._omitted.append(
                     OmittedSection(
                         section=section,
@@ -295,6 +305,29 @@ class BudgetedSectionWriter:
             return True
         finally:
             staged.close()
+
+    def write_notice(self, *renders: Callable[[SupportsWrite[bytes]], None]) -> bool:
+        """Stage a best-effort notice, trying variants from detailed to compact.
+
+        The notice is a presentation aid: it is committed when a variant fits
+        and is never recorded in the section manifest as an omitted data
+        section.
+
+        Args:
+            *renders: Renderings attempted in order until one fits.
+
+        Returns:
+            True when a variant was committed, otherwise False.
+        """
+        for render in renders:
+            staged, size = self._stage(render)
+            try:
+                if self._running_size + size <= self._max_bytes:
+                    self._commit(staged, size)
+                    return True
+            finally:
+                staged.close()
+        return False
 
     @property
     def manifest(self) -> SectionManifest:

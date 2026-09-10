@@ -676,7 +676,7 @@ class ComprehensiveSnapshotCollector:
                     redacted_fields=redactions,
                 )
         self.data["files"]["config_tree"] = output
-        if skipped_bodies:
+        if not include_bodies:
             self.provenance.record(
                 "repository_files",
                 method="filesystem",
@@ -684,7 +684,7 @@ class ComprehensiveSnapshotCollector:
                 records=skipped_bodies,
                 reason="policy: repository file bodies disabled by request",
             )
-        if skipped_storage:
+        if not include_storage:
             self.provenance.record(
                 "storage_records",
                 method="filesystem",

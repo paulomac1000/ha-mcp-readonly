@@ -318,6 +318,13 @@ class TestBudgetedReportRendering:
         assert manifest.omitted
         assert manifest.omitted_bytes > 0
         assert output.stat().st_size <= budget
+        # The artifact itself must disclose budget omissions (#33 visibility):
+        # an in-artifact Generation Notes notice lists the omitted sections.
+        content = output.read_text(encoding="utf-8")
+        assert "## Generation Notes" in content
+        for omitted in manifest.omitted:
+            assert omitted.section in content
+        assert "Artifact completeness:" not in content
 
     def test_fail_policy_raises_and_leaves_no_artifact_or_temp_files(self, tmp_path: Path) -> None:
         generator = _minimal_generator()

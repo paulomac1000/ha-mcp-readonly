@@ -23,7 +23,7 @@ import yaml
 # Canonical artifact format version rendered into every generated report.
 # Independent from the package version on purpose: bump it only when the
 # generated Markdown structure itself changes in a consumer-visible way.
-CONTEXT_FORMAT_VERSION = "1.1"
+CONTEXT_FORMAT_VERSION = "1.2"
 
 # --- configuration ---
 HA_URL = os.getenv("HA_URL", "http://homeassistant:8123")
