@@ -434,9 +434,7 @@ def test_download_serves_last_known_good_after_failed_regeneration(monkeypatch, 
     manager._executor.shutdown(wait=True)
 
 
-def test_start_records_publication_when_future_already_completed(
-    monkeypatch, tmp_path
-) -> None:
+def test_start_records_publication_when_future_already_completed(monkeypatch, tmp_path) -> None:
     """Callback registration must not deadlock on an already-completed future."""
     from concurrent.futures import Future
 
@@ -457,9 +455,7 @@ def test_start_records_publication_when_future_already_completed(
 
     manager._executor = EagerExecutor()
 
-    task = manager.start(
-        str(config_root), str(output_root / "context.md"), "offline", "caller"
-    )
+    task = manager.start(str(config_root), str(output_root / "context.md"), "offline", "caller")
 
     assert task.future is done
     artifact = manager.output_for("caller")
