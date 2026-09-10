@@ -194,9 +194,15 @@ class SectionManifest:
 
 
 class BudgetedSectionWriter:
-    """Stage report sections before committing them to a bounded binary artifact."""
+    """Stage report sections before committing them to a bounded binary artifact.
+
+    The writer enforces ``truncate`` semantics; the ``fail`` policy is enforced
+    by the caller at the publication boundary via :attr:`manifest`.
+    """
 
     _SPOOL_MAX_SIZE = 256 * 1024
+    _COPY_CHUNK_SIZE = 1024 * 1024
+    _VALID_POLICIES = frozenset({"fail", "truncate"})
 
     def __init__(self, handle: BinaryIO, max_bytes: int, policy: str) -> None:
         """Initialize a budget-aware section writer.
@@ -204,8 +210,14 @@ class BudgetedSectionWriter:
         Args:
             handle: Open binary output handle positioned on the atomic temp artifact.
             max_bytes: Maximum permitted artifact size in bytes.
-            policy: Resolved overflow policy associated with this generation run.
+            policy: Resolved overflow policy: ``fail`` or ``truncate``.
+
+        Raises:
+            ValueError: If the policy is not a resolved overflow policy.
         """
+        if policy not in self._VALID_POLICIES:
+            valid = ", ".join(sorted(self._VALID_POLICIES))
+            raise ValueError(f"unknown resolved overflow policy {policy!r}; valid options: {valid}")
         self._handle = handle
         self._max_bytes = max_bytes
         self._policy = policy
@@ -226,19 +238,21 @@ class BudgetedSectionWriter:
         Raises:
             ValueError: If the staged section would exceed the byte budget.
         """
-        staged = self._stage(render)
-        size = len(staged)
+        staged, size = self._stage(render)
+        try:
+            self._requested.append(section)
+            self._selected.append(section)
 
-        self._requested.append(section)
-        self._selected.append(section)
+            if self._running_size + size > self._max_bytes:
+                raise ValueError(
+                    f"mandatory section {section!r} does not fit within the "
+                    f"{self._max_bytes} byte budget"
+                )
 
-        if self._running_size + size > self._max_bytes:
-            raise ValueError(
-                f"mandatory section {section!r} does not fit within the {self._max_bytes} byte budget"
-            )
-
-        self._commit(staged)
-        self._rendered.append(section)
+            self._commit(staged, size)
+            self._rendered.append(section)
+        finally:
+            staged.close()
 
     def write_optional(self, section: str, render: Callable[[SupportsWrite[bytes]], None]) -> bool:
         """Stage an optional section and commit it only when it fits.
@@ -250,25 +264,26 @@ class BudgetedSectionWriter:
         Returns:
             True when the section was committed, otherwise False.
         """
-        staged = self._stage(render)
-        size = len(staged)
+        staged, size = self._stage(render)
+        try:
+            self._requested.append(section)
+            self._selected.append(section)
 
-        self._requested.append(section)
-        self._selected.append(section)
-
-        if self._running_size + size > self._max_bytes:
-            self._omitted.append(
-                OmittedSection(
-                    section=section,
-                    reason="output budget exceeded",
-                    section_bytes=size,
+            if self._running_size + size > self._max_bytes:
+                self._omitted.append(
+                    OmittedSection(
+                        section=section,
+                        reason="output budget exceeded",
+                        section_bytes=size,
+                    )
                 )
-            )
-            return False
+                return False
 
-        self._commit(staged)
-        self._rendered.append(section)
-        return True
+            self._commit(staged, size)
+            self._rendered.append(section)
+            return True
+        finally:
+            staged.close()
 
     @property
     def manifest(self) -> SectionManifest:
@@ -281,17 +296,32 @@ class BudgetedSectionWriter:
             truncated=bool(self._omitted),
         )
 
-    def _stage(self, render: Callable[[SupportsWrite[bytes]], None]) -> bytes:
-        with tempfile.SpooledTemporaryFile(max_size=self._SPOOL_MAX_SIZE, mode="w+b") as staged:
+    def _stage(
+        self, render: Callable[[SupportsWrite[bytes]], None]
+    ) -> tuple[tempfile.SpooledTemporaryFile[bytes], int]:
+        staged: tempfile.SpooledTemporaryFile[bytes] = tempfile.SpooledTemporaryFile(
+            max_size=self._SPOOL_MAX_SIZE, mode="w+b"
+        )
+        try:
             render(staged)
-            staged.seek(0)
-            return staged.read()
+            staged.seek(0, os.SEEK_END)
+            return staged, staged.tell()
+        except BaseException:
+            staged.close()
+            raise
 
-    def _commit(self, staged: bytes) -> None:
-        written = self._handle.write(staged)
-        if written is not None and written != len(staged):
-            raise OSError(f"short write: expected {len(staged)} bytes, wrote {written}")
-        self._running_size += len(staged)
+    def _commit(self, staged: tempfile.SpooledTemporaryFile[bytes], size: int) -> None:
+        staged.seek(0)
+        remaining = size
+        while remaining:
+            chunk = staged.read(min(self._COPY_CHUNK_SIZE, remaining))
+            if not chunk:
+                raise OSError(f"staged section ended early: expected {size} bytes")
+            written = self._handle.write(chunk)
+            if written is not None and written != len(chunk):
+                raise OSError(f"short write: expected {len(chunk)} bytes, wrote {written}")
+            remaining -= len(chunk)
+        self._running_size += size
 
 
 def artifact_digest(path: str | os.PathLike[str]) -> str:

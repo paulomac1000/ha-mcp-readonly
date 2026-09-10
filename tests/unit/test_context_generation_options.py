@@ -301,7 +301,7 @@ class TestBudgetedReportRendering:
         assert manifest.omitted_bytes > 0
         assert output.stat().st_size <= budget
 
-    def test_fail_policy_raises_and_leaves_no_artifact(self, tmp_path: Path) -> None:
+    def test_fail_policy_raises_and_leaves_no_artifact_or_temp_files(self, tmp_path: Path) -> None:
         generator = _minimal_generator()
         generator.generation_config = _make_config(
             tmp_path,
@@ -309,11 +309,13 @@ class TestBudgetedReportRendering:
             max_output_bytes=2048,
         )
         output = tmp_path / "failed.md"
+        output.write_text("previous artifact", encoding="utf-8")
 
         with pytest.raises(ValueError, match="exceeds configured output limit"):
             generator.generate(str(output))
 
-        assert not output.exists()
+        assert output.read_text(encoding="utf-8") == "previous artifact"
+        assert [p.name for p in tmp_path.iterdir()] == ["failed.md"]
 
     def test_default_full_profile_still_fails_closed(self, tmp_path: Path) -> None:
         generator = _minimal_generator()

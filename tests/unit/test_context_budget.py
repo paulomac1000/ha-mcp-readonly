@@ -343,6 +343,57 @@ def test_large_section_beyond_spool_threshold_is_staged_and_committed_exactly() 
     assert writer.manifest.omitted_bytes == 0
 
 
+def test_writer_rejects_unresolved_policy_values() -> None:
+    with pytest.raises(ValueError, match="unknown resolved overflow policy"):
+        BudgetedSectionWriter(_binary_handle(), max_bytes=64, policy="auto")
+
+    with pytest.raises(ValueError, match="unknown resolved overflow policy"):
+        BudgetedSectionWriter(_binary_handle(), max_bytes=64, policy="anything")
+
+
+def test_writer_records_omission_under_fail_policy_caller_enforces_publication() -> None:
+    """The writer itself always truncates; fail semantics belong to the caller."""
+    handle = _binary_handle()
+    writer = BudgetedSectionWriter(handle, max_bytes=4, policy="fail")
+
+    assert writer.write_optional("snapshot", _render_bytes(b"12345")) is False
+    assert _read_handle(handle) == b""
+    assert writer.manifest.omitted[0].section == "snapshot"
+    assert writer.manifest.truncated is True
+
+
+def test_multibyte_utf8_boundary_commit_on_exact_fit() -> None:
+    """UTF-8 multibyte sections commit when encoded bytes land exactly on the budget."""
+    payload = "ąśż".encode()
+    assert len(payload) == 6
+    handle = _binary_handle()
+    writer = BudgetedSectionWriter(handle, max_bytes=6, policy="truncate")
+
+    assert writer.write_optional("topology", _render_bytes(payload)) is True
+    assert _read_handle(handle) == payload
+
+
+def test_multibyte_utf8_boundary_omits_one_byte_under_budget() -> None:
+    payload = "ąśż".encode()
+    handle = _binary_handle()
+    writer = BudgetedSectionWriter(handle, max_bytes=5, policy="truncate")
+
+    assert writer.write_optional("topology", _render_bytes(payload)) is False
+    assert writer.manifest.omitted[0].section_bytes == 6
+    assert _read_handle(handle) == b""
+
+
+def test_commit_streams_sections_larger_than_copy_chunk() -> None:
+    payload = b"y" * (1024 * 1024 + 4096)
+    handle = _binary_handle()
+    writer = BudgetedSectionWriter(handle, max_bytes=len(payload), policy="truncate")
+
+    assert writer.write_optional("snapshot", _render_bytes(payload)) is True
+    assert _read_handle(handle) == payload
+    assert writer.manifest.rendered == ("snapshot",)
+    assert writer.manifest.omitted_bytes == 0
+
+
 def test_artifact_digest_matches_hashlib_sha256(tmp_path: Path) -> None:
     content = b"header\nsection\n\x00binary-safe\n"
     artifact = tmp_path / "report.md"
