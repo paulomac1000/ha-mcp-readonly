@@ -11,6 +11,7 @@ from .budget import PROFILES, resolve_sections
 
 GenerationMode = Literal["offline", "online", "hybrid"]
 DEFAULT_MAX_OUTPUT_BYTES = 96 * 1024 * 1024
+MAX_CONTEXT_ARTIFACT_BYTES = 128 * 1024 * 1024
 BUDGET_POLICIES = frozenset({"auto", "fail", "truncate"})
 
 
@@ -41,6 +42,11 @@ class GenerationConfig:
             raise ValueError("history_hours, log_hours and calendar_days cannot be negative")
         if self.max_output_bytes < 1024 or self.max_source_bytes < 1024:
             raise ValueError("generation size limits are too small")
+        if self.max_output_bytes > MAX_CONTEXT_ARTIFACT_BYTES:
+            raise ValueError(
+                "HA_CONTEXT_MAX_OUTPUT_BYTES exceeds the supported artifact size "
+                f"({MAX_CONTEXT_ARTIFACT_BYTES} bytes)"
+            )
         if self.profile not in PROFILES:
             valid_profiles = ", ".join(sorted(PROFILES))
             raise ValueError(f"unknown profile {self.profile!r}; valid profiles: {valid_profiles}")

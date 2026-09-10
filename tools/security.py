@@ -8,6 +8,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
+from context_generator.config import MAX_CONTEXT_ARTIFACT_BYTES
+
 
 class SecurityBoundaryError(PermissionError):
     """Raised when an input crosses a configured security boundary."""
@@ -155,10 +157,18 @@ class PathPolicy:
 
 
 def resolve_output_path(raw_path: str | Path, output_root: str | Path) -> Path:
-    """Resolve an artifact path below the configured output root."""
+    """Resolve a context artifact path below the configured output root.
+
+    Args:
+        raw_path: Candidate artifact path to validate and resolve.
+        output_root: Configured root that must contain the artifact.
+
+    Returns:
+        The resolved artifact path within the configured output root.
+    """
     policy = PathPolicy.from_paths(
         [Path(output_root)],
-        max_file_size=50 * 1024 * 1024,
+        max_file_size=MAX_CONTEXT_ARTIFACT_BYTES,
         max_depth=8,
         deny_storage=False,
     )
