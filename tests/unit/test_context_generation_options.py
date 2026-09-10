@@ -589,4 +589,29 @@ class TestIssueAcceptanceRegressions:
         assert result["output_bytes"] < 50 * 1024 * 1024
         assert result["truncated"] is True
         omitted = {item["section"] for item in result["omitted_sections"]}
-        assert "snapshot" in omitted, result["omitted_sections"]
+        assert "snapshot" in omitted
+
+        # Issue #33 operational view: the agent profile bounds the same large
+        # source tree naturally (heavy sections never selected, no stripping).
+        bounded = tmp_path / "bounded" / "context.md"
+        with (
+            patch("requests.get", side_effect=AssertionError("offline network access")),
+            patch("requests.post", side_effect=AssertionError("offline network access")),
+        ):
+            agent_result = generate_context_file(
+                config_path=str(config_dir),
+                output_path=str(bounded),
+                ha_url="http://stale-ha:8123",
+                ha_token="stale-token",
+                mode="offline",
+                profile="agent",
+                on_budget_exceeded="auto",
+                max_output_bytes=2 * 1024 * 1024,
+            )
+
+        assert agent_result["profile"] == "agent"
+        assert agent_result["output_bytes"] <= 2 * 1024 * 1024
+        assert agent_result["truncated"] is False
+        heavy = {"snapshot", "logs", "recent_changes"}
+        assert heavy.isdisjoint(agent_result["rendered_sections"])
+        assert agent_result["selected_sections"], result["omitted_sections"]
