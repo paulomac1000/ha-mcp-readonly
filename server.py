@@ -645,6 +645,24 @@ class ContextTaskManager:
         owner: str,
         options: dict[str, Any] | None = None,
     ) -> GenerationTask:
+        """Start one bounded context generation task for the caller.
+
+        Args:
+            config_path: Requested configuration root; policy-resolved before use.
+            output_path: Requested artifact destination; resolved against the
+                context output root.
+            mode: Generation mode: offline, online, or hybrid.
+            owner: Authenticated principal that will own the task.
+            options: Normalized budget-aware generation options.
+
+        Returns:
+            The created task handle with its result future and metadata.
+
+        Raises:
+            ValueError: When the mode is unknown.
+            SecurityBoundaryError: When a requested path is disallowed.
+            RuntimeError: When another generation task is still running.
+        """
         if mode not in {"offline", "online", "hybrid"}:
             raise ValueError("mode must be offline, online, or hybrid")
         generation_options = options if options is not None else _normalize_context_options({})
@@ -670,6 +688,19 @@ class ContextTaskManager:
             return self._task
 
     def status(self, owner: str) -> dict[str, Any]:
+        """Return the caller's context task state.
+
+        Args:
+            owner: Authenticated principal requesting the status.
+
+        Returns:
+            Idle, running, deadline-exceeded, completed (with generation
+            stats and section manifest), or terminal failure payload that
+            carries a stable ``error_code``.
+
+        Raises:
+            PermissionError: When the task belongs to another principal.
+        """
         with self._lock:
             task = self._task
         if task is None:
@@ -703,6 +734,17 @@ class ContextTaskManager:
         }
 
     def output_for(self, owner: str) -> Path:
+        """Return the caller's completed artifact path.
+
+        Args:
+            owner: Authenticated principal requesting the artifact.
+
+        Returns:
+            Resolved artifact path for the caller's completed task.
+
+        Raises:
+            FileNotFoundError: When no completed artifact exists for the caller.
+        """
         with self._lock:
             task = self._task
         if task is None or task.owner != owner or not task.future.done() or task.future.exception():

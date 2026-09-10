@@ -490,6 +490,9 @@ class TestOfflineRunResultContract:
         ]
         assert result["rendered_sections"] == result["selected_sections"]
         assert result["truncated"] is False
+        # Zero-record instances are an empty success, not a failure.
+        assert result["entities"] == 0
+        assert result["automations"] == 0
         assert result["uncompressed_bytes"] == result["output_bytes"]
         assert len(result["output_sha256"]) == 64
 
