@@ -251,6 +251,8 @@ The generation result reports `output_bytes`, `uncompressed_bytes`, `output_sha2
 
 Empty instances are a success case: a generation over a valid but zero-record instance completes normally, renders zero-count sections, and reports zeroed counters with `truncated: false`. Only invalid options, budget violations under the fail policy, or unavailable required data fail the run.
 
+Two deliberate design decisions, recorded for issue #33 consumers: `agent` is the bounded operational view intended for agent consumption, while the API default remains the historical `full` profile for backward compatibility — callers opt into the bounded view explicitly. Truncation is applied at whole-section granularity and reported explicitly; partial (mid-section) content truncation is never applied silently, so the contract maps as `included_sections` → `rendered_sections`, `truncated_sections` → `omitted_sections`, and `bytes` → `output_bytes`.
+
 > **Security note:** the examples above are loopback-only. When the REST adapter is exposed through a remote reverse proxy, terminate TLS at the proxy and require HTTPS from clients — plain HTTP transmits the bearer token in cleartext.
 
 ```bash

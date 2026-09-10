@@ -507,3 +507,86 @@ class TestOfflineRunResultContract:
         timestamp = generated_lines[0].split(":** ", 1)[1].strip()
         parsed = datetime.fromisoformat(timestamp)
         assert parsed.tzinfo is not None and parsed.utcoffset() is not None
+
+
+class TestIssueAcceptanceRegressions:
+    """Acceptance regressions tied to the GitHub issues this PR closes."""
+
+    @pytest.mark.parametrize("profile", ("full", "agent", "compact"))
+    def test_sensitive_canaries_absent_under_every_profile(
+        self, tmp_path: Path, monkeypatch, profile: str
+    ) -> None:
+        from unittest.mock import patch
+
+        from context_generator.core import generate_context_file
+
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        storage = config_dir / ".storage"
+        storage.mkdir()
+        (storage / "supervisor_entry").write_text(
+            '{"data": {"access_token": "hide-me"}}', encoding="utf-8"
+        )
+        (config_dir / "configuration.yaml").write_text("homeassistant:\n", encoding="utf-8")
+        (config_dir / "automations.yaml").write_text("[]", encoding="utf-8")
+        (config_dir / "scripts.yaml").write_text("{}", encoding="utf-8")
+        (config_dir / "scenes.yaml").write_text("[]", encoding="utf-8")
+        (config_dir / "secrets.yaml").write_text("password: leak-me\n", encoding="utf-8")
+        output = tmp_path / "context.md"
+
+        with (
+            patch("requests.get", side_effect=AssertionError("offline network access")),
+            patch("requests.post", side_effect=AssertionError("offline network access")),
+        ):
+            generate_context_file(
+                config_path=str(config_dir),
+                output_path=str(output),
+                ha_url="http://stale-ha:8123",
+                ha_token="stale-token",
+                mode="offline",
+                profile=profile,
+            )
+
+        content = output.read_text(encoding="utf-8")
+        assert "hide-me" not in content
+        assert "leak-me" not in content
+
+    def test_large_source_would_exceed_old_guard_yields_bounded_artifact(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """A source tree whose legacy artifact exceeded the old 50 MB guard
+        produces a bounded artifact with explicit omissions (issue #34)."""
+        from unittest.mock import patch
+
+        from context_generator.core import generate_context_file
+
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        bulky = config_dir / "bulky.yaml"
+        line = "x" * 120 + "\n"
+        with bulky.open("w", encoding="utf-8") as handle:
+            for _ in range(52 * 1024 * 1024 // len(line)):
+                handle.write(line)
+        (config_dir / "configuration.yaml").write_text("homeassistant:\n", encoding="utf-8")
+        output = tmp_path / "context.md"
+
+        with (
+            patch("requests.get", side_effect=AssertionError("offline network access")),
+            patch("requests.post", side_effect=AssertionError("offline network access")),
+        ):
+            result = generate_context_file(
+                config_path=str(config_dir),
+                output_path=str(output),
+                ha_url="http://stale-ha:8123",
+                ha_token="stale-token",
+                mode="offline",
+                profile="full",
+                on_budget_exceeded="truncate",
+                max_output_bytes=2 * 1024 * 1024,
+            )
+
+        assert result["output_bytes"] <= 2 * 1024 * 1024
+        assert result["output_bytes"] < 50 * 1024 * 1024
+        assert result["truncated"] is True
+        omitted = {item["section"] for item in result["omitted_sections"]}
+        assert "snapshot" in omitted, result["omitted_sections"]
