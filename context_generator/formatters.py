@@ -14,6 +14,7 @@ from typing import BinaryIO, TextIO
 
 from . import constants
 from .budget import (
+    SECTION_ORDER,
     BudgetedSectionWriter,
     SectionManifest,
     resolve_overflow_policy,
@@ -127,6 +128,11 @@ class ReportGenerator:
         maximum = config.max_output_bytes if config is not None else DEFAULT_MAX_OUTPUT_BYTES
         policy = resolve_overflow_policy(policy_input, profile)
         selected = resolve_sections(profile, include_sections)
+        # The mandatory floor stays present even under explicit selections so
+        # every artifact carries the provenance completeness record.
+        if self._MANDATORY_SECTIONS.difference(selected):
+            mandatory_set = set(selected) | self._MANDATORY_SECTIONS
+            selected = tuple(section for section in SECTION_ORDER if section in mandatory_set)
 
         try:
             binary = os.fdopen(fd, "wb")

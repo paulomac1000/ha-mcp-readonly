@@ -480,6 +480,7 @@ def _normalize_context_options(params: dict[str, Any]) -> dict[str, Any]:
         ValueError: On unknown values, type mismatches, or conflicting aliases.
     """
     from context_generator.budget import resolve_overflow_policy, resolve_sections
+    from context_generator.config import MAX_CONTEXT_ARTIFACT_BYTES
 
     options: dict[str, Any] = {
         "profile": "full",
@@ -507,6 +508,11 @@ def _normalize_context_options(params: dict[str, Any]) -> dict[str, Any]:
                 raise ValueError("max_output_bytes must be an integer")
             if value < 1024:
                 raise ValueError("max_output_bytes is too small")
+            if value > MAX_CONTEXT_ARTIFACT_BYTES:
+                raise ValueError(
+                    "max_output_bytes exceeds the supported artifact size "
+                    f"({MAX_CONTEXT_ARTIFACT_BYTES} bytes)"
+                )
             options[canonical] = value
         elif canonical == "include_sections":
             if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
@@ -522,6 +528,8 @@ def _normalize_context_options(params: dict[str, Any]) -> dict[str, Any]:
             options[canonical] = value.strip().casefold()
 
     detail = params.get("detail")
+    if detail is not None and not isinstance(detail, str):
+        raise ValueError("detail must be a string")
     if isinstance(detail, str) and detail.strip():
         detail_value = detail.strip().casefold()
         if detail_value not in {"full", "compact"}:

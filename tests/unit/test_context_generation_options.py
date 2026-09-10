@@ -212,6 +212,24 @@ class TestContextOptionNormalization:
         with pytest.raises(ValueError, match="too small"):
             _normalize_context_options({"maxBytes": 10})
 
+    def test_budget_above_artifact_limit_rejected(self) -> None:
+        from context_generator.config import MAX_CONTEXT_ARTIFACT_BYTES
+
+        with pytest.raises(ValueError, match="exceeds the supported artifact size"):
+            _normalize_context_options({"maxBytes": MAX_CONTEXT_ARTIFACT_BYTES + 1})
+
+    def test_budget_at_artifact_limit_accepted(self) -> None:
+        from context_generator.config import MAX_CONTEXT_ARTIFACT_BYTES
+
+        assert (
+            _normalize_context_options({"maxBytes": MAX_CONTEXT_ARTIFACT_BYTES})["max_output_bytes"]
+            == MAX_CONTEXT_ARTIFACT_BYTES
+        )
+
+    def test_non_string_detail_rejected(self) -> None:
+        with pytest.raises(ValueError, match="detail must be a string"):
+            _normalize_context_options({"detail": 3})
+
     def test_non_boolean_repository_alias_rejected(self) -> None:
         with pytest.raises(ValueError, match="must be a boolean"):
             _normalize_context_options({"include_files": "no"})
@@ -351,17 +369,21 @@ class TestBudgetedReportRendering:
         with pytest.raises(ValueError, match="mandatory section"):
             generator.generate(str(output))
 
-    def test_explicit_selection_renders_only_selected_sections(self, tmp_path: Path) -> None:
+    def test_explicit_selection_keeps_mandatory_floor(self, tmp_path: Path) -> None:
         generator = _minimal_generator()
         generator.generation_config = _make_config(
             tmp_path,
-            include_sections=("provenance", "topology"),
+            include_sections=("topology",),
         )
         output = tmp_path / "selected.md"
 
         manifest = generator.generate(str(output))
 
-        assert manifest.rendered == ("source_provenance", "topology")
+        assert manifest.rendered == (
+            "executive_summary",
+            "source_provenance",
+            "topology",
+        )
 
 
 class TestSnapshotSourceCategorySplit:
