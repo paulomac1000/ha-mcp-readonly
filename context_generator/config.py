@@ -147,8 +147,8 @@ def inherited_generation_defaults(*, include_max_output_bytes: bool) -> dict[str
         Raw inherited values keyed by ``GenerationConfig`` field names.
     """
     values: dict[str, Any] = {
-        "config_path": os.getenv("HA_CONFIG_PATH", "/config"),
-        "output_path": os.getenv("OUTPUT_PATH", "ha-ai-context.md"),
+        "config_path": Path(os.getenv("HA_CONFIG_PATH", "/config")),
+        "output_path": Path(os.getenv("OUTPUT_PATH", "ha-ai-context.md")),
         "ha_url": os.getenv("HA_URL", "http://homeassistant:8123"),
         "ha_token": os.getenv("HA_TOKEN", ""),
         "history_hours": int(os.getenv("HA_CONTEXT_HISTORY_HOURS", "1")),

@@ -739,3 +739,31 @@ class TestIssueAcceptanceRegressions:
         heavy = {"snapshot", "logs", "recent_changes"}
         assert heavy.isdisjoint(result["selected_sections"])
         assert heavy.isdisjoint(result["rendered_sections"])
+
+
+    def test_default_invocation_uses_env_paths_as_paths(self, tmp_path: Path, monkeypatch) -> None:
+        """generate_context_file() without path args inherits Path-typed env paths."""
+        from unittest.mock import patch
+
+        from context_generator.core import generate_context_file
+
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        (config_dir / "configuration.yaml").write_text("homeassistant:\n", encoding="utf-8")
+        output_root = tmp_path / "out"
+        output_root.mkdir()
+        monkeypatch.setenv("HA_CONFIG_PATH", str(config_dir))
+        monkeypatch.setenv("OUTPUT_PATH", str(output_root / "context.md"))
+
+        with (
+            patch("requests.get", side_effect=AssertionError("offline network access")),
+            patch("requests.post", side_effect=AssertionError("offline network access")),
+        ):
+            result = generate_context_file(
+                ha_url="http://stale-ha:8123",
+                ha_token="stale-token",
+                mode="offline",
+                profile="compact",
+            )
+
+        assert Path(result["output_file"]).read_text(encoding="utf-8")
