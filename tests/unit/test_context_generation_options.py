@@ -615,3 +615,52 @@ class TestIssueAcceptanceRegressions:
         heavy = {"snapshot", "logs", "recent_changes"}
         assert heavy.isdisjoint(agent_result["rendered_sections"])
         assert agent_result["selected_sections"], result["omitted_sections"]
+
+    def test_worker_path_is_isolated_from_host_budget_environment(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """Explicit REST options must not be invalidated by host-side env state.
+
+        The worker calls generate_context_file, which must not parse budget
+        environment variables: a valid pre-validated request may not fail
+        asynchronously because the server process carries unrelated or
+        malformed budget environment values (issue review finding).
+        """
+        from unittest.mock import patch
+
+        from context_generator.core import generate_context_file
+
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        (config_dir / "configuration.yaml").write_text("homeassistant:\n", encoding="utf-8")
+        (config_dir / "automations.yaml").write_text("[]", encoding="utf-8")
+        output = tmp_path / "context.md"
+        monkeypatch.setenv("HA_CONTEXT_PROFILE", "not-a-profile")
+        monkeypatch.setenv("HA_CONTEXT_DETAIL", "bogus")
+        monkeypatch.setenv("HA_CONTEXT_SECTIONS", "nope")
+        monkeypatch.setenv("HA_CONTEXT_INCLUDE_FILES", "maybe")
+        monkeypatch.setenv("HA_CONTEXT_INCLUDE_STORAGE", "perhaps")
+        monkeypatch.setenv("HA_CONTEXT_ON_BUDGET_EXCEEDED", "explode")
+
+        with (
+            patch("requests.get", side_effect=AssertionError("offline network access")),
+            patch("requests.post", side_effect=AssertionError("offline network access")),
+        ):
+            result = generate_context_file(
+                config_path=str(config_dir),
+                output_path=str(output),
+                ha_url="http://stale-ha:8123",
+                ha_token="stale-token",
+                mode="offline",
+                profile="agent",
+                include_repository_files=False,
+                include_storage_records=False,
+                on_budget_exceeded="truncate",
+                max_output_bytes=1024 * 1024,
+            )
+
+        assert result["profile"] == "agent"
+        assert result["truncated"] is False
+        heavy = {"snapshot", "logs", "recent_changes"}
+        assert heavy.isdisjoint(result["selected_sections"])
+        assert heavy.isdisjoint(result["rendered_sections"])

@@ -191,8 +191,14 @@ def generate_context_file(
 
     Returns:
         Generation summary including the section manifest and artifact metrics.
+
+    Note:
+        Budget options are taken exclusively from the explicit arguments;
+        budget-related environment variables are deliberately not parsed so
+        dispatchers that pre-validate options (the REST worker) can never be
+        invalidated by host-side environment state.
     """
-    defaults = GenerationConfig.from_env()
+    defaults = GenerationConfig.from_env(skip_budget_env=True)
     config = GenerationConfig(
         config_path=Path(config_path) if config_path is not None else defaults.config_path,
         output_path=Path(output_path) if output_path is not None else defaults.output_path,

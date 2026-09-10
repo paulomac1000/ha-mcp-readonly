@@ -375,9 +375,7 @@ def test_context_status_maps_budget_exceeded_errors(monkeypatch, tmp_path) -> No
 
     manager = server.ContextTaskManager(timeout_seconds=5)
     exceeded: Future = Future()
-    exceeded.set_exception(
-        server.ContextGenerationFailed(server._CONTEXT_ERROR_CODES["BudgetExceededError"])
-    )
+    exceeded.set_exception(server.ContextGenerationFailed("BUDGET_EXCEEDED"))
     monkeypatch.setattr(
         manager,
         "_task",
@@ -434,8 +432,14 @@ def test_download_serves_last_known_good_after_failed_regeneration(monkeypatch, 
     manager._executor.shutdown(wait=True)
 
 
-def test_start_records_publication_when_future_already_completed(monkeypatch, tmp_path) -> None:
-    """Callback registration must not deadlock on an already-completed future."""
+def test_start_with_already_completed_future_publishes_only_executed_work(
+    monkeypatch, tmp_path
+) -> None:
+    """Publication bookkeeping belongs to the executed wrapper, never callbacks.
+
+    An already-completed future (immediate child success) must neither
+    deadlock nor publish work that never executed.
+    """
     from concurrent.futures import Future
 
     config_root = tmp_path / "config"
@@ -458,5 +462,95 @@ def test_start_records_publication_when_future_already_completed(monkeypatch, tm
     task = manager.start(str(config_root), str(output_root / "context.md"), "offline", "caller")
 
     assert task.future is done
-    artifact = manager.output_for("caller")
-    assert str(artifact).startswith(str(output_root))
+    with pytest.raises(FileNotFoundError, match="No completed context artifact"):
+        manager.output_for("caller")
+
+
+def test_worker_transmits_stable_budget_error_code(monkeypatch) -> None:
+    """The generation child transmits the stable BUDGET_EXCEEDED code."""
+    import context_generator
+    from context_generator.budget import BudgetExceededError
+
+    receive, send = server.multiprocessing.Pipe(duplex=False)
+    monkeypatch.setattr(
+        context_generator,
+        "generate_context_file",
+        lambda **kwargs: (_ for _ in ()).throw(BudgetExceededError("budget")),
+    )
+
+    server._context_generation_worker(
+        send,
+        "/config",
+        "/tmp/context.md",
+        "",
+        "",
+        "offline",
+        {
+            "profile": "full",
+            "include_sections": None,
+            "include_repository_files": True,
+            "include_storage_records": True,
+            "on_budget_exceeded": "fail",
+            "max_output_bytes": None,
+        },
+    )
+
+    status, payload = receive.recv()
+    assert (status, payload) == ("error", "BUDGET_EXCEEDED")
+
+
+def test_worker_transmits_dependency_unavailable_for_os_errors(monkeypatch) -> None:
+    """OSError subclasses map to the stable DEPENDENCY_UNAVAILABLE code."""
+    import context_generator
+
+    receive, send = server.multiprocessing.Pipe(duplex=False)
+    monkeypatch.setattr(
+        context_generator,
+        "generate_context_file",
+        lambda **kwargs: (_ for _ in ()).throw(FileNotFoundError("missing config")),
+    )
+
+    server._context_generation_worker(
+        send,
+        "/config",
+        "/tmp/context.md",
+        "",
+        "",
+        "offline",
+        {
+            "profile": "full",
+            "include_sections": None,
+            "include_repository_files": True,
+            "include_storage_records": True,
+            "on_budget_exceeded": "auto",
+            "max_output_bytes": None,
+        },
+    )
+
+    status, payload = receive.recv()
+    assert (status, payload) == ("error", "DEPENDENCY_UNAVAILABLE")
+
+
+def test_context_status_maps_parent_os_errors(monkeypatch, tmp_path) -> None:
+    from concurrent.futures import Future
+
+    manager = server.ContextTaskManager(timeout_seconds=5)
+    io_failed: Future = Future()
+    io_failed.set_exception(FileNotFoundError("publication path vanished"))
+    monkeypatch.setattr(
+        manager,
+        "_task",
+        server.GenerationTask(
+            task_id="task-d",
+            owner="caller",
+            output_path=tmp_path / "context.md",
+            started_at=0.0,
+            future=io_failed,
+            mode="offline",
+        ),
+    )
+
+    payload = manager.status("caller")
+
+    assert payload["status"] == "error"
+    assert payload["error_code"] == "DEPENDENCY_UNAVAILABLE"

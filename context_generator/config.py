@@ -85,8 +85,16 @@ class GenerationConfig:
         return self.mode == "online"
 
     @classmethod
-    def from_env(cls) -> GenerationConfig:
+    def from_env(cls, skip_budget_env: bool = False) -> GenerationConfig:
         """Build one canonical run configuration from the process environment.
+
+        Args:
+            skip_budget_env: When True, budget-related environment variables
+                (profile, detail, sections, source switches, overflow policy)
+                are not parsed and their canonical defaults are used. Callers
+                that pass explicit budget options - such as the REST worker -
+                set this so host-side environment values can never invalidate
+                an already-validated request.
 
         Returns:
             Frozen configuration with budget aliases already normalized.
@@ -95,7 +103,10 @@ class GenerationConfig:
         if mode not in {"offline", "online", "hybrid"}:
             raise ValueError("HA_CONTEXT_MODE must be offline, online, or hybrid")
         output = os.getenv("OUTPUT_PATH", "ha-ai-context.md")
-        profile, include_sections = _resolve_profile_from_env()
+        if skip_budget_env:
+            profile, include_sections = "full", None
+        else:
+            profile, include_sections = _resolve_profile_from_env()
         return cls(
             config_path=Path(os.getenv("HA_CONFIG_PATH", "/config")),
             output_path=Path(output),
@@ -111,11 +122,15 @@ class GenerationConfig:
             max_source_bytes=int(os.getenv("HA_CONTEXT_MAX_SOURCE_BYTES", str(64 * 1024 * 1024))),
             profile=profile,
             include_sections=include_sections,
-            include_repository_files=_env_flag("HA_CONTEXT_INCLUDE_FILES", True),
-            include_storage_records=_env_flag("HA_CONTEXT_INCLUDE_STORAGE", True),
-            on_budget_exceeded=os.getenv("HA_CONTEXT_ON_BUDGET_EXCEEDED", "auto")
-            .strip()
-            .casefold(),
+            include_repository_files=_env_flag("HA_CONTEXT_INCLUDE_FILES", True)
+            if not skip_budget_env
+            else True,
+            include_storage_records=_env_flag("HA_CONTEXT_INCLUDE_STORAGE", True)
+            if not skip_budget_env
+            else True,
+            on_budget_exceeded=os.getenv("HA_CONTEXT_ON_BUDGET_EXCEEDED", "auto").strip().casefold()
+            if not skip_budget_env
+            else "auto",
         )
 
 

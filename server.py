@@ -429,6 +429,8 @@ def _context_generation_worker(
     """Run generation in a killable child process and return a sanitized result."""
     try:
         from context_generator import generate_context_file
+        from context_generator.budget import BudgetExceededError
+        from context_generator.core import GenerationError
 
         result = generate_context_file(
             config_path=config_path,
@@ -444,8 +446,18 @@ def _context_generation_worker(
             max_output_bytes=cast(Any, options["max_output_bytes"]),
         )
         connection.send(("ok", result))
-    except BaseException as exc:
-        connection.send(("error", type(exc).__name__))
+    except TimeoutError:
+        connection.send(("error", "DEADLINE_EXCEEDED"))
+    except BudgetExceededError:
+        connection.send(("error", "BUDGET_EXCEEDED"))
+    except GenerationError:
+        connection.send(("error", "GENERATION_FAILED"))
+    except OSError:
+        connection.send(("error", "DEPENDENCY_UNAVAILABLE"))
+    except BaseException:
+        # Request arguments were validated before dispatch, so any remaining
+        # failure is an internal generator error; only its class is transmitted.
+        connection.send(("error", "INTERNAL"))
     finally:
         connection.close()
 
@@ -548,11 +560,10 @@ def _normalize_context_options(params: dict[str, Any]) -> dict[str, Any]:
 
 
 _CONTEXT_ERROR_CODES = {
-    "TimeoutError": "DEADLINE_EXCEEDED",
-    "ValueError": "INVALID_ARGUMENTS",
-    "BudgetExceededError": "BUDGET_EXCEEDED",
-    "GenerationError": "GENERATION_FAILED",
-    "OSError": "DEPENDENCY_UNAVAILABLE",
+    "DEADLINE_EXCEEDED": "DEADLINE_EXCEEDED",
+    "BUDGET_EXCEEDED": "BUDGET_EXCEEDED",
+    "GENERATION_FAILED": "GENERATION_FAILED",
+    "DEPENDENCY_UNAVAILABLE": "DEPENDENCY_UNAVAILABLE",
 }
 
 
@@ -647,22 +658,33 @@ class ContextTaskManager:
             process.close()
             temporary.unlink(missing_ok=True)
 
-    def _record_publication(self, done: Any, owner: str, path: Path) -> None:
-        """Record the last successfully published artifact for the owner.
+    def _publishing_generate(
+        self,
+        config_path: Path,
+        output_path: Path,
+        mode: str,
+        options: dict[str, Any],
+        owner: str,
+    ) -> dict[str, Any]:
+        """Run one generation and commit its publication bookkeeping.
+
+        Publication state is updated before the returned future resolves, so
+        a task reported as completed is always immediately downloadable.
 
         Args:
-            done: Completed future of the finished generation attempt.
+            config_path: Policy-resolved configuration root.
+            output_path: Policy-resolved artifact destination.
+            mode: Generation mode: offline, online, or hybrid.
+            options: Normalized budget-aware generation options.
             owner: Authenticated principal that requested the generation.
-            path: Resolved artifact path published by that attempt.
+
+        Returns:
+            The generation summary from :meth:`_generate`.
         """
-        try:
-            succeeded = done.exception() is None
-        except BaseException:
-            succeeded = False
-        if not succeeded:
-            return
+        result = self._generate(config_path, output_path, mode, options)
         with self._lock:
-            self._published = (owner, str(path))
+            self._published = (owner, str(output_path))
+        return result
 
     def start(
         self,
@@ -702,7 +724,12 @@ class ContextTaskManager:
             if self._task is not None and not self._task.future.done():
                 raise RuntimeError("Context generation is already running")
             future = self._executor.submit(
-                self._generate, safe_config, safe_output, mode, generation_options
+                self._publishing_generate,
+                safe_config,
+                safe_output,
+                mode,
+                generation_options,
+                owner,
             )
             self._task = GenerationTask(
                 task_id=secrets.token_hex(16),
@@ -712,10 +739,6 @@ class ContextTaskManager:
                 future=future,
                 mode=mode,
             )
-        # Registered outside the lock: a future that is already complete
-        # invokes callbacks synchronously, and the publication recorder
-        # acquires the same non-reentrant lock.
-        future.add_done_callback(lambda done: self._record_publication(done, owner, safe_output))
         return self._task
 
     def status(self, owner: str) -> dict[str, Any]:
@@ -749,6 +772,8 @@ class ContextTaskManager:
                 error_code = "DEADLINE_EXCEEDED"
             elif isinstance(exception, ContextGenerationFailed):
                 error_code = exception.error_code
+            elif isinstance(exception, OSError):
+                error_code = "DEPENDENCY_UNAVAILABLE"
             else:
                 error_code = "INTERNAL"
             return {

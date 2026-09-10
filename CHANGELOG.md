@@ -32,6 +32,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Fixed
 - Malformed JSON bodies to `POST /api/context/generate` — including bodies with invalid UTF-8 sequences — now return HTTP 400 instead of being treated as an empty defaults request or surfacing a server error.
+- The generation worker no longer parses budget-related environment variables: an explicitly validated REST request can never be invalidated by host-side `HA_CONTEXT_PROFILE`, `HA_CONTEXT_DETAIL`, `HA_CONTEXT_SECTIONS`, `HA_CONTEXT_INCLUDE_FILES`, `HA_CONTEXT_INCLUDE_STORAGE`, or `HA_CONTEXT_ON_BUDGET_EXCEEDED` state. Budget options come exclusively from the validated request; `maxBytes` still falls back to `HA_CONTEXT_MAX_OUTPUT_BYTES` when omitted.
+- Child-process failures are classified at the child boundary into stable codes (OSError subclasses report `DEPENDENCY_UNAVAILABLE`; post-dispatch runtime errors report `INTERNAL` instead of being mislabeled as input errors), and parent-side publication I/O failures also report `DEPENDENCY_UNAVAILABLE`.
+- Context publication bookkeeping is committed inside the generation task before its result future resolves, so a task reported as completed is immediately downloadable and the last-known-good artifact can never regress behind an asynchronous bookkeeping window.
 - The context status response distinguishes terminal failure classes through a stable `error_code` (`DEADLINE_EXCEEDED`, `INVALID_ARGUMENTS`, `BUDGET_EXCEEDED`, `GENERATION_FAILED`, `DEPENDENCY_UNAVAILABLE`, `INTERNAL`) instead of collapsing every failure into a generic message; a fail-policy run whose well-formed request cannot satisfy its byte budget reports `BUDGET_EXCEEDED` rather than invalid input.
 - Public context task identifiers are generated from a cryptographically secure random source with at least 128 bits of entropy.
 
