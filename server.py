@@ -421,6 +421,7 @@ def _context_generation_worker(
     ha_url: str,
     ha_token: str,
     mode: str,
+    options: dict[str, Any],
 ) -> None:
     """Run generation in a killable child process and return a sanitized result."""
     try:
@@ -432,12 +433,107 @@ def _context_generation_worker(
             ha_url=ha_url,
             ha_token=ha_token,
             mode=cast(Any, mode),
+            profile=cast(str, options["profile"]),
+            include_sections=cast(Any, options["include_sections"]),
+            include_repository_files=cast(bool, options["include_repository_files"]),
+            include_storage_records=cast(bool, options["include_storage_records"]),
+            on_budget_exceeded=cast(str, options["on_budget_exceeded"]),
+            max_output_bytes=cast(Any, options["max_output_bytes"]),
         )
         connection.send(("ok", result))
     except BaseException as exc:
         connection.send(("error", type(exc).__name__))
     finally:
         connection.close()
+
+
+_CONTEXT_OPTION_ALIASES: dict[str, tuple[str, ...]] = {
+    "profile": ("profile",),
+    "max_output_bytes": ("maxBytes", "max_output_bytes", "max_bytes"),
+    "include_sections": ("sections", "include_sections"),
+    "include_repository_files": (
+        "repositoryFiles",
+        "repository_files",
+        "includeRepositoryFiles",
+        "include_files",
+    ),
+    "include_storage_records": (
+        "storageRecords",
+        "storage_records",
+        "includeStorageRecords",
+        "include_storage",
+    ),
+    "on_budget_exceeded": ("onBudgetExceeded", "on_budget_exceeded"),
+}
+
+
+def _normalize_context_options(params: dict[str, Any]) -> dict[str, Any]:
+    """Normalize budget-aware generation options with deterministic alias rules.
+
+    Args:
+        params: Raw request parameters.
+
+    Returns:
+        Canonical option values keyed by GenerationConfig field names.
+
+    Raises:
+        ValueError: On unknown values, type mismatches, or conflicting aliases.
+    """
+    from context_generator.budget import resolve_overflow_policy, resolve_sections
+
+    options: dict[str, Any] = {
+        "profile": "full",
+        "max_output_bytes": None,
+        "include_sections": None,
+        "include_repository_files": True,
+        "include_storage_records": True,
+        "on_budget_exceeded": "auto",
+    }
+    profile_given = False
+    for canonical, aliases in _CONTEXT_OPTION_ALIASES.items():
+        values = [params[alias] for alias in aliases if alias in params]
+        if not values:
+            continue
+        if len({json.dumps(value, sort_keys=True) for value in values}) > 1:
+            raise ValueError(f"conflicting values for context option {canonical!r}")
+        value = values[0]
+        if canonical == "profile":
+            profile_given = True
+            if not isinstance(value, str):
+                raise ValueError("profile must be a string")
+            options[canonical] = value.strip().casefold()
+        elif canonical == "max_output_bytes":
+            if isinstance(value, bool) or not isinstance(value, int):
+                raise ValueError("max_output_bytes must be an integer")
+            if value < 1024:
+                raise ValueError("max_output_bytes is too small")
+            options[canonical] = value
+        elif canonical == "include_sections":
+            if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+                raise ValueError("include_sections must be a list of strings")
+            options[canonical] = tuple(value)
+        elif canonical in {"include_repository_files", "include_storage_records"}:
+            if not isinstance(value, bool):
+                raise ValueError(f"{canonical} must be a boolean")
+            options[canonical] = value
+        else:
+            if not isinstance(value, str):
+                raise ValueError("on_budget_exceeded must be a string")
+            options[canonical] = value.strip().casefold()
+
+    detail = params.get("detail")
+    if isinstance(detail, str) and detail.strip():
+        detail_value = detail.strip().casefold()
+        if detail_value not in {"full", "compact"}:
+            raise ValueError("detail must be full or compact")
+        if profile_given and options["profile"] != detail_value:
+            raise ValueError("profile and detail conflict")
+        if not profile_given and detail_value == "compact":
+            options["profile"] = "compact"
+
+    resolve_sections(options["profile"], options["include_sections"])
+    resolve_overflow_policy(options["on_budget_exceeded"], options["profile"])
+    return options
 
 
 @dataclass
@@ -459,7 +555,9 @@ class ContextTaskManager:
     _task: GenerationTask | None = None
     _lock: threading.Lock = field(default_factory=threading.Lock)
 
-    def _generate(self, config_path: Path, output_path: Path, mode: str) -> dict[str, Any]:
+    def _generate(
+        self, config_path: Path, output_path: Path, mode: str, options: dict[str, Any]
+    ) -> dict[str, Any]:
         output_path.parent.mkdir(mode=0o750, parents=True, exist_ok=True)
         temporary = output_path.with_name(
             f".{output_path.stem}.{uuid.uuid4().hex}{output_path.suffix}"
@@ -475,6 +573,7 @@ class ContextTaskManager:
                 HA_URL if mode in {"online", "hybrid"} else "",
                 HA_TOKEN if mode in {"online", "hybrid"} else "",
                 mode,
+                options,
             ),
             name="ha-context-generator",
         )
@@ -508,9 +607,17 @@ class ContextTaskManager:
             process.close()
             temporary.unlink(missing_ok=True)
 
-    def start(self, config_path: str, output_path: str, mode: str, owner: str) -> GenerationTask:
+    def start(
+        self,
+        config_path: str,
+        output_path: str,
+        mode: str,
+        owner: str,
+        options: dict[str, Any] | None = None,
+    ) -> GenerationTask:
         if mode not in {"offline", "online", "hybrid"}:
             raise ValueError("mode must be offline, online, or hybrid")
+        generation_options = options if options is not None else _normalize_context_options({})
         config_policy = PathPolicy.from_paths(
             [Path(HA_CONFIG_PATH)], max_file_size=20 * 1024 * 1024, deny_storage=False
         )
@@ -519,7 +626,9 @@ class ContextTaskManager:
         with self._lock:
             if self._task is not None and not self._task.future.done():
                 raise RuntimeError("Context generation is already running")
-            future = self._executor.submit(self._generate, safe_config, safe_output, mode)
+            future = self._executor.submit(
+                self._generate, safe_config, safe_output, mode, generation_options
+            )
             self._task = GenerationTask(
                 task_id=uuid.uuid4().hex,
                 owner=owner,
@@ -791,11 +900,22 @@ def create_rest_app(auth_token: str | None = None) -> Any:
                 status_code=400,
             )
         try:
+            options = _normalize_context_options(params)
+        except ValueError as exc:
+            return JSONResponse(
+                {
+                    "success": False,
+                    "error": {"code": "INVALID_ARGUMENTS", "message": str(exc)},
+                },
+                status_code=400,
+            )
+        try:
             task = _CONTEXT_TASKS.start(
                 str(params.get("config_path", HA_CONFIG_PATH)),
                 str(params.get("output_path", OUTPUT_PATH)),
                 str(params.get("mode", "hybrid")),
                 current_principal().subject,
+                options,
             )
         except (ValueError, SecurityBoundaryError):
             return JSONResponse(

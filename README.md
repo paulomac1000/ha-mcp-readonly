@@ -231,12 +231,35 @@ Credential stores are excluded. Sensitive fields, bearer tokens, JWTs, secret qu
 
 Relevant limits are `HA_CONTEXT_HISTORY_HOURS`, `HA_CONTEXT_LOG_HOURS`, `HA_CONTEXT_CALENDAR_DAYS`, `HA_CONTEXT_MAX_SOURCE_BYTES`, and `HA_CONTEXT_MAX_OUTPUT_BYTES`.
 
+### Budget-aware generation
+
+The generator can bound output at the source instead of emitting everything and letting consumers slim it down. Options are available through the environment (`HA_CONTEXT_PROFILE`, `HA_CONTEXT_SECTIONS`, `HA_CONTEXT_DETAIL`, `HA_CONTEXT_INCLUDE_FILES`, `HA_CONTEXT_INCLUDE_STORAGE`, `HA_CONTEXT_ON_BUDGET_EXCEEDED`) and through the REST generate call:
+
+| Option | Values | Default | Effect |
+|--------|--------|---------|--------|
+| `profile` | `full`, `agent`, `compact` | `full` | Section preset. `full` renders everything (historical behavior); `agent` drops the heavy raw snapshot, log, and recent-changes sections; `compact` renders summary, provenance, system health, topology, and quick reference only. |
+| `maxBytes` | integer ≥ 1024 | `96 MiB` | Output byte budget. Sections that do not fit are omitted whole and reported. |
+| `sections` | section keys or aliases | profile default | Explicit selection overriding the profile. Aliases: `runtime`, `health`, `provenance`. |
+| `repositoryFiles` / `include_files` | boolean | `true` | When `false`, config file bodies are not collected or serialized. |
+| `storageRecords` | boolean | `true` | When `false`, safe `.storage` records are not collected. |
+| `detail` | `full`, `compact` | `full` | Alias that resolves to `profile=compact` when no explicit profile is given. |
+| `onBudgetExceeded` | `auto`, `fail`, `truncate` | `auto` | `fail` (the `full` default) fails the run when the budget is exceeded; `truncate` (the `agent`/`compact` default) omits whole sections that do not fit. |
+
+The generation result reports `output_bytes`, `uncompressed_bytes`, `output_sha256`, `profile`, `selected_sections`, `rendered_sections`, `omitted_sections` (with exact per-section byte sizes and reasons), and `truncated`. Disabling repository files or storage records records an explicit `policy:` skip in the provenance matrix — nothing is silently omitted.
+
 ```bash
 curl -X POST http://127.0.0.1:9093/api/context/generate \
   -H "Authorization: Bearer $REST_API_TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"mode":"hybrid"}'
+  -d '{"mode":"hybrid","profile":"agent","maxBytes":2097152}'
 
+curl -X POST http://127.0.0.1:9093/api/context/generate \
+  -H "Authorization: Bearer $REST_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"mode":"offline","detail":"compact"}'
+```
+
+```bash
 curl -H "Authorization: Bearer $REST_API_TOKEN" \
   http://127.0.0.1:9093/api/context/status
 

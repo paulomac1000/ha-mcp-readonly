@@ -223,7 +223,7 @@ def test_context_generation_deadline_terminates_child(monkeypatch, tmp_path) -> 
     monkeypatch.setattr(server.multiprocessing, "get_context", lambda method: FakeContext())
     manager = server.ContextTaskManager(timeout_seconds=0)
     with pytest.raises(TimeoutError, match="deadline"):
-        manager._generate(tmp_path, tmp_path / "context.md", "offline")
+        manager._generate(tmp_path, tmp_path / "context.md", "offline", {})
     assert process.terminated is True
     assert process.killed is False
     manager._executor.shutdown(wait=True)
@@ -241,9 +241,9 @@ def test_context_manager_accepts_new_task_after_timed_out_task(monkeypatch, tmp_
     manager = server.ContextTaskManager(timeout_seconds=1)
     calls = 0
 
-    def fake_generate(config_path, output_path, mode):
+    def fake_generate(config_path, output_path, mode, options):
         nonlocal calls
-        del config_path, output_path, mode
+        del config_path, output_path, mode, options
         calls += 1
         if calls == 1:
             raise TimeoutError("Context generation exceeded its deadline")

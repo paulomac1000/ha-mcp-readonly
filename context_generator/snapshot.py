@@ -509,12 +509,25 @@ class ComprehensiveSnapshotCollector:
         root = self.config.config_path.resolve(strict=False)
         output: dict[str, Any] = {}
         total_bytes = 0
+        include_bodies = self.config.include_repository_files
+        include_storage = self.config.include_storage_records
         if not root.is_dir():
             self._unavailable(
                 "files", "config_tree", method="filesystem", reason="config root unavailable"
             )
             return
+        if not include_bodies and not include_storage:
+            self.provenance.record(
+                "filesystem_snapshot",
+                method="filesystem",
+                status="skipped",
+                reason="policy: repository file bodies and storage records disabled by request",
+            )
+            self.data["files"]["config_tree"] = output
+            return
 
+        skipped_bodies = 0
+        skipped_storage = 0
         for current_root, dirnames, filenames in os.walk(root, topdown=True, followlinks=False):
             current = Path(current_root)
             safe_dirs: list[str] = []
@@ -548,6 +561,13 @@ class ComprehensiveSnapshotCollector:
                     path.suffix.casefold() not in _TEXT_SUFFIXES
                     and ".storage" not in relative.parts
                 ):
+                    continue
+                if ".storage" in relative.parts:
+                    if not include_storage:
+                        skipped_storage += 1
+                        continue
+                elif not include_bodies:
+                    skipped_bodies += 1
                     continue
                 try:
                     size = path.stat().st_size
@@ -621,6 +641,22 @@ class ComprehensiveSnapshotCollector:
                     redacted_fields=redactions,
                 )
         self.data["files"]["config_tree"] = output
+        if skipped_bodies:
+            self.provenance.record(
+                "repository_files",
+                method="filesystem",
+                status="skipped",
+                records=skipped_bodies,
+                reason="policy: repository file bodies disabled by request",
+            )
+        if skipped_storage:
+            self.provenance.record(
+                "storage_records",
+                method="filesystem",
+                status="skipped",
+                records=skipped_storage,
+                reason="policy: storage records disabled by request",
+            )
         self.provenance.record(
             "filesystem_snapshot",
             method="filesystem",

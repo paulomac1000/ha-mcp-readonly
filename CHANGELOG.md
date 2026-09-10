@@ -16,6 +16,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+- Budget-aware context generation at the source (issue HAMCP-69EA3F-1). The context generator now accepts generation options `profile` (`full`, `agent`, `compact`), `max_output_bytes` (byte budget), an explicit `include_sections` selection with alias support (`runtime`, `health`, `provenance`), boolean source-category switches `include_repository_files` and `include_storage_records`, and the overflow policy `on_budget_exceeded` (`auto`, `fail`, `truncate`; `auto` keeps the historical fail-closed behavior for the default `full` profile and truncates whole sections for `agent`/`compact`). Environment equivalents: `HA_CONTEXT_PROFILE`, `HA_CONTEXT_SECTIONS`, `HA_CONTEXT_DETAIL`, `HA_CONTEXT_INCLUDE_FILES`, `HA_CONTEXT_INCLUDE_STORAGE`, `HA_CONTEXT_ON_BUDGET_EXCEEDED`. The REST `POST /api/context/generate` endpoint accepts `profile`, `maxBytes`, `sections`, `repositoryFiles`, `storageRecords`, `include_files`, `detail`, and `onBudgetExceeded`, rejecting conflicting alias values with HTTP 400.
+- Generation results now explicitly report `output_bytes`, `uncompressed_bytes`, `output_sha256`, `profile`, `selected_sections`, `rendered_sections`, `omitted_sections` (with exact per-section byte sizes and reasons), and `truncated`, so consumers can verify what they received. Rendering stages each section through a disk-spooling buffer and commits only sections that fit the declared budget; the mandatory floor (header, executive summary, source provenance) fails the run explicitly when it cannot fit.
+- Repository config file bodies and safe `.storage` records are now independently suppressible source categories. Disabling either records an explicit `policy:` skip entry in the provenance matrix instead of silently omitting data.
+- New unit coverage: section/profile resolution, overflow policy resolution, budgeted staged rendering, artifact digest, configuration and REST option normalization (including alias-conflict rejection), and the provenance policy-skip split (71 new tests; 1,324 unit + protocol tests total on this branch).
+
 ## [2.0.0] - 2026-08-12
 
 ### Live-HA Verification

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +22,7 @@ from .analyzers import (
     TemplateEntityCollector,
     ZoneAnalyzer,
 )
+from .budget import artifact_digest, resolve_sections
 from .config import GenerationConfig, GenerationMode
 from .formatters import ReportGenerator
 from .provenance import ProvenanceTracker
@@ -106,7 +108,7 @@ def run_generation(config: GenerationConfig) -> dict[str, Any]:
             provenance=provenance,
             comprehensive_snapshot=snapshot,
         )
-        generator.generate(str(config.output_path))
+        manifest = generator.generate(str(config.output_path))
 
     if not config.output_path.exists():
         raise GenerationError("Context generator did not create an artifact")
@@ -121,6 +123,13 @@ def run_generation(config: GenerationConfig) -> dict[str, Any]:
         "config_path": str(config.config_path),
         "mode": config.mode,
         "output_bytes": output_bytes,
+        "uncompressed_bytes": output_bytes,
+        "output_sha256": artifact_digest(config.output_path),
+        "profile": config.profile,
+        "selected_sections": list(resolve_sections(config.profile, config.include_sections)),
+        "rendered_sections": list(manifest.rendered),
+        "omitted_sections": manifest.to_json_dict()["omitted"],
+        "truncated": manifest.truncated,
         "completeness": summary["completeness"],
         "source_counts": summary["counts"],
         "entities": len(registry.states),
@@ -139,8 +148,31 @@ def generate_context_file(
     ha_url: str | None = None,
     ha_token: str | None = None,
     mode: GenerationMode = "hybrid",
+    profile: str = "full",
+    include_sections: Sequence[str] | None = None,
+    include_repository_files: bool = True,
+    include_storage_records: bool = True,
+    on_budget_exceeded: str = "auto",
+    max_output_bytes: int | None = None,
 ) -> dict[str, Any]:
-    """Generate a context artifact from explicit, per-call configuration."""
+    """Generate a context artifact from explicit, per-call configuration.
+
+    Args:
+        config_path: Home Assistant configuration root override.
+        output_path: Artifact destination override.
+        ha_url: Home Assistant URL override.
+        ha_token: Long-lived access token override.
+        mode: Generation mode: offline, online, or hybrid.
+        profile: Section profile: full, agent, or compact.
+        include_sections: Explicit section selection overriding the profile.
+        include_repository_files: When False, config file bodies are not collected.
+        include_storage_records: When False, safe .storage records are not collected.
+        on_budget_exceeded: Overflow policy: auto, fail, or truncate.
+        max_output_bytes: Artifact byte budget override.
+
+    Returns:
+        Generation summary including the section manifest and artifact metrics.
+    """
     defaults = GenerationConfig.from_env()
     config = GenerationConfig(
         config_path=Path(config_path) if config_path is not None else defaults.config_path,
@@ -151,8 +183,15 @@ def generate_context_file(
         history_hours=defaults.history_hours,
         log_hours=defaults.log_hours,
         calendar_days=defaults.calendar_days,
-        max_output_bytes=defaults.max_output_bytes,
+        max_output_bytes=max_output_bytes
+        if max_output_bytes is not None
+        else defaults.max_output_bytes,
         max_source_bytes=defaults.max_source_bytes,
+        profile=profile,
+        include_sections=tuple(include_sections) if include_sections is not None else None,
+        include_repository_files=include_repository_files,
+        include_storage_records=include_storage_records,
+        on_budget_exceeded=on_budget_exceeded,
     )
     return run_generation(config)
 

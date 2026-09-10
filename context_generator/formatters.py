@@ -2,23 +2,26 @@
 
 from __future__ import annotations
 
+import io
 import json
 import os
 import tempfile
 from collections import Counter, defaultdict
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
-
-# Type-only imports to avoid circular dependency issues at runtime
-from typing import TYPE_CHECKING
+from typing import BinaryIO, TextIO
 
 from . import constants
+from .budget import (
+    BudgetedSectionWriter,
+    SectionManifest,
+    resolve_overflow_policy,
+    resolve_sections,
+)
 from .config import DEFAULT_MAX_OUTPUT_BYTES, GenerationConfig
 from .provenance import ProvenanceTracker
 from .utils import is_ignorable_entity
-
-if TYPE_CHECKING:
-    pass
 
 
 class ReportGenerator:
@@ -60,8 +63,45 @@ class ReportGenerator:
         self.provenance = provenance
         self.comprehensive_snapshot = comprehensive_snapshot or {}
 
-    def generate(self, output_file: str):
-        """Generate the report atomically and enforce the configured size bound."""
+    _MANDATORY_SECTIONS = frozenset({"executive_summary", "source_provenance"})
+
+    _SECTION_WRITERS: dict[str, str] = {
+        "executive_summary": "_write_executive_summary",
+        "source_provenance": "_write_source_provenance",
+        "cache_health": "_write_cache_health",
+        "system_health": "_write_system_health",
+        "integration_status": "_write_integration_status",
+        "topology": "_write_topology",
+        "automation_logic": "_write_automation_logic",
+        "entity_dependency_graph": "_write_entity_dependency_graph",
+        "conflict_analysis": "_write_conflict_analysis",
+        "template_entities": "_write_template_entities",
+        "persons": "_write_persons_and_tracking",
+        "zones": "_write_zones_and_geofencing",
+        "energy": "_write_energy_dashboard",
+        "helpers": "_write_helper_inventory",
+        "services": "_write_services_catalog",
+        "hacs": "_write_hacs_and_components",
+        "dashboards": "_write_dashboard_usage",
+        "logs": "_write_log_analysis",
+        "recent_changes": "_write_recent_changes",
+        "snapshot": "_write_comprehensive_snapshot",
+        "quick_reference": "_write_quick_reference",
+    }
+
+    def generate(self, output_file: str) -> SectionManifest:
+        """Generate the report atomically under the configured byte budget.
+
+        Args:
+            output_file: Destination path for the Markdown artifact.
+
+        Returns:
+            Manifest describing requested, rendered, and omitted sections.
+
+        Raises:
+            ValueError: If a mandatory section does not fit the budget, or the
+                resolved overflow policy is ``fail`` and any section was omitted.
+        """
         print(f"\nGenerating {output_file}...")
         destination = Path(output_file)
         destination.parent.mkdir(mode=0o750, parents=True, exist_ok=True)
@@ -70,44 +110,60 @@ class ReportGenerator:
         )
         temporary = Path(temporary_name)
         try:
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                self._write_header(f)
-                self._write_executive_summary(f)
-                self._write_source_provenance(f)
-                self._write_cache_health(f)
-                self._write_system_health(f)
-                self._write_integration_status(f)
-                self._write_topology(f)
-                self._write_automation_logic(f)
-                self._write_entity_dependency_graph(f)
-                self._write_conflict_analysis(f)
-                self._write_template_entities(f)
-                self._write_persons_and_tracking(f)
-                self._write_zones_and_geofencing(f)
-                self._write_energy_dashboard(f)
-                self._write_helper_inventory(f)
-                self._write_services_catalog(f)
-                self._write_hacs_and_components(f)
-                self._write_dashboard_usage(f)
-                self._write_log_analysis(f)
-                self._write_recent_changes(f)
-                self._write_comprehensive_snapshot(f)
-                self._write_quick_reference(f)
-                f.flush()
-                os.fsync(f.fileno())
-            maximum = (
-                self.generation_config.max_output_bytes
-                if self.generation_config is not None
-                else DEFAULT_MAX_OUTPUT_BYTES
-            )
-            if temporary.stat().st_size > maximum:
-                raise ValueError("Generated context exceeds configured output limit")
+            manifest = self._render_bounded(fd)
             temporary.chmod(0o640)
             os.replace(temporary, destination)
         finally:
             temporary.unlink(missing_ok=True)
 
         print(f"Success. File {output_file} ready.")
+        return manifest
+
+    def _render_bounded(self, fd: int) -> SectionManifest:
+        config = self.generation_config
+        profile = config.profile if config is not None else "full"
+        include_sections = config.include_sections if config is not None else None
+        policy_input = config.on_budget_exceeded if config is not None else "auto"
+        maximum = config.max_output_bytes if config is not None else DEFAULT_MAX_OUTPUT_BYTES
+        policy = resolve_overflow_policy(policy_input, profile)
+        selected = resolve_sections(profile, include_sections)
+
+        try:
+            binary = os.fdopen(fd, "wb")
+        except BaseException:
+            os.close(fd)
+            raise
+        with binary:
+            self._write_binary_header(binary)
+            budget = BudgetedSectionWriter(binary, maximum, policy)
+            for key in selected:
+                method = getattr(self, self._SECTION_WRITERS[key])
+                if key in self._MANDATORY_SECTIONS:
+                    budget.write_mandatory(key, self._stage_text(method))
+                else:
+                    budget.write_optional(key, self._stage_text(method))
+            binary.flush()
+            os.fsync(binary.fileno())
+
+        manifest = budget.manifest
+        if policy == "fail" and manifest.omitted:
+            raise ValueError("Generated context exceeds configured output limit")
+        return manifest
+
+    def _write_binary_header(self, handle: BinaryIO) -> None:
+        text = io.TextIOWrapper(handle, encoding="utf-8", write_through=True, newline="\n")
+        self._write_header(text)
+        text.flush()
+        text.detach()
+
+    def _stage_text(self, method: Callable[[TextIO], None]) -> Callable[[BinaryIO], None]:
+        def render(staged: BinaryIO) -> None:
+            text = io.TextIOWrapper(staged, encoding="utf-8", write_through=True, newline="\n")
+            method(text)
+            text.flush()
+            text.detach()
+
+        return render
 
     def _write_header(self, f):
         """Document header."""
