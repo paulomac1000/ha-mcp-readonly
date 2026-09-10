@@ -453,6 +453,8 @@ class TestSnapshotSourceCategorySplit:
         records = provenance.as_dict()
         assert records["filesystem_snapshot"]["status"] == "skipped"
         assert "disabled by request" in records["filesystem_snapshot"]["reason"]
+        assert records["repository_files"]["status"] == "skipped"
+        assert records["storage_records"]["status"] == "skipped"
         assert collector.data["files"]["config_tree"] == {}
 
 
@@ -773,3 +775,47 @@ class TestIssueAcceptanceRegressions:
             )
 
         assert Path(result["output_file"]).read_text(encoding="utf-8")
+
+    def test_notice_that_cannot_fit_fails_as_explicit_budget_error(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """A truncate run without room for the omission notice fails explicitly."""
+        from unittest.mock import patch
+
+        from context_generator.budget import BudgetExceededError
+        from context_generator.core import generate_context_file
+
+        config_dir = tmp_path / "config"
+        config_dir.mkdir()
+        (config_dir / "configuration.yaml").write_text("homeassistant:\n", encoding="utf-8")
+        (config_dir / "automations.yaml").write_text("[]", encoding="utf-8")
+        output = tmp_path / "context.md"
+
+        with (
+            patch("requests.get", side_effect=AssertionError("offline network access")),
+            patch("requests.post", side_effect=AssertionError("offline network access")),
+        ):
+            measured = generate_context_file(
+                config_path=str(config_dir),
+                output_path=str(tmp_path / "measure.md"),
+                ha_url="http://stale-ha:8123",
+                ha_token="stale-token",
+                mode="offline",
+                include_sections=("source_provenance",),
+            )
+        mandatory_size = measured["output_bytes"]
+        with pytest.raises(BudgetExceededError, match="generation notes do not fit"):
+            with (
+                patch("requests.get", side_effect=AssertionError("offline network access")),
+                patch("requests.post", side_effect=AssertionError("offline network access")),
+            ):
+                generate_context_file(
+                    config_path=str(config_dir),
+                    output_path=str(output),
+                    ha_url="http://stale-ha:8123",
+                    ha_token="stale-token",
+                    mode="offline",
+                    on_budget_exceeded="truncate",
+                    max_output_bytes=mandatory_size + 100,
+                )
+        assert not output.exists()

@@ -166,10 +166,10 @@ class ReportGenerator:
                     budget.write_mandatory(key, self._stage_text(method))
                 else:
                     budget.write_optional(key, self._stage_text(method))
-            if budget.manifest.omitted:
+            if policy == "truncate" and budget.manifest.omitted:
                 omissions = budget.manifest.to_json_dict()["omitted"]
                 names = ", ".join(item["section"] for item in omissions)
-                budget.write_notice(
+                if not budget.write_notice(
                     self._stage_text(lambda f: self._write_generation_notes(f, omissions)),
                     self._stage_text(
                         lambda f: f.write(
@@ -179,7 +179,11 @@ class ReportGenerator:
                         )
                     ),
                     self._stage_text(lambda f: f.write(_COMPACT_TRUNCATION_NOTICE)),
-                )
+                ):
+                    raise BudgetExceededError(
+                        "generation notes do not fit within the remaining byte budget; "
+                        "increase max_output_bytes to keep the omission notice visible"
+                    )
             binary.flush()
             os.fsync(binary.fileno())
 

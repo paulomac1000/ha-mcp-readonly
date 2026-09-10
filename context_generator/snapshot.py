@@ -558,6 +558,18 @@ class ComprehensiveSnapshotCollector:
                 status="skipped",
                 reason="policy: repository file bodies and storage records disabled by request",
             )
+            self.provenance.record(
+                "repository_files",
+                method="filesystem",
+                status="skipped",
+                reason="policy: repository file bodies disabled by request",
+            )
+            self.provenance.record(
+                "storage_records",
+                method="filesystem",
+                status="skipped",
+                reason="policy: storage records disabled by request",
+            )
             self.data["files"]["config_tree"] = output
             return
 
