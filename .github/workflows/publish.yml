@@ -95,8 +95,8 @@ jobs:
           pytest tests/unit tests/protocol -q
           python -m build --wheel --no-isolation
           test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
-      - uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4
-      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
+      - uses: docker/setup-qemu-action@1f40c72289eff860ee54a304f1438e3cff362e0a # v4
+      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4
       - name: Log in only to isolated quarantine registry
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
         with:
@@ -160,7 +160,7 @@ jobs:
       id-token: write
       attestations: write
     steps:
-      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4
+      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4
       # Docker credentials are keyed by registry hostname, so two ghcr.io logins
       # overwrite each other. Keep this protected environment credential out of
       # the candidate job and grant it only read access to quarantine plus write
@@ -196,7 +196,7 @@ jobs:
           echo "digest=$EXPECTED_DIGEST" >> "$GITHUB_OUTPUT"
           echo "subject_name=$repository" >> "$GITHUB_OUTPUT"
       - name: Attest promoted digest
-        uses: actions/attest-build-provenance@96b4a1ef7235a096b17240c259729fdd70c83d45 # v3
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v3
         with:
           subject-name: ${{ steps.promote.outputs.subject_name }}
           subject-digest: ${{ steps.promote.outputs.digest }}
