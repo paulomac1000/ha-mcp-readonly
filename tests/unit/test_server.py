@@ -432,3 +432,35 @@ def test_download_serves_last_known_good_after_failed_regeneration(monkeypatch, 
     artifact = manager.output_for("caller")
     assert artifact.read_bytes() == first_bytes
     manager._executor.shutdown(wait=True)
+
+
+def test_start_records_publication_when_future_already_completed(
+    monkeypatch, tmp_path
+) -> None:
+    """Callback registration must not deadlock on an already-completed future."""
+    from concurrent.futures import Future
+
+    config_root = tmp_path / "config"
+    output_root = tmp_path / "output"
+    config_root.mkdir()
+    output_root.mkdir()
+    monkeypatch.setattr(server, "HA_CONFIG_PATH", str(config_root))
+    monkeypatch.setattr(server, "CONTEXT_OUTPUT_ROOT", str(output_root))
+
+    manager = server.ContextTaskManager(timeout_seconds=5)
+    done: Future = Future()
+    done.set_result({"output_bytes": 1})
+
+    class EagerExecutor:
+        def submit(self, fn, *args, **kwargs):
+            return done
+
+    manager._executor = EagerExecutor()
+
+    task = manager.start(
+        str(config_root), str(output_root / "context.md"), "offline", "caller"
+    )
+
+    assert task.future is done
+    artifact = manager.output_for("caller")
+    assert str(artifact).startswith(str(output_root))

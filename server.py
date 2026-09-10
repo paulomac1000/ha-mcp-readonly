@@ -712,10 +712,13 @@ class ContextTaskManager:
                 future=future,
                 mode=mode,
             )
-            future.add_done_callback(
-                lambda done: self._record_publication(done, owner, safe_output)
-            )
-            return self._task
+        # Registered outside the lock: a future that is already complete
+        # invokes callbacks synchronously, and the publication recorder
+        # acquires the same non-reentrant lock.
+        future.add_done_callback(
+            lambda done: self._record_publication(done, owner, safe_output)
+        )
+        return self._task
 
     def status(self, owner: str) -> dict[str, Any]:
         """Return the caller's context task state.
