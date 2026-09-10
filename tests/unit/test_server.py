@@ -229,6 +229,62 @@ def test_context_generation_deadline_terminates_child(monkeypatch, tmp_path) -> 
     manager._executor.shutdown(wait=True)
 
 
+def test_context_worker_receives_no_implicit_url_when_ha_url_unset(monkeypatch, tmp_path) -> None:
+    """A set token without an explicit HA_URL must never reach an implicit host."""
+
+    class FakeConnection:
+        def close(self) -> None:
+            pass
+
+    class FakeProcess:
+        def __init__(self) -> None:
+            self.alive = True
+
+        def start(self) -> None:
+            pass
+
+        def join(self, timeout=None) -> None:
+            del timeout
+
+        def is_alive(self) -> bool:
+            return self.alive
+
+        def terminate(self) -> None:
+            self.alive = False
+
+        def kill(self) -> None:
+            self.alive = False
+
+        def close(self) -> None:
+            pass
+
+    process = FakeProcess()
+    captured: dict[str, tuple] = {}
+
+    class FakeContext:
+        def Pipe(self, duplex=False):
+            assert duplex is False
+            return FakeConnection(), FakeConnection()
+
+        def Process(self, **kwargs):
+            assert kwargs["name"] == "ha-context-generator"
+            captured["args"] = kwargs["args"]
+            return process
+
+    monkeypatch.setattr(server.multiprocessing, "get_context", lambda method: FakeContext())
+    monkeypatch.setattr(server, "HA_URL", "")
+    monkeypatch.setattr(server, "HA_TOKEN", "unit-test-secret")
+    manager = server.ContextTaskManager(timeout_seconds=0)
+    with pytest.raises(TimeoutError, match="deadline"):
+        manager._generate(tmp_path, tmp_path / "context.md", "hybrid", {})
+
+    args = captured["args"]
+    assert args[3] == ""
+    assert args[4] == "unit-test-secret"
+    assert args[5] == "hybrid"
+    manager._executor.shutdown(wait=True)
+
+
 def test_context_manager_accepts_new_task_after_timed_out_task(monkeypatch, tmp_path) -> None:
     """A terminal timeout must not permanently wedge the one-worker context subsystem."""
     config_root = tmp_path / "config"

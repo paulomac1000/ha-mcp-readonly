@@ -40,6 +40,17 @@ def test_settings_are_frozen(monkeypatch: pytest.MonkeyPatch) -> None:
         settings.mcp_port = 9999  # type: ignore[misc]
 
 
+def test_unset_ha_url_defaults_to_empty_host(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No implicit Home Assistant host: an unset HA_URL must stay empty."""
+    monkeypatch.delenv("HA_URL", raising=False)
+    monkeypatch.setenv("MCP_TRANSPORT", "stdio")
+
+    assert RuntimeSettings.from_env().ha_url == ""
+
+    monkeypatch.setenv("HA_URL", "http://ha-unit-test:8123")
+    assert RuntimeSettings.from_env().ha_url == "http://ha-unit-test:8123"
+
+
 def test_wildcard_cors_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("MCP_TRANSPORT", "stdio")
     monkeypatch.setenv("CORS_ALLOWED_ORIGINS", "*")

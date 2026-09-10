@@ -88,7 +88,11 @@ class RuntimeSettings:
 
         output_path = os.getenv("OUTPUT_PATH", "/app/output/ha-ai-context.md")
         return cls(
-            ha_url=os.getenv("HA_URL", "http://homeassistant:8123"),
+            # No implicit default host: an empty URL keeps Home Assistant
+            # integration and context network collection disabled so a set
+            # HA_TOKEN can never be transmitted to an implicit plain-HTTP
+            # endpoint (CWE-319).
+            ha_url=os.getenv("HA_URL", ""),
             ha_token=os.getenv("HA_TOKEN", ""),
             ha_config_path=os.getenv("HA_CONFIG_PATH", "/config"),
             health_check_port=_env_int("HEALTH_CHECK_PORT", 9091, minimum=1, maximum=65535),
