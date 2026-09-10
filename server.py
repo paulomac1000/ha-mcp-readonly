@@ -383,6 +383,9 @@ def _signature_to_json_schema(function: Any) -> dict[str, Any]:
 
 class HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:  # noqa: N802
+        """
+        Handle one authenticated GET request through the invocation kernel.
+        """
         if self.path not in {"/health", "/live", "/ready"}:
             self.send_response(404)
             self.end_headers()
@@ -406,6 +409,9 @@ class HealthHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def log_message(self, format: str, *args: Any) -> None:
+        """
+        Route handler access logs through the sanitized application logger.
+        """
         return
 
 
@@ -548,6 +554,7 @@ def _normalize_context_options(params: dict[str, Any]) -> dict[str, Any]:
 _CONTEXT_ERROR_CODES = {
     "TimeoutError": "DEADLINE_EXCEEDED",
     "ValueError": "INVALID_ARGUMENTS",
+    "BudgetExceededError": "BUDGET_EXCEEDED",
     "GenerationError": "GENERATION_FAILED",
     "OSError": "DEPENDENCY_UNAVAILABLE",
 }
@@ -561,6 +568,9 @@ class ContextGenerationFailed(RuntimeError):
     """
 
     def __init__(self, error_code: str) -> None:
+        """
+        Initialize the handler with the request context.
+        """
         super().__init__(f"Context generation failed: {error_code}")
         self.error_code = error_code
 
@@ -972,7 +982,7 @@ def create_rest_app(auth_token: str | None = None) -> Any:
     async def context_generate(request: Request) -> JSONResponse:
         try:
             params = await request.json()
-        except (json.JSONDecodeError, TypeError):
+        except (json.JSONDecodeError, TypeError, UnicodeDecodeError):
             params = None
         if not isinstance(params, dict):
             return JSONResponse(

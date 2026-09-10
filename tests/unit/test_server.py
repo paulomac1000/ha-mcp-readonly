@@ -355,3 +355,43 @@ def test_context_status_maps_deadline_errors(monkeypatch, tmp_path) -> None:
 
     assert payload["status"] == "error"
     assert payload["error_code"] == "DEADLINE_EXCEEDED"
+
+
+def test_context_generate_rejects_invalid_utf8_body(client: TestClient) -> None:
+    response = client.post(
+        "/api/context/generate",
+        content=b'{"profile": "\xff\xfe"}',
+        headers={**AUTH, "Content-Type": "application/json"},
+    )
+
+    assert response.status_code == 400
+    payload = response.json()
+    assert payload["success"] is False
+    assert payload["error"]["code"] == "INVALID_ARGUMENTS"
+
+
+def test_context_status_maps_budget_exceeded_errors(monkeypatch, tmp_path) -> None:
+    from concurrent.futures import Future
+
+    manager = server.ContextTaskManager(timeout_seconds=5)
+    exceeded: Future = Future()
+    exceeded.set_exception(
+        server.ContextGenerationFailed(server._CONTEXT_ERROR_CODES["BudgetExceededError"])
+    )
+    monkeypatch.setattr(
+        manager,
+        "_task",
+        server.GenerationTask(
+            task_id="task-c",
+            owner="caller",
+            output_path=tmp_path / "context.md",
+            started_at=0.0,
+            future=exceeded,
+            mode="offline",
+        ),
+    )
+
+    payload = manager.status("caller")
+
+    assert payload["status"] == "error"
+    assert payload["error_code"] == "BUDGET_EXCEEDED"

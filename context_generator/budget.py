@@ -147,6 +147,14 @@ def resolve_overflow_policy(on_budget_exceeded: str, profile: str) -> str:
     )
 
 
+class BudgetExceededError(ValueError):
+    """Raise when a fail-policy run cannot fit within its declared byte budget.
+
+    Distinguishes a well-formed request whose output cannot satisfy its
+    budget from an invalid request.
+    """
+
+
 @dataclass(frozen=True, slots=True)
 class OmittedSection:
     """Describe a selected section omitted from the final artifact."""

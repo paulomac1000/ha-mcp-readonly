@@ -68,6 +68,13 @@ class ComprehensiveSnapshotCollector:
     """Collect supported runtime and local sources without silently omitting failures."""
 
     def __init__(self, config: GenerationConfig, provenance: ProvenanceTracker) -> None:
+        """
+        Bind the collector to one run configuration and provenance tracker.
+
+        Args:
+            config: Immutable per-run configuration.
+            provenance: Completeness tracker for the run.
+        """
         self.config = config
         self.provenance = provenance
         self.data: dict[str, Any] = {"rest": {}, "websocket": {}, "files": {}}
@@ -186,6 +193,9 @@ class ComprehensiveSnapshotCollector:
         return self.data
 
     def _collect_rest(self) -> None:
+        """
+        Collect supported REST sources according to the run mode.
+        """
         for key, endpoint in _REST_SOURCES:
             result = make_ha_request(endpoint)
             if result.get("success"):
@@ -259,6 +269,16 @@ class ComprehensiveSnapshotCollector:
         return payload
 
     def _ws_command(self, ws: Any, request_id: int, command: str, extra: dict[str, Any]) -> Any:
+        """
+        Send one WebSocket command and return its parsed result.
+
+        Args:
+            command_type: WebSocket command type.
+            extra: Additional payload fields.
+
+        Returns:
+            Parsed result payload, or None when unavailable.
+        """
         ws.send(json.dumps({"id": request_id, "type": command, **extra}))
         response = self._ws_recv_json(ws)
         if response.get("id") != request_id or response.get("type") != "result":
@@ -269,6 +289,9 @@ class ComprehensiveSnapshotCollector:
         return response.get("result")
 
     def _collect_websocket(self) -> None:
+        """
+        Collect supported WebSocket sources according to the run mode.
+        """
         try:
             from websockets.sync.client import connect
 
@@ -331,6 +354,9 @@ class ComprehensiveSnapshotCollector:
                     )
 
     def _collect_todo_items(self, ws: Any, request_id: int) -> int:
+        """
+        Collect to-do items through the WebSocket API when available.
+        """
         states = self.data["rest"].get("states_api") or []
         entity_ids = sorted(
             item["entity_id"]
@@ -383,6 +409,9 @@ class ComprehensiveSnapshotCollector:
         return request_id
 
     def _collect_weather_forecasts(self, ws: Any, request_id: int) -> int:
+        """
+        Collect advertised weather forecasts through the WebSocket API.
+        """
         states = self.data["rest"].get("states_api") or []
         forecasts: dict[str, dict[str, Any]] = {}
         total = 0
@@ -506,6 +535,11 @@ class ComprehensiveSnapshotCollector:
         return request_id
 
     def _collect_files(self) -> None:
+        """
+        Collect safe text configuration bodies and .storage records.
+
+        Honors the repository-file and storage-record source-category switches; disabled categories are recorded as policy skips.
+        """
         root = self.config.config_path.resolve(strict=False)
         output: dict[str, Any] = {}
         total_bytes = 0

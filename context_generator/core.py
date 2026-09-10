@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Sequence
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from . import constants
 from .analyzers import (
     AutomationAnalyzer,
     CacheAnalyzer,
@@ -135,6 +137,9 @@ def run_generation(config: GenerationConfig) -> dict[str, Any]:
         "output_file": str(config.output_path),
         "config_path": str(config.config_path),
         "mode": config.mode,
+        "profile_revision": constants.CONTEXT_FORMAT_VERSION,
+        "max_bytes": config.max_output_bytes,
+        "generated_at": datetime.now(UTC).isoformat(timespec="seconds"),
         "output_bytes": output_bytes,
         "uncompressed_bytes": output_bytes,
         "output_sha256": artifact_digest(config.output_path),

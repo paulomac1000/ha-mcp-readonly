@@ -16,6 +16,7 @@ from . import constants
 from .budget import (
     SECTION_ORDER,
     BudgetedSectionWriter,
+    BudgetExceededError,
     SectionManifest,
     resolve_overflow_policy,
     resolve_sections,
@@ -121,6 +122,15 @@ class ReportGenerator:
         return manifest
 
     def _render_bounded(self, fd: int) -> SectionManifest:
+        """
+        Render the selected sections into the temp file under the byte budget.
+
+        Args:
+            fd: File descriptor of the atomic temporary artifact.
+
+        Returns:
+            Manifest describing requested, rendered, and omitted sections.
+        """
         config = self.generation_config
         profile = config.profile if config is not None else "full"
         include_sections = config.include_sections if config is not None else None
@@ -153,16 +163,29 @@ class ReportGenerator:
 
         manifest = budget.manifest
         if policy == "fail" and manifest.omitted:
-            raise ValueError("Generated context exceeds configured output limit")
+            raise BudgetExceededError("Generated context exceeds configured output limit")
         return manifest
 
     def _write_binary_header(self, handle: BinaryIO) -> None:
+        """
+        Write the report header through a UTF-8 text wrapper.
+        """
         text = io.TextIOWrapper(handle, encoding="utf-8", write_through=True, newline="\n")
         self._write_header(text)
         text.flush()
         text.detach()
 
     def _stage_text(self, method: Callable[[TextIO], None]) -> Callable[[BinaryIO], None]:
+        """
+        Wrap a text-based section writer for binary staged rendering.
+
+        Args:
+            method: Section writer that renders into a text stream.
+
+        Returns:
+            Callback rendering the section into a binary handle.
+        """
+
         def render(staged: BinaryIO) -> None:
             text = io.TextIOWrapper(staged, encoding="utf-8", write_through=True, newline="\n")
             method(text)

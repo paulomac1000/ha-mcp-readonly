@@ -494,6 +494,9 @@ class TestOfflineRunResultContract:
         assert result["entities"] == 0
         assert result["automations"] == 0
         assert result["uncompressed_bytes"] == result["output_bytes"]
+        assert result["max_bytes"] >= result["output_bytes"]
+        assert result["profile_revision"]
+        assert datetime.fromisoformat(result["generated_at"]).tzinfo is not None
         assert len(result["output_sha256"]) == 64
 
         content = output.read_text(encoding="utf-8")

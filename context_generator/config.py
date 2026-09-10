@@ -36,6 +36,9 @@ class GenerationConfig:
     on_budget_exceeded: str = "auto"
 
     def __post_init__(self) -> None:
+        """
+        Validate the frozen configuration eagerly, before any collection.
+        """
         if self.mode not in {"offline", "online", "hybrid"}:
             raise ValueError("mode must be offline, online, or hybrid")
         if self.history_hours < 0 or self.log_hours < 0 or self.calendar_days < 0:
