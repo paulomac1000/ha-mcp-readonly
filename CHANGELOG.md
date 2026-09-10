@@ -23,8 +23,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - New unit coverage: section/profile resolution, overflow policy resolution, budgeted staged rendering, artifact digest, configuration and REST option normalization (including alias-conflict rejection), and the provenance policy-skip split (71 new tests; 1,324 unit + protocol tests total on this branch).
 
 ### Changed — Dependency Maintenance
-- Updated pinned GitHub Actions revisions from Dependabot PR #24 while preserving the current publish build-backend validation.
-- Added a Dependabot guard for MCP 2.x while FastMCP 3.4.x requires `mcp<2`; removed the redundant `pydantic-core` constraint so Pydantic's exact dependency remains authoritative and security updates stay actionable.
+- Updated pinned GitHub Actions revisions from Dependabot PR #36 while preserving the current publish build-backend validation.
+- Adopted the pip-group updates from Dependabot PR #35 with two deliberate exceptions: `fastmcp`, `fastmcp-slim`, `mcp`, and `starlette` keep their previous pins because the bundled FastMCP 4.x / MCP 2.x combination breaks the negotiated MCP protocol handshake (verified by `tests/protocol/test_protocol_revision_claim.py` in CI) and the repository's Dependabot guard intentionally holds MCP 2.x back while FastMCP 3.4.x requires `mcp<2`. The `pydantic-core` constraint stays removed so Pydantic's exact dependency remains authoritative.
+- CI build-tooling pins (`build`, `setuptools`, `wheel`) now match the updated constraints across `ci.yml`, `migration-evidence.yml`, `official-client.yml`, and `publish.yml`, resolving a `ResolutionImpossible` conflict introduced by the bump.
+- Added an explicit `httpx` development dependency: `scripts/verify_runtime_endpoints.py` and `scripts/verify_official_mcp_client.py` import it directly, and it is no longer guaranteed transitively.
 
 ## [2.0.0] - 2026-08-12
 
