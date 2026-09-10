@@ -220,7 +220,6 @@ class BudgetedSectionWriter:
             raise ValueError(f"unknown resolved overflow policy {policy!r}; valid options: {valid}")
         self._handle = handle
         self._max_bytes = max_bytes
-        self._policy = policy
         self._handle.seek(0, os.SEEK_END)
         self._running_size = self._handle.tell()
         self._requested: list[str] = []
