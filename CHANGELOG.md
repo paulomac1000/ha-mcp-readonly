@@ -22,6 +22,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Repository config file bodies and safe `.storage` records are now independently suppressible source categories. Disabling either records an explicit `policy:` skip entry in the provenance matrix instead of silently omitting data.
 - New unit coverage: section/profile resolution, overflow policy resolution, budgeted staged rendering, artifact digest, configuration and REST option normalization (including alias-conflict rejection), and the provenance policy-skip split (71 new tests; 1,324 unit + protocol tests total on this branch).
 
+### Changed — Dependency Maintenance
+- Updated pinned GitHub Actions revisions from Dependabot PR #24 while preserving the current publish build-backend validation.
+- Added a Dependabot guard for MCP 2.x while FastMCP 3.4.x requires `mcp<2`; removed the redundant `pydantic-core` constraint so Pydantic's exact dependency remains authoritative and security updates stay actionable.
+
 ## [2.0.0] - 2026-08-12
 
 ### Live-HA Verification
