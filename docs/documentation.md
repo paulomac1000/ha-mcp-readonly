@@ -75,7 +75,7 @@ The standalone health listener exposes public `/live`, `/ready`, and `/health` p
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `HA_URL` | `http://homeassistant:8123` | Home Assistant base URL |
+| `HA_URL` | empty | Home Assistant base URL. No implicit default: Home Assistant integration and network context collection stay disabled until set explicitly, so a set `HA_TOKEN` is never sent to an implicit host. |
 | `HA_TOKEN` | empty | Outbound Home Assistant credential |
 | `HA_CONFIG_PATH` | `/config` | Read-only Home Assistant configuration root |
 | `MCP_TRANSPORT` | `stdio` | `stdio` or authenticated Streamable HTTP (`http`) |

@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from . import constants
 from .analyzers import (
     AutomationAnalyzer,
     CacheAnalyzer,
@@ -21,7 +24,8 @@ from .analyzers import (
     TemplateEntityCollector,
     ZoneAnalyzer,
 )
-from .config import GenerationConfig, GenerationMode
+from .budget import artifact_digest, resolve_sections
+from .config import GenerationConfig, GenerationMode, inherited_generation_defaults
 from .formatters import ReportGenerator
 from .provenance import ProvenanceTracker
 from .runtime import GenerationRuntime, generation_scope
@@ -36,7 +40,20 @@ class GenerationError(RuntimeError):
 
 
 def run_generation(config: GenerationConfig) -> dict[str, Any]:
-    """Run one complete generation without mutating process-wide configuration."""
+    """Run one complete generation without mutating process-wide configuration.
+
+    Args:
+        config: Immutable per-run configuration for this generation.
+
+    Returns:
+        Generation summary with artifact metrics, the section manifest, and
+        entity/registry counts. ``selected_sections`` reflects the effective
+        selection including the mandatory floor, not the raw request.
+
+    Raises:
+        GenerationError: When required data is unavailable or the artifact
+            exceeds the configured output limit.
+    """
     config.output_path.parent.mkdir(mode=0o750, parents=True, exist_ok=True)
     provenance = ProvenanceTracker()
     runtime = GenerationRuntime(config=config, provenance=provenance)
@@ -106,7 +123,7 @@ def run_generation(config: GenerationConfig) -> dict[str, Any]:
             provenance=provenance,
             comprehensive_snapshot=snapshot,
         )
-        generator.generate(str(config.output_path))
+        manifest = generator.generate(str(config.output_path))
 
     if not config.output_path.exists():
         raise GenerationError("Context generator did not create an artifact")
@@ -120,7 +137,18 @@ def run_generation(config: GenerationConfig) -> dict[str, Any]:
         "output_file": str(config.output_path),
         "config_path": str(config.config_path),
         "mode": config.mode,
+        "profile_revision": constants.CONTEXT_FORMAT_VERSION,
+        "max_bytes": config.max_output_bytes,
+        "generated_at": datetime.now(UTC).isoformat(timespec="seconds"),
         "output_bytes": output_bytes,
+        "uncompressed_bytes": output_bytes,
+        "output_sha256": artifact_digest(config.output_path),
+        "profile": config.profile,
+        "requested_sections": list(resolve_sections(config.profile, config.include_sections)),
+        "selected_sections": list(manifest.selected),
+        "rendered_sections": list(manifest.rendered),
+        "omitted_sections": manifest.to_json_dict()["omitted"],
+        "truncated": manifest.truncated,
         "completeness": summary["completeness"],
         "source_counts": summary["counts"],
         "entities": len(registry.states),
@@ -139,20 +167,58 @@ def generate_context_file(
     ha_url: str | None = None,
     ha_token: str | None = None,
     mode: GenerationMode = "hybrid",
+    profile: str = "full",
+    include_sections: Sequence[str] | None = None,
+    include_repository_files: bool = True,
+    include_storage_records: bool = True,
+    on_budget_exceeded: str = "auto",
+    max_output_bytes: int | None = None,
 ) -> dict[str, Any]:
-    """Generate a context artifact from explicit, per-call configuration."""
-    defaults = GenerationConfig.from_env()
+    """Generate a context artifact from explicit, per-call configuration.
+
+    Args:
+        config_path: Home Assistant configuration root override.
+        output_path: Artifact destination override.
+        ha_url: Home Assistant URL override.
+        ha_token: Long-lived access token override.
+        mode: Generation mode: offline, online, or hybrid.
+        profile: Section profile: full, agent, or compact.
+        include_sections: Explicit section selection overriding the profile.
+        include_repository_files: When False, config file bodies are not collected.
+        include_storage_records: When False, safe .storage records are not collected.
+        on_budget_exceeded: Overflow policy: auto, fail, or truncate.
+        max_output_bytes: Artifact byte budget override.
+
+    Returns:
+        Generation summary including the section manifest and artifact metrics.
+
+    Note:
+        Only the legacy operational windows and, when ``max_output_bytes`` is
+        omitted, ``HA_CONTEXT_MAX_OUTPUT_BYTES`` are inherited from the
+        environment. Every budget option is taken exclusively from the
+        explicit arguments; budget-related environment variables are
+        deliberately not parsed so dispatchers that pre-validate options (the
+        REST worker) can never be invalidated by host-side environment state.
+    """
+    inherited = inherited_generation_defaults(include_max_output_bytes=max_output_bytes is None)
     config = GenerationConfig(
-        config_path=Path(config_path) if config_path is not None else defaults.config_path,
-        output_path=Path(output_path) if output_path is not None else defaults.output_path,
-        ha_url=ha_url if ha_url is not None else defaults.ha_url,
-        ha_token=ha_token if ha_token is not None else defaults.ha_token,
+        config_path=Path(config_path) if config_path is not None else inherited["config_path"],
+        output_path=Path(output_path) if output_path is not None else inherited["output_path"],
+        ha_url=ha_url if ha_url is not None else inherited["ha_url"],
+        ha_token=ha_token if ha_token is not None else inherited["ha_token"],
         mode=mode,
-        history_hours=defaults.history_hours,
-        log_hours=defaults.log_hours,
-        calendar_days=defaults.calendar_days,
-        max_output_bytes=defaults.max_output_bytes,
-        max_source_bytes=defaults.max_source_bytes,
+        history_hours=inherited["history_hours"],
+        log_hours=inherited["log_hours"],
+        calendar_days=inherited["calendar_days"],
+        max_output_bytes=max_output_bytes
+        if max_output_bytes is not None
+        else inherited["max_output_bytes"],
+        max_source_bytes=inherited["max_source_bytes"],
+        profile=profile,
+        include_sections=tuple(include_sections) if include_sections is not None else None,
+        include_repository_files=include_repository_files,
+        include_storage_records=include_storage_records,
+        on_budget_exceeded=on_budget_exceeded,
     )
     return run_generation(config)
 

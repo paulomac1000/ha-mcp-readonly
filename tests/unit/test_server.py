@@ -2,7 +2,7 @@
 
 import json
 from starlette.testclient import TestClient
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -223,9 +223,65 @@ def test_context_generation_deadline_terminates_child(monkeypatch, tmp_path) -> 
     monkeypatch.setattr(server.multiprocessing, "get_context", lambda method: FakeContext())
     manager = server.ContextTaskManager(timeout_seconds=0)
     with pytest.raises(TimeoutError, match="deadline"):
-        manager._generate(tmp_path, tmp_path / "context.md", "offline")
+        manager._generate(tmp_path, tmp_path / "context.md", "offline", {})
     assert process.terminated is True
     assert process.killed is False
+    manager._executor.shutdown(wait=True)
+
+
+def test_context_worker_receives_no_implicit_url_when_ha_url_unset(monkeypatch, tmp_path) -> None:
+    """A set token without an explicit HA_URL must never reach an implicit host."""
+
+    class FakeConnection:
+        def close(self) -> None:
+            pass
+
+    class FakeProcess:
+        def __init__(self) -> None:
+            self.alive = True
+
+        def start(self) -> None:
+            pass
+
+        def join(self, timeout=None) -> None:
+            del timeout
+
+        def is_alive(self) -> bool:
+            return self.alive
+
+        def terminate(self) -> None:
+            self.alive = False
+
+        def kill(self) -> None:
+            self.alive = False
+
+        def close(self) -> None:
+            pass
+
+    process = FakeProcess()
+    captured: dict[str, tuple] = {}
+
+    class FakeContext:
+        def Pipe(self, duplex=False):
+            assert duplex is False
+            return FakeConnection(), FakeConnection()
+
+        def Process(self, **kwargs):
+            assert kwargs["name"] == "ha-context-generator"
+            captured["args"] = kwargs["args"]
+            return process
+
+    monkeypatch.setattr(server.multiprocessing, "get_context", lambda method: FakeContext())
+    monkeypatch.setattr(server, "HA_URL", "")
+    monkeypatch.setattr(server, "HA_TOKEN", "unit-test-secret")
+    manager = server.ContextTaskManager(timeout_seconds=0)
+    with pytest.raises(TimeoutError, match="deadline"):
+        manager._generate(tmp_path, tmp_path / "context.md", "hybrid", {})
+
+    args = captured["args"]
+    assert args[3] == ""
+    assert args[4] == "unit-test-secret"
+    assert args[5] == "hybrid"
     manager._executor.shutdown(wait=True)
 
 
@@ -241,9 +297,9 @@ def test_context_manager_accepts_new_task_after_timed_out_task(monkeypatch, tmp_
     manager = server.ContextTaskManager(timeout_seconds=1)
     calls = 0
 
-    def fake_generate(config_path, output_path, mode):
+    def fake_generate(config_path, output_path, mode, options):
         nonlocal calls
-        del config_path, output_path, mode
+        del config_path, output_path, mode, options
         calls += 1
         if calls == 1:
             raise TimeoutError("Context generation exceeded its deadline")
@@ -292,3 +348,265 @@ async def test_mcp_principal_is_bound_from_each_request_token(monkeypatch) -> No
         "capabilities": frozenset({"filesystem.read"}),
         "targets": frozenset({"runtime", "home_assistant", "home_assistant_config"}),
     }
+
+
+def test_context_generate_rejects_malformed_json(client: TestClient) -> None:
+    response = client.post(
+        "/api/context/generate",
+        content=b"{not json",
+        headers={**AUTH, "Content-Type": "application/json"},
+    )
+
+    assert response.status_code == 400
+    payload = response.json()
+    assert payload["success"] is False
+    assert payload["error"]["code"] == "INVALID_ARGUMENTS"
+
+
+def test_context_status_exposes_stable_error_code(monkeypatch, tmp_path) -> None:
+    from concurrent.futures import Future
+
+    manager = server.ContextTaskManager(timeout_seconds=5)
+    failed: Future = Future()
+    failed.set_exception(server.ContextGenerationFailed("GENERATION_FAILED"))
+    monkeypatch.setattr(
+        manager,
+        "_task",
+        server.GenerationTask(
+            task_id="task-a",
+            owner="caller",
+            output_path=tmp_path / "context.md",
+            started_at=0.0,
+            future=failed,
+            mode="offline",
+        ),
+    )
+
+    payload = manager.status("caller")
+
+    assert payload["status"] == "error"
+    assert payload["error_code"] == "GENERATION_FAILED"
+
+
+def test_context_status_maps_deadline_errors(monkeypatch, tmp_path) -> None:
+    from concurrent.futures import Future
+
+    manager = server.ContextTaskManager(timeout_seconds=5)
+    timed_out: Future = Future()
+    timed_out.set_exception(TimeoutError("Context generation exceeded its deadline"))
+    monkeypatch.setattr(
+        manager,
+        "_task",
+        server.GenerationTask(
+            task_id="task-b",
+            owner="caller",
+            output_path=tmp_path / "context.md",
+            started_at=0.0,
+            future=timed_out,
+            mode="offline",
+        ),
+    )
+
+    payload = manager.status("caller")
+
+    assert payload["status"] == "error"
+    assert payload["error_code"] == "DEADLINE_EXCEEDED"
+
+
+def test_context_generate_rejects_invalid_utf8_body(client: TestClient) -> None:
+    response = client.post(
+        "/api/context/generate",
+        content=b'{"profile": "\xff\xfe"}',
+        headers={**AUTH, "Content-Type": "application/json"},
+    )
+
+    assert response.status_code == 400
+    payload = response.json()
+    assert payload["success"] is False
+    assert payload["error"]["code"] == "INVALID_ARGUMENTS"
+
+
+def test_context_status_maps_budget_exceeded_errors(monkeypatch, tmp_path) -> None:
+    from concurrent.futures import Future
+
+    manager = server.ContextTaskManager(timeout_seconds=5)
+    exceeded: Future = Future()
+    exceeded.set_exception(server.ContextGenerationFailed("BUDGET_EXCEEDED"))
+    monkeypatch.setattr(
+        manager,
+        "_task",
+        server.GenerationTask(
+            task_id="task-c",
+            owner="caller",
+            output_path=tmp_path / "context.md",
+            started_at=0.0,
+            future=exceeded,
+            mode="offline",
+        ),
+    )
+
+    payload = manager.status("caller")
+
+    assert payload["status"] == "error"
+    assert payload["error_code"] == "BUDGET_EXCEEDED"
+
+
+def test_download_serves_last_known_good_after_failed_regeneration(monkeypatch, tmp_path) -> None:
+    """A failed regeneration must not wedge downloads of the last-good artifact (#34)."""
+    config_root = tmp_path / "config"
+    output_root = tmp_path / "output"
+    config_root.mkdir()
+    output_root.mkdir()
+    monkeypatch.setattr(server, "HA_CONFIG_PATH", str(config_root))
+    monkeypatch.setattr(server, "CONTEXT_OUTPUT_ROOT", str(output_root))
+
+    manager = server.ContextTaskManager(timeout_seconds=10)
+    calls = {"n": 0}
+    first_bytes = b"last known good context"
+
+    def fake_generate(config_path, output_path, mode, options):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            output_path.write_bytes(first_bytes)
+            return {"output_bytes": len(first_bytes)}
+        raise server.ContextGenerationFailed("BUDGET_EXCEEDED")
+
+    monkeypatch.setattr(manager, "_generate", fake_generate)
+
+    first = manager.start(str(config_root), str(output_root / "context.md"), "offline", "caller")
+    first.future.result(timeout=5)
+    failed = manager.start(str(config_root), str(output_root / "context.md"), "offline", "caller")
+    with pytest.raises(server.ContextGenerationFailed):
+        failed.future.result(timeout=5)
+
+    status = manager.status("caller")
+    assert status["status"] == "error"
+    assert status["error_code"] == "BUDGET_EXCEEDED"
+
+    artifact = manager.output_for("caller")
+    assert artifact.read_bytes() == first_bytes
+    manager._executor.shutdown(wait=True)
+
+
+def test_start_with_already_completed_future_publishes_only_executed_work(
+    monkeypatch, tmp_path
+) -> None:
+    """Publication bookkeeping belongs to the executed wrapper, never callbacks.
+
+    An already-completed future (immediate child success) must neither
+    deadlock nor publish work that never executed.
+    """
+    from concurrent.futures import Future
+
+    config_root = tmp_path / "config"
+    output_root = tmp_path / "output"
+    config_root.mkdir()
+    output_root.mkdir()
+    monkeypatch.setattr(server, "HA_CONFIG_PATH", str(config_root))
+    monkeypatch.setattr(server, "CONTEXT_OUTPUT_ROOT", str(output_root))
+
+    manager = server.ContextTaskManager(timeout_seconds=5)
+    done: Future = Future()
+    done.set_result({"output_bytes": 1})
+
+    class EagerExecutor:
+        def submit(self, fn, *args, **kwargs):
+            return done
+
+    manager._executor = EagerExecutor()
+
+    task = manager.start(str(config_root), str(output_root / "context.md"), "offline", "caller")
+
+    assert task.future is done
+    with pytest.raises(FileNotFoundError, match="No completed context artifact"):
+        manager.output_for("caller")
+
+
+def test_worker_transmits_stable_budget_error_code(monkeypatch) -> None:
+    """The generation child transmits the stable BUDGET_EXCEEDED code."""
+    import context_generator
+    from context_generator.budget import BudgetExceededError
+
+    connection = MagicMock()
+    monkeypatch.setattr(
+        context_generator,
+        "generate_context_file",
+        lambda **kwargs: (_ for _ in ()).throw(BudgetExceededError("budget")),
+    )
+
+    server._context_generation_worker(
+        connection,
+        "/config",
+        "/tmp/context.md",
+        "",
+        "",
+        "offline",
+        {
+            "profile": "full",
+            "include_sections": None,
+            "include_repository_files": True,
+            "include_storage_records": True,
+            "on_budget_exceeded": "fail",
+            "max_output_bytes": None,
+        },
+    )
+
+    connection.send.assert_called_once_with(("error", "BUDGET_EXCEEDED"))
+    connection.close.assert_called_once_with()
+
+
+def test_worker_transmits_dependency_unavailable_for_os_errors(monkeypatch) -> None:
+    """OSError subclasses map to the stable DEPENDENCY_UNAVAILABLE code."""
+    import context_generator
+
+    connection = MagicMock()
+    monkeypatch.setattr(
+        context_generator,
+        "generate_context_file",
+        lambda **kwargs: (_ for _ in ()).throw(FileNotFoundError("missing config")),
+    )
+
+    server._context_generation_worker(
+        connection,
+        "/config",
+        "/tmp/context.md",
+        "",
+        "",
+        "offline",
+        {
+            "profile": "full",
+            "include_sections": None,
+            "include_repository_files": True,
+            "include_storage_records": True,
+            "on_budget_exceeded": "auto",
+            "max_output_bytes": None,
+        },
+    )
+
+    connection.send.assert_called_once_with(("error", "DEPENDENCY_UNAVAILABLE"))
+    connection.close.assert_called_once_with()
+
+
+def test_context_status_maps_parent_os_errors(monkeypatch, tmp_path) -> None:
+    from concurrent.futures import Future
+
+    manager = server.ContextTaskManager(timeout_seconds=5)
+    io_failed: Future = Future()
+    io_failed.set_exception(FileNotFoundError("publication path vanished"))
+    monkeypatch.setattr(
+        manager,
+        "_task",
+        server.GenerationTask(
+            task_id="task-d",
+            owner="caller",
+            output_path=tmp_path / "context.md",
+            started_at=0.0,
+            future=io_failed,
+            mode="offline",
+        ),
+    )
+
+    payload = manager.status("caller")
+
+    assert payload["status"] == "error"
+    assert payload["error_code"] == "DEPENDENCY_UNAVAILABLE"

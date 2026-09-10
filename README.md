@@ -231,12 +231,45 @@ Credential stores are excluded. Sensitive fields, bearer tokens, JWTs, secret qu
 
 Relevant limits are `HA_CONTEXT_HISTORY_HOURS`, `HA_CONTEXT_LOG_HOURS`, `HA_CONTEXT_CALENDAR_DAYS`, `HA_CONTEXT_MAX_SOURCE_BYTES`, and `HA_CONTEXT_MAX_OUTPUT_BYTES`.
 
+### Budget-aware generation
+
+The generator can bound output at the source instead of emitting everything and letting consumers slim it down. Options are available through the environment (`HA_CONTEXT_PROFILE`, `HA_CONTEXT_SECTIONS`, `HA_CONTEXT_DETAIL`, `HA_CONTEXT_INCLUDE_FILES`, `HA_CONTEXT_INCLUDE_STORAGE`, `HA_CONTEXT_ON_BUDGET_EXCEEDED`) and through the REST generate call:
+
+| Option | Values | Default | Effect |
+|--------|--------|---------|--------|
+| `profile` | `full`, `agent`, `compact` | `full` | Section preset. `full` renders everything (historical behavior); `agent` drops the heavy raw snapshot, log, and recent-changes sections; `compact` renders summary, provenance, system health, topology, and quick reference only. |
+| `maxBytes` | integer ≥ 1024, ≤ 128 MiB | `HA_CONTEXT_MAX_OUTPUT_BYTES` (96 MiB when unset) | Output byte budget. Omitting `maxBytes` inherits the configured environment value. Sections that do not fit are omitted whole and reported. |
+| `sections` | section keys or aliases | profile default | Explicit selection overriding the profile. Aliases: `runtime`, `health`, `provenance`, `logs`. The executive summary and source provenance sections are always included. |
+| `repositoryFiles` / `include_files` | boolean | `true` | When `false`, the comprehensive raw snapshot does not collect or serialize config file bodies. Structured analysis sections (registries, automations, devices) remain derived-metadata views and are not affected. |
+| `storageRecords` | boolean | `true` | When `false`, the comprehensive raw snapshot does not collect safe `.storage` records. |
+| `detail` | `full`, `compact` | `full` | Alias that resolves to `profile=compact` when no explicit profile is given. |
+| `onBudgetExceeded` | `auto`, `fail`, `truncate` | `auto` | Resolved policy: `auto` behaves as `fail` for the `full` profile (preserving the historical fail-closed run) and as `truncate` for `agent`/`compact`; explicit `fail`/`truncate` always win. |
+
+REST option defaults are resolved by the REST layer as shown; they do not inherit their non-boolean defaults from the corresponding environment variables — only `maxBytes` falls back to its environment value.
+
+The generation result reports `output_bytes`, `uncompressed_bytes`, `output_sha256`, `profile`, `requested_sections` (the resolved original selection), `selected_sections` (the effective selection including the mandatory floor), `rendered_sections`, `omitted_sections` (with exact per-section byte sizes and reasons), and `truncated`. Disabling repository files or storage records records an explicit `policy:` skip in the provenance matrix — nothing is silently omitted. The executive summary and source provenance sections are always rendered, including under explicit section selections, so every artifact carries its completeness record.
+
+Source and runtime identity are carried by dedicated result fields: `config_path` identifies the audited Home Assistant configuration root (source identity), while `mode`, `profile_revision`, and `generated_at` identify the generating runtime conditions (runtime identity); `output_sha256` pins the exact artifact bytes. Consumers can therefore always attribute an artifact to the instance state and generator revision that produced it.
+
+Empty instances are a success case: a generation over a valid but zero-record instance completes normally, renders zero-count sections, and reports zeroed counters with `truncated: false`. Only invalid options, budget violations under the fail policy, or unavailable required data fail the run.
+
+Two deliberate design decisions, recorded for issue #33 consumers: `agent` is the bounded operational view intended for agent consumption, while the API default remains the historical `full` profile for backward compatibility — callers opt into the bounded view explicitly. Truncation is applied at whole-section granularity and reported explicitly; partial (mid-section) content truncation is never applied silently, so the contract maps as `included_sections` → `rendered_sections`, `truncated_sections` → `omitted_sections`, and `bytes` → `output_bytes`.
+
+> **Security note:** the examples above are loopback-only. When the REST adapter is exposed through a remote reverse proxy, terminate TLS at the proxy and require HTTPS from clients — plain HTTP transmits the bearer token in cleartext.
+
 ```bash
 curl -X POST http://127.0.0.1:9093/api/context/generate \
   -H "Authorization: Bearer $REST_API_TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"mode":"hybrid"}'
+  -d '{"mode":"hybrid","profile":"agent","maxBytes":2097152}'
 
+curl -X POST http://127.0.0.1:9093/api/context/generate \
+  -H "Authorization: Bearer $REST_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"mode":"offline","detail":"compact"}'
+```
+
+```bash
 curl -H "Authorization: Bearer $REST_API_TOKEN" \
   http://127.0.0.1:9093/api/context/status
 

@@ -2,23 +2,35 @@
 
 from __future__ import annotations
 
+import io
 import json
 import os
 import tempfile
 from collections import Counter, defaultdict
-from datetime import datetime
+from collections.abc import Callable
+from datetime import UTC, datetime
 from pathlib import Path
-
-# Type-only imports to avoid circular dependency issues at runtime
-from typing import TYPE_CHECKING
+from typing import BinaryIO, TextIO
 
 from . import constants
+from .budget import (
+    SECTION_ORDER,
+    BudgetedSectionWriter,
+    BudgetExceededError,
+    SectionManifest,
+    resolve_overflow_policy,
+    resolve_sections,
+)
 from .config import DEFAULT_MAX_OUTPUT_BYTES, GenerationConfig
 from .provenance import ProvenanceTracker
 from .utils import is_ignorable_entity
 
-if TYPE_CHECKING:
-    pass
+_COMPACT_TRUNCATION_NOTICE = (
+    "## Generation Notes\n\n"
+    "This artifact is budget-truncated; selected sections were omitted to honor "
+    "the configured byte budget. The generation result manifest lists every "
+    "omitted section with its exact size.\n\n"
+)
 
 
 class ReportGenerator:
@@ -60,8 +72,45 @@ class ReportGenerator:
         self.provenance = provenance
         self.comprehensive_snapshot = comprehensive_snapshot or {}
 
-    def generate(self, output_file: str):
-        """Generate the report atomically and enforce the configured size bound."""
+    _MANDATORY_SECTIONS = frozenset({"executive_summary", "source_provenance"})
+
+    _SECTION_WRITERS: dict[str, str] = {
+        "executive_summary": "_write_executive_summary",
+        "source_provenance": "_write_source_provenance",
+        "cache_health": "_write_cache_health",
+        "system_health": "_write_system_health",
+        "integration_status": "_write_integration_status",
+        "topology": "_write_topology",
+        "automation_logic": "_write_automation_logic",
+        "entity_dependency_graph": "_write_entity_dependency_graph",
+        "conflict_analysis": "_write_conflict_analysis",
+        "template_entities": "_write_template_entities",
+        "persons": "_write_persons_and_tracking",
+        "zones": "_write_zones_and_geofencing",
+        "energy": "_write_energy_dashboard",
+        "helpers": "_write_helper_inventory",
+        "services": "_write_services_catalog",
+        "hacs": "_write_hacs_and_components",
+        "dashboards": "_write_dashboard_usage",
+        "logs": "_write_log_analysis",
+        "recent_changes": "_write_recent_changes",
+        "snapshot": "_write_comprehensive_snapshot",
+        "quick_reference": "_write_quick_reference",
+    }
+
+    def generate(self, output_file: str) -> SectionManifest:
+        """Generate the report atomically under the configured byte budget.
+
+        Args:
+            output_file: Destination path for the Markdown artifact.
+
+        Returns:
+            Manifest describing requested, rendered, and omitted sections.
+
+        Raises:
+            ValueError: If a mandatory section does not fit the budget, or the
+                resolved overflow policy is ``fail`` and any section was omitted.
+        """
         print(f"\nGenerating {output_file}...")
         destination = Path(output_file)
         destination.parent.mkdir(mode=0o750, parents=True, exist_ok=True)
@@ -70,56 +119,133 @@ class ReportGenerator:
         )
         temporary = Path(temporary_name)
         try:
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                self._write_header(f)
-                self._write_executive_summary(f)
-                self._write_source_provenance(f)
-                self._write_cache_health(f)
-                self._write_system_health(f)
-                self._write_integration_status(f)
-                self._write_topology(f)
-                self._write_automation_logic(f)
-                self._write_entity_dependency_graph(f)
-                self._write_conflict_analysis(f)
-                self._write_template_entities(f)
-                self._write_persons_and_tracking(f)
-                self._write_zones_and_geofencing(f)
-                self._write_energy_dashboard(f)
-                self._write_helper_inventory(f)
-                self._write_services_catalog(f)
-                self._write_hacs_and_components(f)
-                self._write_dashboard_usage(f)
-                self._write_log_analysis(f)
-                self._write_recent_changes(f)
-                self._write_comprehensive_snapshot(f)
-                self._write_quick_reference(f)
-                f.flush()
-                os.fsync(f.fileno())
-            maximum = (
-                self.generation_config.max_output_bytes
-                if self.generation_config is not None
-                else DEFAULT_MAX_OUTPUT_BYTES
-            )
-            if temporary.stat().st_size > maximum:
-                raise ValueError("Generated context exceeds configured output limit")
+            manifest = self._render_bounded(fd)
             temporary.chmod(0o640)
             os.replace(temporary, destination)
         finally:
             temporary.unlink(missing_ok=True)
 
         print(f"Success. File {output_file} ready.")
+        return manifest
+
+    def _render_bounded(self, fd: int) -> SectionManifest:
+        """
+        Render the selected sections into the temp file under the byte budget.
+
+        Args:
+            fd: File descriptor of the atomic temporary artifact.
+
+        Returns:
+            Manifest describing requested, rendered, and omitted sections.
+        """
+        config = self.generation_config
+        profile = config.profile if config is not None else "full"
+        include_sections = config.include_sections if config is not None else None
+        policy_input = config.on_budget_exceeded if config is not None else "auto"
+        maximum = config.max_output_bytes if config is not None else DEFAULT_MAX_OUTPUT_BYTES
+        policy = resolve_overflow_policy(policy_input, profile)
+        selected = resolve_sections(profile, include_sections)
+        # The mandatory floor stays present even under explicit selections so
+        # every artifact carries the provenance completeness record.
+        if self._MANDATORY_SECTIONS.difference(selected):
+            mandatory_set = set(selected) | self._MANDATORY_SECTIONS
+            selected = tuple(section for section in SECTION_ORDER if section in mandatory_set)
+
+        try:
+            binary = os.fdopen(fd, "wb")
+        except BaseException:
+            os.close(fd)
+            raise
+        with binary:
+            self._write_binary_header(binary)
+            reserve = 512 if policy == "truncate" else 0
+            budget = BudgetedSectionWriter(binary, maximum, policy, optional_reserve=reserve)
+            for key in selected:
+                method = getattr(self, self._SECTION_WRITERS[key])
+                if key in self._MANDATORY_SECTIONS:
+                    budget.write_mandatory(key, self._stage_text(method))
+                else:
+                    budget.write_optional(key, self._stage_text(method))
+            if policy == "truncate" and budget.manifest.omitted:
+                omissions = budget.manifest.to_json_dict()["omitted"]
+                names = ", ".join(item["section"] for item in omissions)
+                if not budget.write_notice(
+                    self._stage_text(lambda f: self._write_generation_notes(f, omissions)),
+                    self._stage_text(
+                        lambda f: f.write(
+                            "## Generation Notes\n\nBudget-truncated artifact. Omitted "
+                            f"sections: {names}. Details in the generation result "
+                            "manifest.\n\n"
+                        )
+                    ),
+                    self._stage_text(lambda f: f.write(_COMPACT_TRUNCATION_NOTICE)),
+                ):
+                    raise BudgetExceededError(
+                        "generation notes do not fit within the remaining byte budget; "
+                        "increase max_output_bytes to keep the omission notice visible"
+                    )
+            binary.flush()
+            os.fsync(binary.fileno())
+
+        manifest = budget.manifest
+        if policy == "fail" and manifest.omitted:
+            raise BudgetExceededError("Generated context exceeds configured output limit")
+        return manifest
+
+    def _write_binary_header(self, handle: BinaryIO) -> None:
+        """
+        Write the report header through a UTF-8 text wrapper.
+        """
+        text = io.TextIOWrapper(handle, encoding="utf-8", write_through=True, newline="\n")
+        self._write_header(text)
+        text.flush()
+        text.detach()
+
+    def _write_generation_notes(self, f, omissions: list[dict]) -> None:
+        """Write the in-artifact budget omission notice for bounded runs."""
+        f.write("## Generation Notes\n\n")
+        f.write(
+            "> This artifact is budget-truncated. The following selected sections "
+            "were omitted in full to honor the configured byte budget:\n\n"
+        )
+        f.write("| Section | Reason | Staged bytes |\n|---|---|---|\n")
+        for item in omissions:
+            f.write(f"| {item['section']} | {item['reason']} | {item['section_bytes']} |\n")
+        f.write(
+            "\nRetrieve complete data for omitted areas through the normal read tools "
+            "(entity, automation, registry, and log queries) rather than this artifact.\n\n"
+        )
+
+    def _stage_text(self, method: Callable[[TextIO], None]) -> Callable[[BinaryIO], None]:
+        """
+        Wrap a text-based section writer for binary staged rendering.
+
+        Args:
+            method: Section writer that renders into a text stream.
+
+        Returns:
+            Callback rendering the section into a binary handle.
+        """
+
+        def render(staged: BinaryIO) -> None:
+            text = io.TextIOWrapper(staged, encoding="utf-8", write_through=True, newline="\n")
+            method(text)
+            text.flush()
+            text.detach()
+
+        return render
 
     def _write_header(self, f):
         """Document header."""
-        f.write("# Home Assistant Context for AI (v1.1)\n\n")
-        f.write(f"> **Generated:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+        f.write(f"# Home Assistant Context for AI (v{constants.CONTEXT_FORMAT_VERSION})\n\n")
+        f.write(f"> **Generated:** {datetime.now(UTC).isoformat(timespec='seconds')}\n")
         f.write(
             f"> **HA Instance:** {self.generation_config.ha_url if self.generation_config else constants.HA_URL}\n"
         )
         f.write(
             f"> **Config Path:** {self.generation_config.config_path if self.generation_config else constants.HA_CONFIG_PATH}\n"
         )
-        f.write("> **Generator Version:** 1.1\n")
+        f.write(f"> **Generator Version:** {constants.CONTEXT_FORMAT_VERSION}\n")
         if self.generation_config is not None:
             f.write(f"> **Mode:** {self.generation_config.mode}\n")
         f.write("\n")
@@ -237,7 +363,10 @@ class ReportGenerator:
             f.write("> Provenance tracking was not available for this run.\n\n---\n\n")
             return
         summary = self.provenance.summary()
-        f.write(f"> **Artifact completeness:** {summary['completeness']}\n\n")
+        f.write(
+            f"> **Source completeness:** {summary['completeness']} (collection scope; "
+            "see Generation Notes for budget omissions when present)\n\n"
+        )
         f.write("| Source | Method | Status | Records | Bytes | Redactions | Reason |\n")
         f.write("|---|---|---:|---:|---:|---:|---|\n")
         for name, item in summary["sources"].items():
@@ -296,13 +425,13 @@ class ReportGenerator:
         """System health section."""
         f.write("## 🚨 1. System Health & Issues\n\n")
 
-        # Ghost entities - rozszerzone o dashboardy
+        # Ghost entities - extended with dashboard cross-references
         f.write("### 👻 Ghost Entities\n")
         f.write(
             "*Entities used in automations/scripts/dashboards, but non-existent in the system.*\n\n"
         )
 
-        # Merge ghost z automation i dashboard
+        # Merge ghost entities from automations and dashboards
         all_ghosts = dict(self.automation.ghost_entities)
         for eid, sources in self.dashboard.missing_entities.items():
             if eid in all_ghosts:
@@ -1565,7 +1694,7 @@ class ReportGenerator:
         # Footer
         f.write("---\n\n")
         f.write(
-            f"*Generated by HA Context Generator v1.0 at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*\n"
+            f"*Generated by HA Context Generator v{constants.CONTEXT_FORMAT_VERSION} at {datetime.now(UTC).isoformat(timespec='seconds')}*\n"
         )
         f.write("*Based on MCP Server test patterns for improved accuracy*\n")
 

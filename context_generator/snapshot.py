@@ -68,6 +68,13 @@ class ComprehensiveSnapshotCollector:
     """Collect supported runtime and local sources without silently omitting failures."""
 
     def __init__(self, config: GenerationConfig, provenance: ProvenanceTracker) -> None:
+        """
+        Bind the collector to one run configuration and provenance tracker.
+
+        Args:
+            config: Immutable per-run configuration.
+            provenance: Completeness tracker for the run.
+        """
         self.config = config
         self.provenance = provenance
         self.data: dict[str, Any] = {"rest": {}, "websocket": {}, "files": {}}
@@ -186,6 +193,9 @@ class ComprehensiveSnapshotCollector:
         return self.data
 
     def _collect_rest(self) -> None:
+        """
+        Collect supported REST sources according to the run mode.
+        """
         for key, endpoint in _REST_SOURCES:
             result = make_ha_request(endpoint)
             if result.get("success"):
@@ -259,6 +269,17 @@ class ComprehensiveSnapshotCollector:
         return payload
 
     def _ws_command(self, ws: Any, request_id: int, command: str, extra: dict[str, Any]) -> Any:
+        """Send one WebSocket command and return its parsed result.
+
+        Args:
+            ws: WebSocket connection to send the command on.
+            request_id: Correlation identifier for the command envelope.
+            command: WebSocket command type.
+            extra: Additional payload fields.
+
+        Returns:
+            Parsed result payload, or None when unavailable.
+        """
         ws.send(json.dumps({"id": request_id, "type": command, **extra}))
         response = self._ws_recv_json(ws)
         if response.get("id") != request_id or response.get("type") != "result":
@@ -269,6 +290,9 @@ class ComprehensiveSnapshotCollector:
         return response.get("result")
 
     def _collect_websocket(self) -> None:
+        """
+        Collect supported WebSocket sources according to the run mode.
+        """
         try:
             from websockets.sync.client import connect
 
@@ -331,6 +355,9 @@ class ComprehensiveSnapshotCollector:
                     )
 
     def _collect_todo_items(self, ws: Any, request_id: int) -> int:
+        """
+        Collect to-do items through the WebSocket API when available.
+        """
         states = self.data["rest"].get("states_api") or []
         entity_ids = sorted(
             item["entity_id"]
@@ -383,6 +410,9 @@ class ComprehensiveSnapshotCollector:
         return request_id
 
     def _collect_weather_forecasts(self, ws: Any, request_id: int) -> int:
+        """
+        Collect advertised weather forecasts through the WebSocket API.
+        """
         states = self.data["rest"].get("states_api") or []
         forecasts: dict[str, dict[str, Any]] = {}
         total = 0
@@ -506,15 +536,45 @@ class ComprehensiveSnapshotCollector:
         return request_id
 
     def _collect_files(self) -> None:
+        """
+        Collect safe text configuration bodies and .storage records.
+
+        Honors the repository-file and storage-record source-category switches; disabled categories are recorded as policy skips.
+        """
         root = self.config.config_path.resolve(strict=False)
         output: dict[str, Any] = {}
         total_bytes = 0
+        include_bodies = self.config.include_repository_files
+        include_storage = self.config.include_storage_records
         if not root.is_dir():
             self._unavailable(
                 "files", "config_tree", method="filesystem", reason="config root unavailable"
             )
             return
+        if not include_bodies and not include_storage:
+            self.provenance.record(
+                "filesystem_snapshot",
+                method="filesystem",
+                status="skipped",
+                reason="policy: repository file bodies and storage records disabled by request",
+            )
+            self.provenance.record(
+                "repository_files",
+                method="filesystem",
+                status="skipped",
+                reason="policy: repository file bodies disabled by request",
+            )
+            self.provenance.record(
+                "storage_records",
+                method="filesystem",
+                status="skipped",
+                reason="policy: storage records disabled by request",
+            )
+            self.data["files"]["config_tree"] = output
+            return
 
+        skipped_bodies = 0
+        skipped_storage = 0
         for current_root, dirnames, filenames in os.walk(root, topdown=True, followlinks=False):
             current = Path(current_root)
             safe_dirs: list[str] = []
@@ -548,6 +608,13 @@ class ComprehensiveSnapshotCollector:
                     path.suffix.casefold() not in _TEXT_SUFFIXES
                     and ".storage" not in relative.parts
                 ):
+                    continue
+                if ".storage" in relative.parts:
+                    if not include_storage:
+                        skipped_storage += 1
+                        continue
+                elif not include_bodies:
+                    skipped_bodies += 1
                     continue
                 try:
                     size = path.stat().st_size
@@ -621,6 +688,22 @@ class ComprehensiveSnapshotCollector:
                     redacted_fields=redactions,
                 )
         self.data["files"]["config_tree"] = output
+        if not include_bodies:
+            self.provenance.record(
+                "repository_files",
+                method="filesystem",
+                status="skipped",
+                records=skipped_bodies,
+                reason="policy: repository file bodies disabled by request",
+            )
+        if not include_storage:
+            self.provenance.record(
+                "storage_records",
+                method="filesystem",
+                status="skipped",
+                records=skipped_storage,
+                reason="policy: storage records disabled by request",
+            )
         self.provenance.record(
             "filesystem_snapshot",
             method="filesystem",

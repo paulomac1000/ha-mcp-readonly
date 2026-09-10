@@ -8,6 +8,7 @@ import inspect
 import json
 import logging
 import multiprocessing
+import secrets
 import socket
 import subprocess
 import sys
@@ -382,6 +383,7 @@ def _signature_to_json_schema(function: Any) -> dict[str, Any]:
 
 class HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:  # noqa: N802
+        """Serve the public health, liveness, and readiness probes."""
         if self.path not in {"/health", "/live", "/ready"}:
             self.send_response(404)
             self.end_headers()
@@ -405,6 +407,7 @@ class HealthHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def log_message(self, format: str, *args: Any) -> None:
+        """Suppress default per-request access logging."""
         return
 
 
@@ -421,10 +424,13 @@ def _context_generation_worker(
     ha_url: str,
     ha_token: str,
     mode: str,
+    options: dict[str, Any],
 ) -> None:
     """Run generation in a killable child process and return a sanitized result."""
     try:
         from context_generator import generate_context_file
+        from context_generator.budget import BudgetExceededError
+        from context_generator.core import GenerationError
 
         result = generate_context_file(
             config_path=config_path,
@@ -432,12 +438,151 @@ def _context_generation_worker(
             ha_url=ha_url,
             ha_token=ha_token,
             mode=cast(Any, mode),
+            profile=cast(str, options["profile"]),
+            include_sections=cast(Any, options["include_sections"]),
+            include_repository_files=cast(bool, options["include_repository_files"]),
+            include_storage_records=cast(bool, options["include_storage_records"]),
+            on_budget_exceeded=cast(str, options["on_budget_exceeded"]),
+            max_output_bytes=cast(Any, options["max_output_bytes"]),
         )
         connection.send(("ok", result))
-    except BaseException as exc:
-        connection.send(("error", type(exc).__name__))
+    except TimeoutError:
+        connection.send(("error", "DEADLINE_EXCEEDED"))
+    except BudgetExceededError:
+        connection.send(("error", "BUDGET_EXCEEDED"))
+    except GenerationError:
+        connection.send(("error", "GENERATION_FAILED"))
+    except OSError:
+        connection.send(("error", "DEPENDENCY_UNAVAILABLE"))
+    except BaseException:
+        # Request arguments were validated before dispatch, so any remaining
+        # failure is an internal generator error; only its class is transmitted.
+        connection.send(("error", "INTERNAL"))
     finally:
         connection.close()
+
+
+_CONTEXT_OPTION_ALIASES: dict[str, tuple[str, ...]] = {
+    "profile": ("profile",),
+    "max_output_bytes": ("maxBytes", "max_output_bytes", "max_bytes"),
+    "include_sections": ("sections", "include_sections"),
+    "include_repository_files": (
+        "repositoryFiles",
+        "repository_files",
+        "includeRepositoryFiles",
+        "include_files",
+    ),
+    "include_storage_records": (
+        "storageRecords",
+        "storage_records",
+        "includeStorageRecords",
+        "include_storage",
+    ),
+    "on_budget_exceeded": ("onBudgetExceeded", "on_budget_exceeded"),
+}
+
+
+def _normalize_context_options(params: dict[str, Any]) -> dict[str, Any]:
+    """Normalize budget-aware generation options with deterministic alias rules.
+
+    Args:
+        params: Raw request parameters.
+
+    Returns:
+        Canonical option values keyed by GenerationConfig field names.
+
+    Raises:
+        ValueError: On unknown values, type mismatches, or conflicting aliases.
+    """
+    from context_generator.budget import resolve_overflow_policy, resolve_sections
+    from context_generator.config import MAX_CONTEXT_ARTIFACT_BYTES
+
+    options: dict[str, Any] = {
+        "profile": "full",
+        "max_output_bytes": None,
+        "include_sections": None,
+        "include_repository_files": True,
+        "include_storage_records": True,
+        "on_budget_exceeded": "auto",
+    }
+    profile_given = False
+    for canonical, aliases in _CONTEXT_OPTION_ALIASES.items():
+        values = [params[alias] for alias in aliases if alias in params]
+        if not values:
+            continue
+        if len({json.dumps(value, sort_keys=True) for value in values}) > 1:
+            raise ValueError(f"conflicting values for context option {canonical!r}")
+        value = values[0]
+        if canonical == "profile":
+            profile_given = True
+            if not isinstance(value, str):
+                raise ValueError("profile must be a string")
+            options[canonical] = value.strip().casefold()
+        elif canonical == "max_output_bytes":
+            if isinstance(value, bool) or not isinstance(value, int):
+                raise ValueError("max_output_bytes must be an integer")
+            if value < 1024:
+                raise ValueError("max_output_bytes is too small")
+            if value > MAX_CONTEXT_ARTIFACT_BYTES:
+                raise ValueError(
+                    "max_output_bytes exceeds the supported artifact size "
+                    f"({MAX_CONTEXT_ARTIFACT_BYTES} bytes)"
+                )
+            options[canonical] = value
+        elif canonical == "include_sections":
+            if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+                raise ValueError("include_sections must be a list of strings")
+            options[canonical] = tuple(value)
+        elif canonical in {"include_repository_files", "include_storage_records"}:
+            if not isinstance(value, bool):
+                raise ValueError(f"{canonical} must be a boolean")
+            options[canonical] = value
+        else:
+            if not isinstance(value, str):
+                raise ValueError("on_budget_exceeded must be a string")
+            options[canonical] = value.strip().casefold()
+
+    detail = params.get("detail")
+    if detail is not None and not isinstance(detail, str):
+        raise ValueError("detail must be a string")
+    if isinstance(detail, str) and detail.strip():
+        detail_value = detail.strip().casefold()
+        if detail_value not in {"full", "compact"}:
+            raise ValueError("detail must be full or compact")
+        if profile_given and options["profile"] != detail_value:
+            raise ValueError("profile and detail conflict")
+        if not profile_given and detail_value == "compact":
+            options["profile"] = "compact"
+
+    resolve_sections(options["profile"], options["include_sections"])
+    resolve_overflow_policy(options["on_budget_exceeded"], options["profile"])
+    return options
+
+
+_CONTEXT_ERROR_CODES = {
+    "DEADLINE_EXCEEDED": "DEADLINE_EXCEEDED",
+    "BUDGET_EXCEEDED": "BUDGET_EXCEEDED",
+    "GENERATION_FAILED": "GENERATION_FAILED",
+    "DEPENDENCY_UNAVAILABLE": "DEPENDENCY_UNAVAILABLE",
+}
+
+
+class ContextGenerationFailed(RuntimeError):
+    """Raise when the generation child reports a terminal failure.
+
+    Carries a stable, machine-readable error code derived from the child
+    exception type; child messages are never propagated to public output.
+    """
+
+    def __init__(self, error_code: str) -> None:
+        """Record the stable public error code for this terminal failure.
+
+        Args:
+            error_code: Machine-readable failure class exposed verbatim by
+                the context status endpoint.
+        """
+        super().__init__(f"Context generation failed: {error_code}")
+        self.error_code = error_code
 
 
 @dataclass
@@ -458,8 +603,11 @@ class ContextTaskManager:
     )
     _task: GenerationTask | None = None
     _lock: threading.Lock = field(default_factory=threading.Lock)
+    _published: tuple[str, str] | None = None
 
-    def _generate(self, config_path: Path, output_path: Path, mode: str) -> dict[str, Any]:
+    def _generate(
+        self, config_path: Path, output_path: Path, mode: str, options: dict[str, Any]
+    ) -> dict[str, Any]:
         output_path.parent.mkdir(mode=0o750, parents=True, exist_ok=True)
         temporary = output_path.with_name(
             f".{output_path.stem}.{uuid.uuid4().hex}{output_path.suffix}"
@@ -475,6 +623,7 @@ class ContextTaskManager:
                 HA_URL if mode in {"online", "hybrid"} else "",
                 HA_TOKEN if mode in {"online", "hybrid"} else "",
                 mode,
+                options,
             ),
             name="ha-context-generator",
         )
@@ -493,7 +642,8 @@ class ContextTaskManager:
                 raise RuntimeError("Context generator exited without a result")
             status, payload = receive.recv()
             if status != "ok":
-                raise RuntimeError(f"Context generation failed: {payload}")
+                error_code = _CONTEXT_ERROR_CODES.get(str(payload), "INTERNAL")
+                raise ContextGenerationFailed(error_code)
             if not isinstance(payload, dict) or not temporary.is_file():
                 raise RuntimeError("Context generator returned an invalid artifact")
             temporary.chmod(0o640)
@@ -508,9 +658,63 @@ class ContextTaskManager:
             process.close()
             temporary.unlink(missing_ok=True)
 
-    def start(self, config_path: str, output_path: str, mode: str, owner: str) -> GenerationTask:
+    def _publishing_generate(
+        self,
+        config_path: Path,
+        output_path: Path,
+        mode: str,
+        options: dict[str, Any],
+        owner: str,
+    ) -> dict[str, Any]:
+        """Run one generation and commit its publication bookkeeping.
+
+        Publication state is updated before the returned future resolves, so
+        a task reported as completed is always immediately downloadable.
+
+        Args:
+            config_path: Policy-resolved configuration root.
+            output_path: Policy-resolved artifact destination.
+            mode: Generation mode: offline, online, or hybrid.
+            options: Normalized budget-aware generation options.
+            owner: Authenticated principal that requested the generation.
+
+        Returns:
+            The generation summary from :meth:`_generate`.
+        """
+        result = self._generate(config_path, output_path, mode, options)
+        with self._lock:
+            self._published = (owner, str(output_path))
+        return result
+
+    def start(
+        self,
+        config_path: str,
+        output_path: str,
+        mode: str,
+        owner: str,
+        options: dict[str, Any] | None = None,
+    ) -> GenerationTask:
+        """Start one bounded context generation task for the caller.
+
+        Args:
+            config_path: Requested configuration root; policy-resolved before use.
+            output_path: Requested artifact destination; resolved against the
+                context output root.
+            mode: Generation mode: offline, online, or hybrid.
+            owner: Authenticated principal that will own the task.
+            options: Normalized budget-aware generation options.
+
+        Returns:
+            The created task handle with its result future and metadata.
+
+        Raises:
+            ValueError: When the mode is unknown.
+            SecurityBoundaryError: When a requested path is disallowed.
+            RuntimeError: When another generation task is still running.
+        """
         if mode not in {"offline", "online", "hybrid"}:
             raise ValueError("mode must be offline, online, or hybrid")
+        generation_options = options if options is not None else _normalize_context_options({})
         config_policy = PathPolicy.from_paths(
             [Path(HA_CONFIG_PATH)], max_file_size=20 * 1024 * 1024, deny_storage=False
         )
@@ -519,18 +723,41 @@ class ContextTaskManager:
         with self._lock:
             if self._task is not None and not self._task.future.done():
                 raise RuntimeError("Context generation is already running")
-            future = self._executor.submit(self._generate, safe_config, safe_output, mode)
-            self._task = GenerationTask(
-                task_id=uuid.uuid4().hex,
+            future = self._executor.submit(
+                self._publishing_generate,
+                safe_config,
+                safe_output,
+                mode,
+                generation_options,
+                owner,
+            )
+            task = GenerationTask(
+                task_id=secrets.token_hex(16),
                 owner=owner,
                 output_path=safe_output,
                 started_at=time.monotonic(),
                 future=future,
                 mode=mode,
             )
-            return self._task
+            self._task = task
+        # Bind the local handle: a fast-completing generation must never let a
+        # subsequent start() replace the task returned to this caller.
+        return task
 
     def status(self, owner: str) -> dict[str, Any]:
+        """Return the caller's context task state.
+
+        Args:
+            owner: Authenticated principal requesting the status.
+
+        Returns:
+            Idle, running, deadline-exceeded, completed (with generation
+            stats and section manifest), or terminal failure payload that
+            carries a stable ``error_code``.
+
+        Raises:
+            PermissionError: When the task belongs to another principal.
+        """
         with self._lock:
             task = self._task
         if task is None:
@@ -539,12 +766,29 @@ class ContextTaskManager:
             raise PermissionError("Task belongs to another principal")
         elapsed = time.monotonic() - task.started_at
         if not task.future.done() and elapsed > self.timeout_seconds:
-            return {"status": "deadline_exceeded", "task_id": task.task_id}
+            return {
+                "status": "deadline_exceeded",
+                "task_id": task.task_id,
+                "error_code": "DEADLINE_EXCEEDED",
+            }
         if not task.future.done():
             return {"status": "running", "task_id": task.task_id, "mode": task.mode}
         exception = task.future.exception()
         if exception is not None:
-            return {"status": "error", "task_id": task.task_id, "error": "Generation failed"}
+            if isinstance(exception, TimeoutError):
+                error_code = "DEADLINE_EXCEEDED"
+            elif isinstance(exception, ContextGenerationFailed):
+                error_code = exception.error_code
+            elif isinstance(exception, OSError):
+                error_code = "DEPENDENCY_UNAVAILABLE"
+            else:
+                error_code = "INTERNAL"
+            return {
+                "status": "error",
+                "task_id": task.task_id,
+                "error_code": error_code,
+                "error": "Generation failed",
+            }
         return {
             "status": "completed",
             "task_id": task.task_id,
@@ -553,11 +797,25 @@ class ContextTaskManager:
         }
 
     def output_for(self, owner: str) -> Path:
+        """Return the caller's last successfully published artifact path.
+
+        Serves the last-known-good artifact even when a later generation
+        attempt failed, so a failed run can never wedge downloads.
+
+        Args:
+            owner: Authenticated principal requesting the artifact.
+
+        Returns:
+            Resolved artifact path for the caller's last published context.
+
+        Raises:
+            FileNotFoundError: When nothing has been published for the caller.
+        """
         with self._lock:
-            task = self._task
-        if task is None or task.owner != owner or not task.future.done() or task.future.exception():
+            published = self._published
+        if published is None or published[0] != owner:
             raise FileNotFoundError("No completed context artifact")
-        return resolve_output_path(task.output_path, CONTEXT_OUTPUT_ROOT)
+        return resolve_output_path(published[1], CONTEXT_OUTPUT_ROOT)
 
 
 _CONTEXT_TASKS = ContextTaskManager()
@@ -780,8 +1038,8 @@ def create_rest_app(auth_token: str | None = None) -> Any:
     async def context_generate(request: Request) -> JSONResponse:
         try:
             params = await request.json()
-        except (json.JSONDecodeError, TypeError):
-            params = {}
+        except (json.JSONDecodeError, TypeError, UnicodeDecodeError):
+            params = None
         if not isinstance(params, dict):
             return JSONResponse(
                 {
@@ -791,11 +1049,22 @@ def create_rest_app(auth_token: str | None = None) -> Any:
                 status_code=400,
             )
         try:
+            options = _normalize_context_options(params)
+        except ValueError as exc:
+            return JSONResponse(
+                {
+                    "success": False,
+                    "error": {"code": "INVALID_ARGUMENTS", "message": str(exc)},
+                },
+                status_code=400,
+            )
+        try:
             task = _CONTEXT_TASKS.start(
                 str(params.get("config_path", HA_CONFIG_PATH)),
                 str(params.get("output_path", OUTPUT_PATH)),
                 str(params.get("mode", "hybrid")),
                 current_principal().subject,
+                options,
             )
         except (ValueError, SecurityBoundaryError):
             return JSONResponse(
@@ -863,6 +1132,37 @@ def create_rest_app(auth_token: str | None = None) -> Any:
     async def openapi_schema(request: Request) -> JSONResponse:
         paths: dict[str, Any] = {
             "/api/tools": {"get": {"summary": "List tools", "security": [{"bearerAuth": []}]}},
+            "/api/context/generate": {
+                "post": {
+                    "summary": (
+                        "Start an asynchronous bounded context generation; accepts mode, "
+                        "profile, maxBytes, sections, repositoryFiles, storageRecords, "
+                        "include_files, detail, and onBudgetExceeded"
+                    ),
+                    "security": [{"bearerAuth": []}],
+                }
+            },
+            "/api/context/status": {
+                "get": {
+                    "summary": (
+                        "Return the caller's context generation task state including "
+                        "artifact stats, section manifest, and terminal error_code"
+                    ),
+                    "security": [{"bearerAuth": []}],
+                }
+            },
+            "/api/context/download": {
+                "get": {
+                    "summary": "Download the caller's generated context artifact as Markdown",
+                    "security": [{"bearerAuth": []}],
+                }
+            },
+            "/api/context/modes": {
+                "get": {
+                    "summary": "List supported context generation modes",
+                    "security": [{"bearerAuth": []}],
+                }
+            },
         }
         for name, operation in sorted(get_all_tools().items()):
             paths[f"/api/tools/{name}"] = {

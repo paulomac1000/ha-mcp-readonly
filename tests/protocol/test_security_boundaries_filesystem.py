@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from context_generator.config import MAX_CONTEXT_ARTIFACT_BYTES
 from tools.security import PathPolicy, SecurityBoundaryError, resolve_output_path
 
 
@@ -76,3 +77,24 @@ def test_artifact_output_is_confined_and_typed(tmp_path: Path) -> None:
         resolve_output_path(tmp_path / "escape.md", root)
     with pytest.raises(SecurityBoundaryError):
         resolve_output_path(root / "context.sh", root)
+
+
+def test_context_artifact_at_shared_size_limit_is_accepted(tmp_path: Path) -> None:
+    root = tmp_path / "artifacts"
+    root.mkdir()
+    artifact = root / "context.md"
+    with artifact.open("wb") as stream:
+        stream.truncate(MAX_CONTEXT_ARTIFACT_BYTES)
+
+    assert resolve_output_path(artifact, root) == artifact
+
+
+def test_context_artifact_above_shared_size_limit_is_rejected(tmp_path: Path) -> None:
+    root = tmp_path / "artifacts"
+    root.mkdir()
+    artifact = root / "context.md"
+    with artifact.open("wb") as stream:
+        stream.truncate(MAX_CONTEXT_ARTIFACT_BYTES + 1)
+
+    with pytest.raises(SecurityBoundaryError, match="File too large"):
+        resolve_output_path(artifact, root)
