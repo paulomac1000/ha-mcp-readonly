@@ -25,7 +25,7 @@ from .analyzers import (
     ZoneAnalyzer,
 )
 from .budget import artifact_digest, resolve_sections
-from .config import GenerationConfig, GenerationMode
+from .config import GenerationConfig, GenerationMode, inherited_generation_defaults
 from .formatters import ReportGenerator
 from .provenance import ProvenanceTracker
 from .runtime import GenerationRuntime, generation_scope
@@ -193,25 +193,27 @@ def generate_context_file(
         Generation summary including the section manifest and artifact metrics.
 
     Note:
-        Budget options are taken exclusively from the explicit arguments;
-        budget-related environment variables are deliberately not parsed so
-        dispatchers that pre-validate options (the REST worker) can never be
-        invalidated by host-side environment state.
+        Only the legacy operational windows and, when ``max_output_bytes`` is
+        omitted, ``HA_CONTEXT_MAX_OUTPUT_BYTES`` are inherited from the
+        environment. Every budget option is taken exclusively from the
+        explicit arguments; budget-related environment variables are
+        deliberately not parsed so dispatchers that pre-validate options (the
+        REST worker) can never be invalidated by host-side environment state.
     """
-    defaults = GenerationConfig.from_env(skip_budget_env=True)
+    inherited = inherited_generation_defaults(include_max_output_bytes=max_output_bytes is None)
     config = GenerationConfig(
-        config_path=Path(config_path) if config_path is not None else defaults.config_path,
-        output_path=Path(output_path) if output_path is not None else defaults.output_path,
-        ha_url=ha_url if ha_url is not None else defaults.ha_url,
-        ha_token=ha_token if ha_token is not None else defaults.ha_token,
+        config_path=Path(config_path) if config_path is not None else inherited["config_path"],
+        output_path=Path(output_path) if output_path is not None else inherited["output_path"],
+        ha_url=ha_url if ha_url is not None else inherited["ha_url"],
+        ha_token=ha_token if ha_token is not None else inherited["ha_token"],
         mode=mode,
-        history_hours=defaults.history_hours,
-        log_hours=defaults.log_hours,
-        calendar_days=defaults.calendar_days,
+        history_hours=inherited["history_hours"],
+        log_hours=inherited["log_hours"],
+        calendar_days=inherited["calendar_days"],
         max_output_bytes=max_output_bytes
         if max_output_bytes is not None
-        else defaults.max_output_bytes,
-        max_source_bytes=defaults.max_source_bytes,
+        else inherited["max_output_bytes"],
+        max_source_bytes=inherited["max_source_bytes"],
         profile=profile,
         include_sections=tuple(include_sections) if include_sections is not None else None,
         include_repository_files=include_repository_files,

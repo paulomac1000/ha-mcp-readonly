@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from .budget import PROFILES, resolve_sections
 
@@ -132,6 +132,35 @@ class GenerationConfig:
             if not skip_budget_env
             else "auto",
         )
+
+
+def inherited_generation_defaults(*, include_max_output_bytes: bool) -> dict[str, Any]:
+    """Read only the legacy environment fields explicit calls inherit.
+
+    Args:
+        include_max_output_bytes: Whether to read ``HA_CONTEXT_MAX_OUTPUT_BYTES``.
+            Callers that pass an explicit byte budget set this to False so a
+            malformed or oversized host-side value cannot invalidate an
+            already-validated request.
+
+    Returns:
+        Raw inherited values keyed by ``GenerationConfig`` field names.
+    """
+    values: dict[str, Any] = {
+        "config_path": os.getenv("HA_CONFIG_PATH", "/config"),
+        "output_path": os.getenv("OUTPUT_PATH", "ha-ai-context.md"),
+        "ha_url": os.getenv("HA_URL", "http://homeassistant:8123"),
+        "ha_token": os.getenv("HA_TOKEN", ""),
+        "history_hours": int(os.getenv("HA_CONTEXT_HISTORY_HOURS", "1")),
+        "log_hours": int(os.getenv("HA_CONTEXT_LOG_HOURS", "24")),
+        "calendar_days": int(os.getenv("HA_CONTEXT_CALENDAR_DAYS", "30")),
+        "max_source_bytes": int(os.getenv("HA_CONTEXT_MAX_SOURCE_BYTES", str(64 * 1024 * 1024))),
+    }
+    if include_max_output_bytes:
+        values["max_output_bytes"] = int(
+            os.getenv("HA_CONTEXT_MAX_OUTPUT_BYTES", str(DEFAULT_MAX_OUTPUT_BYTES))
+        )
+    return values
 
 
 def _env_flag(name: str, default: bool) -> bool:
