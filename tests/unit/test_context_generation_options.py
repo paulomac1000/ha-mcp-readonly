@@ -740,7 +740,6 @@ class TestIssueAcceptanceRegressions:
         assert heavy.isdisjoint(result["selected_sections"])
         assert heavy.isdisjoint(result["rendered_sections"])
 
-
     def test_default_invocation_uses_env_paths_as_paths(self, tmp_path: Path, monkeypatch) -> None:
         """generate_context_file() without path args inherits Path-typed env paths."""
         from unittest.mock import patch
