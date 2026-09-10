@@ -269,11 +269,12 @@ class ComprehensiveSnapshotCollector:
         return payload
 
     def _ws_command(self, ws: Any, request_id: int, command: str, extra: dict[str, Any]) -> Any:
-        """
-        Send one WebSocket command and return its parsed result.
+        """Send one WebSocket command and return its parsed result.
 
         Args:
-            command_type: WebSocket command type.
+            ws: WebSocket connection to send the command on.
+            request_id: Correlation identifier for the command envelope.
+            command: WebSocket command type.
             extra: Additional payload fields.
 
         Returns:

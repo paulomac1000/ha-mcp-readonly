@@ -395,3 +395,42 @@ def test_context_status_maps_budget_exceeded_errors(monkeypatch, tmp_path) -> No
 
     assert payload["status"] == "error"
     assert payload["error_code"] == "BUDGET_EXCEEDED"
+
+
+def test_download_serves_last_known_good_after_failed_regeneration(
+    monkeypatch, tmp_path
+) -> None:
+    """A failed regeneration must not wedge downloads of the last-good artifact (#34)."""
+    config_root = tmp_path / "config"
+    output_root = tmp_path / "output"
+    config_root.mkdir()
+    output_root.mkdir()
+    monkeypatch.setattr(server, "HA_CONFIG_PATH", str(config_root))
+    monkeypatch.setattr(server, "CONTEXT_OUTPUT_ROOT", str(output_root))
+
+    manager = server.ContextTaskManager(timeout_seconds=10)
+    calls = {"n": 0}
+    first_bytes = b"last known good context"
+
+    def fake_generate(config_path, output_path, mode, options):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            output_path.write_bytes(first_bytes)
+            return {"output_bytes": len(first_bytes)}
+        raise server.ContextGenerationFailed("BUDGET_EXCEEDED")
+
+    monkeypatch.setattr(manager, "_generate", fake_generate)
+
+    first = manager.start(str(config_root), str(output_root / "context.md"), "offline", "caller")
+    first.future.result(timeout=5)
+    failed = manager.start(str(config_root), str(output_root / "context.md"), "offline", "caller")
+    with pytest.raises(server.ContextGenerationFailed):
+        failed.future.result(timeout=5)
+
+    status = manager.status("caller")
+    assert status["status"] == "error"
+    assert status["error_code"] == "BUDGET_EXCEEDED"
+
+    artifact = manager.output_for("caller")
+    assert artifact.read_bytes() == first_bytes
+    manager._executor.shutdown(wait=True)

@@ -383,9 +383,7 @@ def _signature_to_json_schema(function: Any) -> dict[str, Any]:
 
 class HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:  # noqa: N802
-        """
-        Handle one authenticated GET request through the invocation kernel.
-        """
+        """Serve the public health, liveness, and readiness probes."""
         if self.path not in {"/health", "/live", "/ready"}:
             self.send_response(404)
             self.end_headers()
@@ -409,9 +407,7 @@ class HealthHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def log_message(self, format: str, *args: Any) -> None:
-        """
-        Route handler access logs through the sanitized application logger.
-        """
+        """Suppress default per-request access logging."""
         return
 
 
@@ -568,8 +564,11 @@ class ContextGenerationFailed(RuntimeError):
     """
 
     def __init__(self, error_code: str) -> None:
-        """
-        Initialize the handler with the request context.
+        """Record the stable public error code for this terminal failure.
+
+        Args:
+            error_code: Machine-readable failure class exposed verbatim by
+                the context status endpoint.
         """
         super().__init__(f"Context generation failed: {error_code}")
         self.error_code = error_code
@@ -593,6 +592,7 @@ class ContextTaskManager:
     )
     _task: GenerationTask | None = None
     _lock: threading.Lock = field(default_factory=threading.Lock)
+    _published: tuple[str, str] | None = None
 
     def _generate(
         self, config_path: Path, output_path: Path, mode: str, options: dict[str, Any]
@@ -647,6 +647,23 @@ class ContextTaskManager:
             process.close()
             temporary.unlink(missing_ok=True)
 
+    def _record_publication(self, done: Any, owner: str, path: Path) -> None:
+        """Record the last successfully published artifact for the owner.
+
+        Args:
+            done: Completed future of the finished generation attempt.
+            owner: Authenticated principal that requested the generation.
+            path: Resolved artifact path published by that attempt.
+        """
+        try:
+            succeeded = done.exception() is None
+        except BaseException:
+            succeeded = False
+        if not succeeded:
+            return
+        with self._lock:
+            self._published = (owner, str(path))
+
     def start(
         self,
         config_path: str,
@@ -694,6 +711,9 @@ class ContextTaskManager:
                 started_at=time.monotonic(),
                 future=future,
                 mode=mode,
+            )
+            future.add_done_callback(
+                lambda done: self._record_publication(done, owner, safe_output)
             )
             return self._task
 
@@ -744,22 +764,25 @@ class ContextTaskManager:
         }
 
     def output_for(self, owner: str) -> Path:
-        """Return the caller's completed artifact path.
+        """Return the caller's last successfully published artifact path.
+
+        Serves the last-known-good artifact even when a later generation
+        attempt failed, so a failed run can never wedge downloads.
 
         Args:
             owner: Authenticated principal requesting the artifact.
 
         Returns:
-            Resolved artifact path for the caller's completed task.
+            Resolved artifact path for the caller's last published context.
 
         Raises:
-            FileNotFoundError: When no completed artifact exists for the caller.
+            FileNotFoundError: When nothing has been published for the caller.
         """
         with self._lock:
-            task = self._task
-        if task is None or task.owner != owner or not task.future.done() or task.future.exception():
+            published = self._published
+        if published is None or published[0] != owner:
             raise FileNotFoundError("No completed context artifact")
-        return resolve_output_path(task.output_path, CONTEXT_OUTPUT_ROOT)
+        return resolve_output_path(published[1], CONTEXT_OUTPUT_ROOT)
 
 
 _CONTEXT_TASKS = ContextTaskManager()

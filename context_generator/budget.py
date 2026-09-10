@@ -247,7 +247,7 @@ class BudgetedSectionWriter:
             render: Callback that writes the complete section to a binary handle.
 
         Raises:
-            ValueError: If the staged section would exceed the byte budget.
+            BudgetExceededError: If the staged section would exceed the byte budget.
         """
         staged, size = self._stage(render)
         try:
@@ -255,7 +255,7 @@ class BudgetedSectionWriter:
             self._selected.append(section)
 
             if self._running_size + size > self._max_bytes:
-                raise ValueError(
+                raise BudgetExceededError(
                     f"mandatory section {section!r} does not fit within the "
                     f"{self._max_bytes} byte budget"
                 )
