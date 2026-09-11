@@ -25,7 +25,7 @@ class TestGetConfigEntryDetails:
 
     @pytest.fixture(autouse=True)
     def setup(self, mock_mcp, config_path, ha_url, ha_token, mock_registry_data, sample_states):
-        """Setup test fixtures."""
+        """Setup test fixtures; make_ha_request fails safe unless overridden."""
         self.mock_mcp = mock_mcp
         self.config_path = config_path
         self.ha_url = ha_url
@@ -179,13 +179,17 @@ class TestSearchConfigEntries:
 
     @pytest.fixture(autouse=True)
     def setup(self, mock_mcp, config_path, ha_url, ha_token, mock_registry_data, sample_states):
-        """Setup test fixtures."""
+        """Setup test fixtures; make_ha_request fails safe unless overridden."""
         self.mock_mcp = mock_mcp
         self.config_path = config_path
         self.ha_url = ha_url
         self.ha_token = ha_token
         self.mock_registry_data = mock_registry_data
         self.sample_states = sample_states
+
+        with patch("tools.config_entries.make_ha_request") as mock_request:
+            mock_request.return_value = {"success": False, "error": "no API in unit tests"}
+            yield
 
     @pytest.mark.asyncio
     async def test_search_by_domain(self):
@@ -362,7 +366,7 @@ class TestDiagnoseConfigEntry:
 
     @pytest.fixture(autouse=True)
     def setup(self, mock_mcp, config_path, ha_url, ha_token, mock_registry_data, sample_states):
-        """Setup test fixtures."""
+        """Setup test fixtures; make_ha_request fails safe unless overridden."""
         self.mock_mcp = mock_mcp
         self.config_path = config_path
         self.ha_url = ha_url
