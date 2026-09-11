@@ -696,9 +696,7 @@ class TestCleartextTransportGuard:
     def test_mdns_style_hostname_validated_and_pinned(self, monkeypatch):
         import socket as socket_module
 
-        private = [
-            (socket_module.AF_INET, socket_module.SOCK_STREAM, 6, "", ("192.168.1.8", 0))
-        ]
+        private = [(socket_module.AF_INET, socket_module.SOCK_STREAM, 6, "", ("192.168.1.8", 0))]
         monkeypatch.setattr("tools.utils.socket.getaddrinfo", lambda *a, **k: private)
         result, session = self._allowed("http://homeassistant.local:8123/api/states")
 
