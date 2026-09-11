@@ -565,7 +565,7 @@ def build_report() -> dict[str, Any]:
         },
         "official_client": {
             "distribution": "mcp",
-            "version": "1.29.0",
+            "version": "1.29.1",
             "protocol_revision": "2025-11-25",
             **_workflow_record(official),
             **_job_record(official_job, str(official["conclusion"])),
