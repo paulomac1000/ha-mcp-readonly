@@ -25,7 +25,7 @@ classifiers = [
     "Topic :: Home Automation",
 ]
 dependencies = [
-    "fastmcp>=3.4.6,<3.5",
+    "fastmcp>=3.4.6,<4.1",
     "requests>=2.34.2,<2.35",
     "pyyaml>=6.0.3,<6.1",
     "starlette>=1.0,<2",
@@ -44,7 +44,7 @@ dev = [
     "pytest-asyncio==1.4.0",
     "pytest-mock==3.15.1",
     "pytest-cov==7.1.0",
-    "ruff==0.16.5",
+    "ruff==0.16.6",
     "mypy==2.3.1",
     "bandit==1.9.4",
     "build==1.6.0",
