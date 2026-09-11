@@ -1,5 +1,5 @@
 # Direct runtime dependencies. CI builds the wheel once and installs this exact project metadata.
-fastmcp>=3.4.6,<4.1
+fastmcp>=3.4.6,<3.5
 requests>=2.34.2,<2.35
 pyyaml>=6.0.3,<6.1
 starlette>=1.0,<2
