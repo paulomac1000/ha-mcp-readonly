@@ -87,7 +87,7 @@ jobs:
           PY
           python -m venv /tmp/migration-official-client
           /tmp/migration-official-client/bin/python -m pip install 'mcp==1.29.0'
-          MCP_EXPECTED_VERSION=2.1.0 \
+          MCP_EXPECTED_VERSION=2.2.0 \
             /tmp/migration-official-client/bin/python scripts/verify_official_mcp_client.py stdio \
               --command /tmp/migration-wheel/bin/ha-mcp-readonly --config-path /tmp
 
