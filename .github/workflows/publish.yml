@@ -101,7 +101,10 @@ jobs:
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
         with:
           registry: ghcr.io
-          username: ${{ secrets.QUARANTINE_REGISTRY_USERNAME }}
+          # The username is public information. Keeping it out of secrets
+          # prevents GitHub from masking any output that embeds the owner
+          # name (the quarantine ref), which would blank downstream outputs.
+          username: ${{ github.repository_owner }}
           password: ${{ secrets.QUARANTINE_REGISTRY_TOKEN }}
       - name: Build multi-platform candidate once into quarantine
         id: quarantine
@@ -169,7 +172,9 @@ jobs:
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
         with:
           registry: ghcr.io
-          username: ${{ secrets.PROMOTION_REGISTRY_USERNAME }}
+          # See the quarantine login comment: the username is public and must
+          # never be a secret, or GitHub masks refs containing it.
+          username: ${{ github.repository_owner }}
           password: ${{ secrets.PROMOTION_REGISTRY_TOKEN }}
       - name: Promote exact tested digest without loading candidate image
         id: promote
