@@ -693,16 +693,35 @@ class TestCleartextTransportGuard:
         mock_getaddrinfo.assert_not_called()
         assert result["success"] is True
 
-    def test_mdns_style_hostname_allowed(self):
-        with patch("tools.utils.requests") as mock_requests:
-            mock_response = Mock()
-            mock_response.json.return_value = {}
-            mock_response.raise_for_status = Mock()
-            mock_requests.get.return_value = mock_response
+    def test_mdns_style_hostname_validated_and_pinned(self, monkeypatch):
+        import socket as socket_module
 
-            result = make_ha_request("http://homeassistant.local:8123", "tok", "/api/states")
+        private = [
+            (socket_module.AF_INET, socket_module.SOCK_STREAM, 6, "", ("192.168.1.8", 0))
+        ]
+        monkeypatch.setattr("tools.utils.socket.getaddrinfo", lambda *a, **k: private)
+        result, session = self._allowed("http://homeassistant.local:8123/api/states")
 
         assert result["success"] is True
+        assert session.get.call_args[0][0].startswith("http://192.168.1.8:8123")
+
+    def test_mdns_style_hostname_resolving_public_refused(self, monkeypatch):
+        import socket as socket_module
+
+        public = [
+            (
+                socket_module.AF_INET,
+                socket_module.SOCK_STREAM,
+                6,
+                "",
+                ("93.184.216.34", 0),
+            )
+        ]
+        monkeypatch.setattr("tools.utils.socket.getaddrinfo", lambda *a, **k: public)
+        result = self._refused("http://homeassistant.local:8123/api/states")
+
+        assert result["success"] is False
+        assert result["error_code"] == "INSECURE_TRANSPORT"
 
     def test_hostname_resolving_to_public_address_refused(self, monkeypatch):
         import socket as socket_module

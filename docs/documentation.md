@@ -75,7 +75,7 @@ The standalone health listener exposes public `/live`, `/ready`, and `/health` p
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `HA_URL` | empty | Home Assistant base URL. No implicit default: Home Assistant integration and network context collection stay disabled until set explicitly, so a set `HA_TOKEN` is never sent to an implicit host. Cleartext HTTP is accepted only for trusted local destinations (loopback, private/link-local/unique-local addresses, single-label Docker-style hostnames, or mDNS-style `.local`/`.lan`/`.home`/`.internal` names); public cleartext destinations are refused with `INSECURE_TRANSPORT` — use HTTPS for those. |
+| `HA_URL` | empty | Home Assistant base URL. No implicit default: Home Assistant integration and network context collection stay disabled until set explicitly, so a set `HA_TOKEN` is never sent to an implicit host. Cleartext HTTP is accepted only for trusted local destinations (loopback, private/link-local/unique-local addresses, or single-label Docker-style hostnames); dotted hostnames — mDNS-style names included — must resolve to exclusively private addresses and the request is pinned to the validated address. Public cleartext destinations are refused with `INSECURE_TRANSPORT` — use HTTPS for those. |
 | `HA_TOKEN` | empty | Outbound Home Assistant credential |
 | `HA_CONFIG_PATH` | `/config` | Read-only Home Assistant configuration root |
 | `MCP_TRANSPORT` | `stdio` | `stdio` or authenticated Streamable HTTP (`http`) |
