@@ -72,7 +72,7 @@ class TestGetConfigEntryDetails:
             mock_request.return_value = {"success": True, "data": self.sample_states}
 
             register_config_entry_tools(self.mock_mcp, self.config_path, self.ha_url, self.ha_token)
-            result = await self.mock_mcp._tools["get_config_entry_details"](
+            result = self.mock_mcp._tools["get_config_entry_details"](
                 "e01182bae2f8b20605c8317f4623d1e9"
             )
 
@@ -121,7 +121,7 @@ class TestGetConfigEntryDetails:
             mock_request.return_value = {"success": True, "data": unavailable_states}
 
             register_config_entry_tools(self.mock_mcp, self.config_path, self.ha_url, self.ha_token)
-            result = await self.mock_mcp._tools["get_config_entry_details"](
+            result = self.mock_mcp._tools["get_config_entry_details"](
                 "e01182bae2f8b20605c8317f4623d1e9"
             )
 
@@ -136,7 +136,7 @@ class TestGetConfigEntryDetails:
             mock_load.side_effect = lambda name, path: self.mock_registry_data.get(name, {})
 
             register_config_entry_tools(self.mock_mcp, self.config_path, self.ha_url, self.ha_token)
-            result = await self.mock_mcp._tools["get_config_entry_details"]("nonexistent_id")
+            result = self.mock_mcp._tools["get_config_entry_details"]("nonexistent_id")
 
         data = json.loads(result)
 
@@ -162,9 +162,7 @@ class TestGetConfigEntryDetails:
             mock_request.return_value = {"success": True, "data": self.sample_states}
 
             register_config_entry_tools(self.mock_mcp, self.config_path, self.ha_url, self.ha_token)
-            result = await self.mock_mcp._tools["get_config_entry_details"](
-                "gree_disabled_entry_123"
-            )
+            result = self.mock_mcp._tools["get_config_entry_details"]("gree_disabled_entry_123")
 
         data = json.loads(result)
 
@@ -200,7 +198,7 @@ class TestSearchConfigEntries:
             mock_entities.return_value = []
 
             register_config_entry_tools(self.mock_mcp, self.config_path, self.ha_url, self.ha_token)
-            result = await self.mock_mcp._tools["search_config_entries"](domain="mqtt")
+            result = self.mock_mcp._tools["search_config_entries"](domain="mqtt")
 
         data = json.loads(result)
 
@@ -219,7 +217,7 @@ class TestSearchConfigEntries:
             mock_entities.return_value = []
 
             register_config_entry_tools(self.mock_mcp, self.config_path, self.ha_url, self.ha_token)
-            result = await self.mock_mcp._tools["search_config_entries"](title="bedroom")
+            result = self.mock_mcp._tools["search_config_entries"](title="bedroom")
 
         data = json.loads(result)
 
@@ -238,7 +236,7 @@ class TestSearchConfigEntries:
             mock_entities.return_value = []
 
             register_config_entry_tools(self.mock_mcp, self.config_path, self.ha_url, self.ha_token)
-            result = await self.mock_mcp._tools["search_config_entries"](disabled_only=True)
+            result = self.mock_mcp._tools["search_config_entries"](disabled_only=True)
 
         data = json.loads(result)
 
@@ -257,9 +255,7 @@ class TestSearchConfigEntries:
             mock_entities.return_value = []
 
             register_config_entry_tools(self.mock_mcp, self.config_path, self.ha_url, self.ha_token)
-            result = await self.mock_mcp._tools["search_config_entries"](
-                domain="nonexistent_domain"
-            )
+            result = self.mock_mcp._tools["search_config_entries"](domain="nonexistent_domain")
 
         data = json.loads(result)
 
@@ -280,7 +276,7 @@ class TestSearchConfigEntries:
             ]
 
             register_config_entry_tools(self.mock_mcp, self.config_path, self.ha_url, self.ha_token)
-            result = await self.mock_mcp._tools["search_config_entries"](
+            result = self.mock_mcp._tools["search_config_entries"](
                 domain="mqtt", with_entities=True
             )
 
@@ -312,9 +308,7 @@ class TestSearchConfigEntries:
             }
 
             register_config_entry_tools(self.mock_mcp, self.config_path, self.ha_url, self.ha_token)
-            result = await self.mock_mcp._tools["search_config_entries"](
-                domain="mqtt", summary_only=True
-            )
+            result = self.mock_mcp._tools["search_config_entries"](domain="mqtt", summary_only=True)
 
         data = json.loads(result)
 
@@ -349,7 +343,7 @@ class TestSearchConfigEntries:
             }
 
             register_config_entry_tools(self.mock_mcp, self.config_path, self.ha_url, self.ha_token)
-            result = await self.mock_mcp._tools["search_config_entries"](summary_only=True)
+            result = self.mock_mcp._tools["search_config_entries"](summary_only=True)
 
         data = json.loads(result)
 
@@ -400,7 +394,7 @@ class TestDiagnoseConfigEntry:
             mock_logs.return_value = []
 
             register_config_entry_tools(self.mock_mcp, self.config_path, self.ha_url, self.ha_token)
-            result = await self.mock_mcp._tools["diagnose_config_entry"](
+            result = self.mock_mcp._tools["diagnose_config_entry"](
                 "e01182bae2f8b20605c8317f4623d1e9"
             )
 
@@ -436,7 +430,7 @@ class TestDiagnoseConfigEntry:
             mock_logs.return_value = []
 
             register_config_entry_tools(self.mock_mcp, self.config_path, self.ha_url, self.ha_token)
-            result = await self.mock_mcp._tools["diagnose_config_entry"]("gree_disabled_entry_123")
+            result = self.mock_mcp._tools["diagnose_config_entry"]("gree_disabled_entry_123")
 
         data = json.loads(result)
 
@@ -471,7 +465,7 @@ class TestDiagnoseConfigEntry:
             mock_logs.return_value = log_lines
 
             register_config_entry_tools(self.mock_mcp, self.config_path, self.ha_url, self.ha_token)
-            result = await self.mock_mcp._tools["diagnose_config_entry"](
+            result = self.mock_mcp._tools["diagnose_config_entry"](
                 "e01182bae2f8b20605c8317f4623d1e9"
             )
 
@@ -487,7 +481,7 @@ class TestDiagnoseConfigEntry:
             mock_load.side_effect = lambda name, path: self.mock_registry_data.get(name, {})
 
             register_config_entry_tools(self.mock_mcp, self.config_path, self.ha_url, self.ha_token)
-            result = await self.mock_mcp._tools["diagnose_config_entry"]("nonexistent_id")
+            result = self.mock_mcp._tools["diagnose_config_entry"]("nonexistent_id")
 
         data = json.loads(result)
         assert data["success"] is False
@@ -530,7 +524,7 @@ class TestDiagnoseConfigEntry:
             mock_logs.return_value = []
 
             register_config_entry_tools(self.mock_mcp, self.config_path, self.ha_url, self.ha_token)
-            result = await self.mock_mcp._tools["diagnose_config_entry"](
+            result = self.mock_mcp._tools["diagnose_config_entry"](
                 "e01182bae2f8b20605c8317f4623d1e9"
             )
 
@@ -624,7 +618,7 @@ class TestSearchConfigEntryApiStates:
             mock_request.return_value = self._api_payload()
 
             register_config_entry_tools(self.mock_mcp, self.config_path, self.ha_url, self.ha_token)
-            result = await self.mock_mcp._tools["search_config_entries"]()
+            result = self.mock_mcp._tools["search_config_entries"]()
 
         data = json.loads(result)
         by_id = {e["entry_id"]: e for e in data["entries"]}
@@ -647,7 +641,7 @@ class TestSearchConfigEntryApiStates:
             mock_request.return_value = self._api_payload()
 
             register_config_entry_tools(self.mock_mcp, self.config_path, self.ha_url, self.ha_token)
-            result = await self.mock_mcp._tools["search_config_entries"](state="setup_retry")
+            result = self.mock_mcp._tools["search_config_entries"](state="setup_retry")
 
         data = json.loads(result)
 
@@ -669,7 +663,7 @@ class TestSearchConfigEntryApiStates:
             mock_request.return_value = {"success": False, "error": "connection refused"}
 
             register_config_entry_tools(self.mock_mcp, self.config_path, self.ha_url, self.ha_token)
-            result = await self.mock_mcp._tools["search_config_entries"]()
+            result = self.mock_mcp._tools["search_config_entries"]()
 
         data = json.loads(result)
 
@@ -691,7 +685,7 @@ class TestSearchConfigEntryApiStates:
             mock_request.return_value = {"success": False, "error": "connection refused"}
 
             register_config_entry_tools(self.mock_mcp, self.config_path, self.ha_url, self.ha_token)
-            result = await self.mock_mcp._tools["search_config_entries"](state="loaded")
+            result = self.mock_mcp._tools["search_config_entries"](state="loaded")
 
         data = json.loads(result)
 
@@ -710,6 +704,6 @@ class TestSearchConfigEntryApiStates:
             mock_request.return_value = self._api_payload()
 
             register_config_entry_tools(self.mock_mcp, self.config_path, self.ha_url, self.ha_token)
-            await self.mock_mcp._tools["search_config_entries"](state="loaded")
+            self.mock_mcp._tools["search_config_entries"](state="loaded")
 
         mock_entities.assert_not_called()

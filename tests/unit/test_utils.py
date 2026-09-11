@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, Mock, patch
 import pytest
 
 from tests.fixtures import ENTITY_ID_LIGHT
+from tools.utils import make_ha_request
 
 
 class TestMakeHaRequest:
@@ -625,3 +626,142 @@ class TestBuildHistoryUrl:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+class TestCleartextTransportGuard:
+    """The bearer token is never sent over cleartext HTTP to non-local hosts."""
+
+    @pytest.fixture(autouse=True)
+    def _clear_resolution_cache(self):
+        from tools.utils import _host_resolves_to_private
+
+        _host_resolves_to_private.cache_clear()
+        yield
+        _host_resolves_to_private.cache_clear()
+
+    def _refused(self, url: str):
+        with patch("tools.utils.requests") as mock_requests:
+            result = make_ha_request(url, "unit-test-token", "/api/states")
+        mock_requests.get.assert_not_called()
+        return result
+
+    def test_public_ip_literal_refused(self):
+        result = self._refused("http://93.184.216.34:8123/api/states")
+
+        assert result["success"] is False
+        assert result["error_code"] == "INSECURE_TRANSPORT"
+
+    def test_private_ip_literal_allowed(self):
+        with patch("tools.utils.requests") as mock_requests:
+            mock_response = Mock()
+            mock_response.json.return_value = {}
+            mock_response.raise_for_status = Mock()
+            mock_requests.get.return_value = mock_response
+
+            result = make_ha_request("http://192.168.1.50:8123", "tok", "/api/states")
+
+        assert result["success"] is True
+
+    def test_loopback_literal_allowed(self):
+        with patch("tools.utils.requests") as mock_requests:
+            mock_response = Mock()
+            mock_response.json.return_value = {}
+            mock_response.raise_for_status = Mock()
+            mock_requests.get.return_value = mock_response
+
+            result = make_ha_request("http://127.0.0.1:8123", "tok", "/api/states")
+
+        assert result["success"] is True
+
+    def test_single_label_hostname_allowed_without_dns(self):
+        with patch("tools.utils.socket.getaddrinfo") as mock_getaddrinfo:
+            with patch("tools.utils.requests") as mock_requests:
+                mock_response = Mock()
+                mock_response.json.return_value = {}
+                mock_response.raise_for_status = Mock()
+                mock_requests.get.return_value = mock_response
+
+                result = make_ha_request("http://homeassistant:8123", "tok", "/api/states")
+
+        mock_getaddrinfo.assert_not_called()
+        assert result["success"] is True
+
+    def test_mdns_style_hostname_allowed(self):
+        with patch("tools.utils.requests") as mock_requests:
+            mock_response = Mock()
+            mock_response.json.return_value = {}
+            mock_response.raise_for_status = Mock()
+            mock_requests.get.return_value = mock_response
+
+            result = make_ha_request("http://homeassistant.local:8123", "tok", "/api/states")
+
+        assert result["success"] is True
+
+    def test_hostname_resolving_to_public_address_refused(self, monkeypatch):
+        import socket as socket_module
+
+        def fake_getaddrinfo(host, port, *args, **kwargs):
+            return [
+                (
+                    socket_module.AF_INET,
+                    socket_module.SOCK_STREAM,
+                    6,
+                    "",
+                    ("93.184.216.34", 0),
+                )
+            ]
+
+        monkeypatch.setattr("tools.utils.socket.getaddrinfo", fake_getaddrinfo)
+        result = self._refused("http://ha.example.com:8123/api/states")
+
+        assert result["success"] is False
+        assert result["error_code"] == "INSECURE_TRANSPORT"
+
+    def test_hostname_resolving_to_private_address_allowed(self, monkeypatch):
+        import socket as socket_module
+
+        def fake_getaddrinfo(host, port, *args, **kwargs):
+            return [
+                (
+                    socket_module.AF_INET,
+                    socket_module.SOCK_STREAM,
+                    6,
+                    "",
+                    ("10.0.0.8", 0),
+                )
+            ]
+
+        monkeypatch.setattr("tools.utils.socket.getaddrinfo", fake_getaddrinfo)
+
+        with patch("tools.utils.requests") as mock_requests:
+            mock_response = Mock()
+            mock_response.json.return_value = {}
+            mock_response.raise_for_status = Mock()
+            mock_requests.get.return_value = mock_response
+
+            result = make_ha_request("http://ha.example.com:8123", "tok", "/api/states")
+
+        assert result["success"] is True
+
+    def test_unresolvable_dotted_hostname_refused(self, monkeypatch):
+        def raising_getaddrinfo(host, port, *args, **kwargs):
+            raise socket_module.gaierror(8, "nodename nor servname provided")
+
+        import socket as socket_module
+
+        monkeypatch.setattr("tools.utils.socket.getaddrinfo", raising_getaddrinfo)
+        result = self._refused("http://unreachable.example.com:8123/api/states")
+
+        assert result["success"] is False
+        assert result["error_code"] == "INSECURE_TRANSPORT"
+
+    def test_https_always_allowed(self):
+        with patch("tools.utils.requests") as mock_requests:
+            mock_response = Mock()
+            mock_response.json.return_value = {}
+            mock_response.raise_for_status = Mock()
+            mock_requests.get.return_value = mock_response
+
+            result = make_ha_request("https://ha.example.com:8123", "tok", "/api/states")
+
+        assert result["success"] is True

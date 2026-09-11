@@ -16,16 +16,20 @@ CHANGES vs original:
 - All existing public functions preserved -- zero breaking changes
 """
 
+import ipaddress
 import json
 import logging
 import os
 import re
+import socket
 import subprocess
 import threading
 import time
 from datetime import datetime
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 import requests
 
@@ -116,6 +120,50 @@ def get_registry_cache_stats() -> dict[str, Any]:
 # =============================================================================
 
 
+def _is_local_destination(host: str) -> bool:
+    """Classify a cleartext destination as a trusted local address.
+
+    Local means loopback, RFC1918/link-local/unique-local, or a single-label
+    (Docker-style) or mDNS-style hostname. Literal IPs are classified
+    directly; hostnames are resolved and every returned address must be
+    private, because a mixed answer could route the token to a public host.
+
+    Args:
+        host: Hostname or literal IP parsed from the configured HA URL.
+
+    Returns:
+        True only when cleartext transmission stays inside trusted local
+        address space.
+    """
+    if not host:
+        return False
+
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        address = None
+    if address is not None:
+        return address.is_private
+
+    hostname = host.lower().rstrip(".")
+    if "." not in hostname:
+        return True
+    if hostname.split(".")[-1] in {"local", "lan", "home", "internal"}:
+        return True
+
+    return _host_resolves_to_private(hostname)
+
+
+@lru_cache(maxsize=64)
+def _host_resolves_to_private(hostname: str) -> bool:
+    try:
+        infos = socket.getaddrinfo(hostname, None)
+    except (OSError, UnicodeError):
+        return False
+    addresses = {ipaddress.ip_address(info[4][0]) for info in infos}
+    return bool(addresses) and all(addr.is_private for addr in addresses)
+
+
 def make_ha_request(
     ha_url: str | None,
     ha_token: str | None,
@@ -154,6 +202,18 @@ def make_ha_request(
         raise ValueError(
             "POST retries require operation-specific handling and are not supported here"
         )
+
+    parsed_url = urlparse(ha_url)
+    if parsed_url.scheme == "http" and not _is_local_destination(parsed_url.hostname or ""):
+        return {
+            "success": False,
+            "error": (
+                "refusing to send the bearer token over cleartext HTTP to a "
+                f"non-local host ({parsed_url.hostname}); use HTTPS or a local address"
+            ),
+            "error_code": "INSECURE_TRANSPORT",
+            "retryable": False,
+        }
 
     url = f"{ha_url}{endpoint}"
     headers = {

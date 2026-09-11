@@ -9,6 +9,7 @@ from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 
@@ -320,3 +321,158 @@ def test_recorded_real_home_assistant_rest_and_websocket_contract(
     assert len(unavailable) == 1
     assert unavailable[0]["source"].startswith("todo_items:")
     assert unavailable[0]["requested"] == "todo/item/list"
+
+
+_SUPERVISOR_CASSETTE = json.loads(
+    Path(__file__)
+    .with_name("cassettes")
+    .joinpath("recorded_supervisor_and_config_entries.json")
+    .read_text(encoding="utf-8")
+)
+
+
+class _SupervisorCassetteHandler(BaseHTTPRequestHandler):
+    """Replay the recorded config-entry and Supervisor proxy surfaces."""
+
+    def do_GET(self) -> None:  # noqa: N802
+        if self.headers.get("Authorization") != "Bearer upstream-contract-token":
+            self.send_response(401)
+            self.end_headers()
+            return
+        path = self.path.split("?", 1)[0]
+        if path in _SUPERVISOR_CASSETTE["not_found"]:
+            self.send_response(404)
+            self.end_headers()
+            self.wfile.write(b"404: Not Found")
+            return
+        if path in _SUPERVISOR_CASSETTE["rest"]:
+            payload = _SUPERVISOR_CASSETTE["rest"][path]
+        else:
+            self.send_response(404)
+            self.end_headers()
+            return
+        if path in _SUPERVISOR_CASSETTE.get("text/plain_paths", []):
+            body = payload.encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain; charset=utf-8")
+        else:
+            body = json.dumps(payload, default=str).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, format: str, *args: Any) -> None:
+        return
+
+
+def test_recorded_supervisor_proxy_and_config_entry_state_contract(
+    tmp_path: Path,
+) -> None:
+    """The tools consume the recorded config-entry and Supervisor surfaces.
+
+    Covers the two newly supported API surfaces end to end without mocks:
+    real entry states (including setup_retry) flow from the recorded REST
+    payload, and the Supervisor proxy serves ANSI-bearing plain text for the
+    current boot while the previous boot maps to journal offset -1.
+    """
+    import os
+
+    from tools.config_entries import _do_search_config_entries
+    from tools.logs import _acquire_log_lines, _read_supervisor_core_logs
+
+    storage = tmp_path / ".storage"
+    storage.mkdir(parents=True)
+    api_entries = _SUPERVISOR_CASSETTE["rest"]["/api/config/config_entries/entry"]
+    (storage / "core.config_entries").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "minor_version": 3,
+                "key": "core.config_entries",
+                "data": {
+                    "entries": [
+                        {"entry_id": entry["entry_id"], "domain": entry["domain"]}
+                        for entry in api_entries[:3]
+                        + [e for e in api_entries if e.get("state") == "setup_retry"]
+                    ]
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with _recorded_http_server(_SupervisorCassetteHandler) as ha_url:
+        result = json.loads(
+            _do_search_config_entries(
+                domain=None,
+                title=None,
+                state=None,
+                disabled_only=False,
+                with_entities=False,
+                summary_only=False,
+                ha_url=ha_url,
+                ha_token="upstream-contract-token",
+                config_path=str(tmp_path),
+            )
+        )
+        assert result["success"] is True
+        assert result["state_source"] == "api"
+        assert all(entry.get("state") for entry in result["entries"])
+
+        filtered = json.loads(
+            _do_search_config_entries(
+                domain=None,
+                title=None,
+                state="setup_retry",
+                disabled_only=False,
+                with_entities=False,
+                summary_only=False,
+                ha_url=ha_url,
+                ha_token="upstream-contract-token",
+                config_path=str(tmp_path),
+            )
+        )
+        assert filtered["success"] is True
+        assert filtered["matched_count"] >= 1
+        assert all(entry.get("state") == "setup_retry" for entry in filtered["entries"])
+
+        with patch.dict(os.environ, {}):
+            current_lines, current_meta = _acquire_log_lines(
+                "home-assistant.log",
+                str(tmp_path / "missing-config"),
+                ha_url,
+                "upstream-contract-token",
+            )
+        assert current_meta["source"] == "supervisor_proxy"
+        assert current_lines is not None
+        assert "\x1b" not in "".join(current_lines)
+        assert "Generic client connect called" in "".join(current_lines)
+
+        previous_lines, previous_meta = _acquire_log_lines(
+            "home-assistant.log.1",
+            str(tmp_path / "missing-config"),
+            ha_url,
+            "upstream-contract-token",
+        )
+        assert previous_meta["source"] == "supervisor_proxy"
+        assert previous_lines is not None
+        assert "Previous boot failure" in "".join(previous_lines)
+
+        current_boot_is_not_previous = _read_supervisor_core_logs(
+            ha_url,
+            "upstream-contract-token",
+            None,
+            previous_boot=False,
+        )
+        assert current_boot_is_not_previous is not None
+        requested_previous = _read_supervisor_core_logs(
+            ha_url,
+            "upstream-contract-token",
+            None,
+            previous_boot=True,
+        )
+        assert requested_previous is not None
+        assert "Previous boot failure" in "".join(requested_previous)
+        assert "Generic client connect called" not in "".join(requested_previous)

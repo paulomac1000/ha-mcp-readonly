@@ -402,13 +402,17 @@ class TestGetLogInsightsApiFallback:
         register_log_tools(mock_mcp, config_path, ha_url="http://ha:8123", ha_token="test")
 
         with patch("tools.utils.make_ha_request") as mock_request:
-            mock_request.return_value = {
-                "success": True,
-                "data": (
-                    "2099-01-01 12:01:00.000 ERROR (MainThread) [comp] API fallback error\n"
-                    "2099-01-01 12:02:00.000 WARNING (MainThread) [comp2] Test warning\n"
-                ),
-            }
+            # First call (Supervisor proxy) fails, second (error_log) succeeds
+            mock_request.side_effect = [
+                {"success": False, "error": "404: Not Found"},
+                {
+                    "success": True,
+                    "data": (
+                        "2099-01-01 12:01:00.000 ERROR (MainThread) [comp] API fallback error\n"
+                        "2099-01-01 12:02:00.000 WARNING (MainThread) [comp2] Test warning\n"
+                    ),
+                },
+            ]
             data = json.loads(mock_mcp._tools["get_log_insights"](hours=1))
             assert data["success"] is True
             assert data["_meta"]["source"] == "api_fallback"
@@ -472,9 +476,9 @@ class TestSupervisorLogFallback:
         register_log_tools(mock_mcp, str(tmp_path), ha_url=ha_url, ha_token=ha_token)
 
         ansi_payload = (
-            "\x1b[32m2026-09-02 22:03:18.087 WARNING (MainThread) "
-            "[habluetooth.wrappers] BleakClient.connect() called\x1b[0m\n"
-            "2026-09-02 22:03:19.000 ERROR (MainThread) [mqtt] Connection failed\n"
+            "\x1b[32m2026-09-01 12:00:00.000 WARNING (MainThread) "
+            "[generic.component] Generic client connect called\x1b[0m\n"
+            "2026-09-01 12:00:01.000 ERROR (MainThread) [generic.component] Connection failed\n"
         )
         with patch("tools.utils.make_ha_request") as mock_request:
             mock_request.return_value = {"success": True, "data": ansi_payload}
@@ -483,7 +487,7 @@ class TestSupervisorLogFallback:
         assert data["success"] is True
         assert data["source"] == "supervisor_proxy"
         assert "\x1b" not in data["logs"]
-        assert "BleakClient.connect()" in data["logs"]
+        assert "Generic client connect" in data["logs"]
 
     def test_recent_logs_request_lines_parameter(self, mock_mcp, tmp_path, ha_url, ha_token):
         """The current-boot proxy request carries the requested line budget."""
@@ -497,7 +501,7 @@ class TestSupervisorLogFallback:
         assert endpoint == "/api/hassio/core/logs?lines=84"
 
     def test_previous_logs_use_boots_endpoint(self, mock_mcp, tmp_path, ha_url, ha_token):
-        """get_previous_logs maps home-assistant.log.1 to the previous-boot proxy."""
+        """get_previous_logs maps home-assistant.log.1 to the previous boot (-1)."""
         register_log_tools(mock_mcp, str(tmp_path), ha_url=ha_url, ha_token=ha_token)
 
         with patch("tools.utils.make_ha_request") as mock_request:
@@ -505,7 +509,7 @@ class TestSupervisorLogFallback:
             data = json.loads(mock_mcp._tools["get_previous_logs"](lines=10))
 
         endpoint = mock_request.call_args[0][2]
-        assert endpoint == "/api/hassio/core/logs/boots/0"
+        assert endpoint == "/api/hassio/core/logs/boots/-1"
         assert data["source"] == "supervisor_proxy"
 
     def test_supervisor_404_keeps_explicit_error(self, mock_mcp, tmp_path, ha_url, ha_token):
@@ -541,8 +545,8 @@ class TestSupervisorLogFallback:
         register_log_tools(mock_mcp, str(tmp_path), ha_url=ha_url, ha_token=ha_token)
 
         payload = (
-            "2026-09-02 22:03:18.087 ERROR (MainThread) [mqtt] Connection failed\n"
-            "2026-09-02 22:03:19.000 WARNING (MainThread) [mqtt] Retrying\n"
+            "2026-09-01 12:00:00.000 ERROR (MainThread) [generic.component] Connection failed\n"
+            "2026-09-01 12:00:01.000 WARNING (MainThread) [generic.component] Retrying\n"
         )
         with patch("tools.utils.make_ha_request") as mock_request:
             mock_request.return_value = {"success": True, "data": payload}
@@ -558,12 +562,12 @@ class TestSupervisorLogFallback:
         with patch("tools.utils.make_ha_request") as mock_request:
             mock_request.return_value = {
                 "success": True,
-                "data": "2026-09-02 22:03:18 ERROR (MainThread) [mqtt] bleak exploded\n",
+                "data": "2026-09-01 12:00:00 ERROR (MainThread) [generic.component] generic search marker\n",
             }
-            data = json.loads(mock_mcp._tools["search_logs"](search_term="bleak"))
+            data = json.loads(mock_mcp._tools["search_logs"](search_term="generic search marker"))
 
         assert data["total_found"] == 1
-        assert "bleak" in data["results"][0]["content"]
+        assert "generic search marker" in data["results"][0]["content"]
 
     def test_no_credentials_keeps_file_path_error(self, mock_mcp, config_path):
         """Without credentials there is no proxy attempt and the error stays explicit."""

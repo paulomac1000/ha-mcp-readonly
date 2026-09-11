@@ -1481,3 +1481,23 @@ class TestSummary:
         print(f"Status: {health.get('summary', {}).get('status', 'N/A')}")
         print(f"Unavailable: {health.get('summary', {}).get('unavailable_count', 'N/A')}")
         print("=" * 60)
+
+    def test_search_config_entries_setup_retry_filter(self, real_mcp):
+        """Filtering by the real setup_retry state returns only retrying entries."""
+        result = real_mcp.call_tool("search_config_entries", state="setup_retry")
+        data = json.loads(result)
+
+        assert data["success"] is True
+        assert data.get("state_source") == "api"
+        assert all(entry.get("state") == "setup_retry" for entry in data.get("entries", []))
+        print(f"\n[OK] search_config_entries setup_retry: {data.get('matched_count')} entries")
+
+    def test_search_config_entries_state_counts_are_api_backed(self, real_mcp):
+        """summary_only reports per-state counts derived from the API."""
+        result = real_mcp.call_tool("search_config_entries", summary_only=True)
+        data = json.loads(result)
+
+        assert data["success"] is True
+        if data.get("state_source") == "api":
+            assert isinstance(data.get("state_counts"), dict)
+            assert sum(data["state_counts"].values()) == data["matched_count"]
