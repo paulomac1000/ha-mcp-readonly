@@ -291,13 +291,25 @@ class TestSearchConfigEntries:
 
     @pytest.mark.asyncio
     async def test_with_summary_only(self):
-        """summary_only=True should include state field in result entries."""
+        """summary_only=True reports real API state counts, never guesses."""
         with ExitStack() as stack:
             mock_load = stack.enter_context(patch("tools.config_entries.load_registry"))
             mock_load.side_effect = lambda name, path: self.mock_registry_data.get(name, {})
 
             mock_entities = stack.enter_context(patch("tools.config_entries.get_registry_entities"))
             mock_entities.return_value = []
+
+            mock_request = stack.enter_context(patch("tools.config_entries.make_ha_request"))
+            mock_request.return_value = {
+                "success": True,
+                "data": [
+                    {"entry_id": "sun_entry_001", "state": "loaded"},
+                    {"entry_id": "e01182bae2f8b20605c8317f4623d1e9", "state": "loaded"},
+                    {"entry_id": "gree_disabled_entry_123", "state": "not_loaded"},
+                    {"entry_id": "mqtt_entry_001", "state": "loaded"},
+                    {"entry_id": "tuya_entry_456", "state": "loaded"},
+                ],
+            }
 
             register_config_entry_tools(self.mock_mcp, self.config_path, self.ha_url, self.ha_token)
             result = await self.mock_mcp._tools["search_config_entries"](
@@ -308,8 +320,44 @@ class TestSearchConfigEntries:
 
         assert data["success"] is True
         assert data["matched_count"] == 1
-        assert "state" in data["entries"][0]
-        assert data["entries"][0]["state"] in ("loaded", "not_loaded", "unknown")
+        assert data["state_source"] == "api"
+        assert data["entries"][0]["state"] == "loaded"
+
+    @pytest.mark.asyncio
+    async def test_summary_only_reports_real_state_counts(self):
+        """summary_only counts real API states instead of the old loaded/not_loaded guess."""
+        synthetic_entries = [
+            {
+                "entry_id": f"entry_{i:03d}",
+                "domain": "mqtt",
+                "title": f"Entry {i}",
+                "disabled_by": None,
+            }
+            for i in range(60)
+        ]
+        with ExitStack() as stack:
+            mock_entries = stack.enter_context(patch("tools.config_entries._get_config_entries"))
+            mock_entries.return_value = synthetic_entries
+
+            mock_request = stack.enter_context(patch("tools.config_entries.make_ha_request"))
+            mock_request.return_value = {
+                "success": True,
+                "data": [
+                    {"entry_id": f"entry_{i:03d}", "state": "loaded" if i % 3 else "setup_retry"}
+                    for i in range(60)
+                ],
+            }
+
+            register_config_entry_tools(self.mock_mcp, self.config_path, self.ha_url, self.ha_token)
+            result = await self.mock_mcp._tools["search_config_entries"](summary_only=True)
+
+        data = json.loads(result)
+
+        assert data["success"] is True
+        assert data["state_source"] == "api"
+        assert data["state_counts"]["loaded"] == 40
+        assert data["state_counts"]["setup_retry"] == 20
+        assert "not_loaded" not in data["state_counts"]
 
 
 # ─────────────────────────────────────────────────────────────
@@ -527,3 +575,141 @@ class TestListConfigEntryDomains:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+# ─────────────────────────────────────────────────────────────
+# TEST: real config entry states from the API (issue #32)
+# ─────────────────────────────────────────────────────────────
+class TestSearchConfigEntryApiStates:
+    """Entry states come from the REST API, never from a storage-derived guess."""
+
+    @pytest.fixture(autouse=True)
+    def setup(self, mock_mcp, config_path, ha_url, ha_token, mock_registry_data):
+        """Setup test fixtures."""
+        self.mock_mcp = mock_mcp
+        self.config_path = config_path
+        self.ha_url = ha_url
+        self.ha_token = ha_token
+        self.mock_registry_data = mock_registry_data
+
+    API_ENTRY_STATES = {
+        "sun_entry_001": "loaded",
+        "e01182bae2f8b20605c8317f4623d1e9": "loaded",
+        "gree_disabled_entry_123": "not_loaded",
+        "tuya_entry_456": "setup_retry",
+    }
+
+    def _api_payload(self):
+        return {
+            "success": True,
+            "data": [
+                {"entry_id": entry_id, "state": state}
+                for entry_id, state in self.API_ENTRY_STATES.items()
+            ],
+        }
+
+    @pytest.mark.asyncio
+    async def test_state_comes_from_api_not_storage_guess(self):
+        """A retrying integration with stale entities reports setup_retry, not loaded."""
+        with ExitStack() as stack:
+            mock_load = stack.enter_context(patch("tools.config_entries.load_registry"))
+            mock_load.side_effect = lambda name, path: self.mock_registry_data.get(name, {})
+
+            mock_entities = stack.enter_context(patch("tools.config_entries.get_registry_entities"))
+            mock_entities.return_value = [
+                {"entity_id": "sensor.stale", "config_entry_id": "tuya_entry_456"}
+            ]
+
+            mock_request = stack.enter_context(patch("tools.config_entries.make_ha_request"))
+            mock_request.return_value = self._api_payload()
+
+            register_config_entry_tools(self.mock_mcp, self.config_path, self.ha_url, self.ha_token)
+            result = await self.mock_mcp._tools["search_config_entries"]()
+
+        data = json.loads(result)
+        by_id = {e["entry_id"]: e for e in data["entries"]}
+
+        assert data["state_source"] == "api"
+        assert by_id["tuya_entry_456"]["state"] == "setup_retry"
+        assert by_id["gree_disabled_entry_123"]["state"] == "not_loaded"
+
+    @pytest.mark.asyncio
+    async def test_state_filter_matches_real_retry_state(self):
+        """state=setup_retry finds the retrying entry (previously returned zero)."""
+        with ExitStack() as stack:
+            mock_load = stack.enter_context(patch("tools.config_entries.load_registry"))
+            mock_load.side_effect = lambda name, path: self.mock_registry_data.get(name, {})
+
+            mock_entities = stack.enter_context(patch("tools.config_entries.get_registry_entities"))
+            mock_entities.return_value = []
+
+            mock_request = stack.enter_context(patch("tools.config_entries.make_ha_request"))
+            mock_request.return_value = self._api_payload()
+
+            register_config_entry_tools(self.mock_mcp, self.config_path, self.ha_url, self.ha_token)
+            result = await self.mock_mcp._tools["search_config_entries"](state="setup_retry")
+
+        data = json.loads(result)
+
+        assert data["success"] is True
+        assert data["matched_count"] == 1
+        assert data["entries"][0]["entry_id"] == "tuya_entry_456"
+
+    @pytest.mark.asyncio
+    async def test_state_omitted_when_api_unreachable(self):
+        """Without the API the state field is left out instead of guessed."""
+        with ExitStack() as stack:
+            mock_load = stack.enter_context(patch("tools.config_entries.load_registry"))
+            mock_load.side_effect = lambda name, path: self.mock_registry_data.get(name, {})
+
+            mock_entities = stack.enter_context(patch("tools.config_entries.get_registry_entities"))
+            mock_entities.return_value = []
+
+            mock_request = stack.enter_context(patch("tools.config_entries.make_ha_request"))
+            mock_request.return_value = {"success": False, "error": "connection refused"}
+
+            register_config_entry_tools(self.mock_mcp, self.config_path, self.ha_url, self.ha_token)
+            result = await self.mock_mcp._tools["search_config_entries"]()
+
+        data = json.loads(result)
+
+        assert data["success"] is True
+        assert data["state_source"] == "unavailable"
+        assert all("state" not in entry for entry in data["entries"])
+
+    @pytest.mark.asyncio
+    async def test_state_filter_fails_closed_when_api_unreachable(self):
+        """A state filter without API access fails explicitly instead of guessing."""
+        with ExitStack() as stack:
+            mock_load = stack.enter_context(patch("tools.config_entries.load_registry"))
+            mock_load.side_effect = lambda name, path: self.mock_registry_data.get(name, {})
+
+            mock_entities = stack.enter_context(patch("tools.config_entries.get_registry_entities"))
+            mock_entities.return_value = []
+
+            mock_request = stack.enter_context(patch("tools.config_entries.make_ha_request"))
+            mock_request.return_value = {"success": False, "error": "connection refused"}
+
+            register_config_entry_tools(self.mock_mcp, self.config_path, self.ha_url, self.ha_token)
+            result = await self.mock_mcp._tools["search_config_entries"](state="loaded")
+
+        data = json.loads(result)
+
+        assert data["success"] is False
+        assert "unreachable" in data["error"]
+
+    @pytest.mark.asyncio
+    async def test_state_filter_does_not_load_entity_registry(self):
+        """Filtering by real API state must not pay for registry entity lookups."""
+        with ExitStack() as stack:
+            mock_load = stack.enter_context(patch("tools.config_entries.load_registry"))
+            mock_load.side_effect = lambda name, path: self.mock_registry_data.get(name, {})
+
+            mock_entities = stack.enter_context(patch("tools.config_entries.get_registry_entities"))
+            mock_request = stack.enter_context(patch("tools.config_entries.make_ha_request"))
+            mock_request.return_value = self._api_payload()
+
+            register_config_entry_tools(self.mock_mcp, self.config_path, self.ha_url, self.ha_token)
+            await self.mock_mcp._tools["search_config_entries"](state="loaded")
+
+        mock_entities.assert_not_called()

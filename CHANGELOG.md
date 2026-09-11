@@ -16,6 +16,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Fixed
+- The log tool family (`analyze_log_errors`, `search_logs`, `get_recent_logs`, `get_previous_logs`, `get_log_timeline`, `get_log_insights`, `get_startup_errors`, `get_component_logs`) works again on HA OS and Supervised installs where Home Assistant 2025.11+ no longer writes `home-assistant.log`: when the file is absent, tools read the same records through the Supervisor proxy (`/api/hassio/core/logs`, previous boot via `/api/hassio/core/logs/boots/0`) before falling back to `/api/error_log`, and Supervisor ANSI colour codes are stripped before parsing. Core/Container installs (Supervisor answers 404) keep the explicit file-path error. The tool registrations now also pass the configured Home Assistant credentials to the log handlers, which previously never received them, leaving every API fallback dead.
+- `search_config_entries` reports the real per-entry `state` from `GET /api/config/config_entries/entry` instead of deriving a guess from `.storage` and the entity registry, which mislabeled a failed (`setup_retry`) integration as `loaded` and changed the reported state with the `with_entities` flag. When the API is unreachable the `state` field is omitted rather than guessed, a `state` filter fails explicitly, `summary_only` reports honest per-state counts, and state filtering no longer performs per-entry entity lookups.
+
 ## [2.1.0] - 2026-09-10
 
 ### Added

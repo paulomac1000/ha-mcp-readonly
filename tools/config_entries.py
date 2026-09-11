@@ -120,6 +120,29 @@ def _get_entry_state(
     return {"state": "loaded", "reason": "All entities available"}
 
 
+def _fetch_api_entry_states(ha_url: str, ha_token: str) -> dict[str, str] | None:
+    """Fetch the real per-entry states from the Home Assistant REST API.
+
+    ``GET /api/config/config_entries/entry`` is the only source of true entry
+    states; ``.storage/core.config_entries`` carries no ``state`` field at all.
+
+    Returns:
+        Mapping of ``entry_id`` to state, or ``None`` when the API is
+        unreachable so callers can distinguish "no state available" from a
+        real state instead of guessing.
+    """
+    result = make_ha_request(ha_url, ha_token, "/api/config/config_entries/entry", timeout=30)
+    if not result.get("success") or not isinstance(result.get("data"), list):
+        return None
+    states: dict[str, str] = {}
+    for entry in result["data"]:
+        entry_id = entry.get("entry_id")
+        state = entry.get("state")
+        if isinstance(entry_id, str) and isinstance(state, str):
+            states[entry_id] = state
+    return states
+
+
 # =============================================================================
 # DO FUNCTIONS
 # =============================================================================
@@ -217,9 +240,18 @@ def _do_search_config_entries(
 ) -> str:
     """Search config entries with optional filters."""
     entries = _get_config_entries(config_path)
-    results = []
 
-    all_entities = get_registry_entities(config_path) if with_entities or state else []
+    api_states = _fetch_api_entry_states(ha_url, ha_token)
+    state_source = "api" if api_states is not None else "unavailable"
+
+    if state and api_states is None:
+        return _error_response(
+            "state filter requires the Home Assistant API, which is unreachable; "
+            "stored config entries carry no real state field"
+        )
+
+    all_entities = get_registry_entities(config_path) if with_entities else []
+    results = []
 
     for entry in entries:
         if domain and entry.get("domain") != domain.lower():
@@ -231,36 +263,35 @@ def _do_search_config_entries(
         if disabled_only and not entry.get("disabled_by"):
             continue
 
-        entry_entities = [
-            e for e in all_entities if e.get("config_entry_id") == entry.get("entry_id")
-        ]
-        entity_count = len(entry_entities) if (with_entities or state) and entry_entities else None
+        entry_id = entry.get("entry_id")
+        if not isinstance(entry_id, str):
+            continue
 
-        resolved_state: str | None = None
-        if state:
-            state_info = _get_entry_state(entry, entry_entities, ha_url, ha_token)
-            resolved_state = state_info.get("state")
-            if resolved_state != state:
-                continue
+        # Report only the real API state; a stored entry has no state field,
+        # and deriving one from the entity registry guesses wrong in both
+        # directions (issue #32). When the API is unreachable the field is
+        # omitted instead of guessed.
+        resolved_state: str | None = api_states.get(entry_id) if api_states else None
 
-        if resolved_state is None:
-            if entry.get("disabled_by"):
-                resolved_state = "not_loaded"
-            elif entry_entities:
-                resolved_state = "loaded"
-            else:
-                resolved_state = "unknown"
+        if state and resolved_state != state:
+            continue
+
+        entity_count = None
+        if with_entities:
+            entity_count = sum(1 for e in all_entities if e.get("config_entry_id") == entry_id)
 
         result_entry = {
-            "entry_id": entry.get("entry_id"),
+            "entry_id": entry_id,
             "domain": entry.get("domain"),
             "title": entry.get("title"),
             "source": entry.get("source"),
-            "state": resolved_state,
             "disabled_by": entry.get("disabled_by"),
             "created_at": entry.get("created_at"),
             "modified_at": entry.get("modified_at"),
         }
+
+        if resolved_state is not None:
+            result_entry["state"] = resolved_state
 
         if entity_count is not None:
             result_entry["entities_count"] = entity_count
@@ -268,8 +299,11 @@ def _do_search_config_entries(
         results.append(result_entry)
 
     if summary_only and len(results) > 50:
-        loaded_count = sum(1 for r in results if r.get("state") != "not_loaded")
-        not_loaded_count = len(results) - loaded_count
+        state_counts: dict[str, int] = {}
+        for r in results:
+            entry_state = r.get("state")
+            if isinstance(entry_state, str):
+                state_counts[entry_state] = state_counts.get(entry_state, 0) + 1
         return _success_response(
             {
                 "filters": {
@@ -281,8 +315,8 @@ def _do_search_config_entries(
                 },
                 "total_entries": len(entries),
                 "matched_count": len(results),
-                "loaded": loaded_count,
-                "not_loaded": not_loaded_count,
+                "state_source": state_source,
+                "state_counts": state_counts,
                 "sample_entries": results[:20],
             }
         )
@@ -296,6 +330,7 @@ def _do_search_config_entries(
                 "disabled_only": disabled_only,
                 "summary_only": summary_only,
             },
+            "state_source": state_source,
             "total_entries": len(entries),
             "matched_count": len(results),
             "entries": results[:50],

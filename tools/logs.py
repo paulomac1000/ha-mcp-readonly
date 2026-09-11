@@ -120,6 +120,69 @@ def _read_log_file(
         return None, {"source": "log_file", "truncated": False, "max_lines": effective_max}
 
 
+_ANSI_ESCAPE_PATTERN = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
+
+
+def _strip_ansi_escape_codes(text: str) -> str:
+    """Remove ANSI colour escape sequences from Supervisor log output."""
+    return _ANSI_ESCAPE_PATTERN.sub("", text)
+
+
+def _read_supervisor_core_logs(
+    ha_url: str, ha_token: str, max_lines: int | None, previous_boot: bool = False
+) -> list[str] | None:
+    """Read Home Assistant core logs through the Supervisor proxy.
+
+    HA OS and Supervised installs stopped writing ``home-assistant.log`` in
+    Home Assistant 2025.11 (issue #31); the Supervisor proxy serves the same
+    records with a plain long-lived access token. Core and Container installs
+    have no Supervisor and answer 404, which maps to ``None``.
+    """
+    from tools.utils import make_ha_request
+
+    effective_max = 10000 if max_lines is None else max_lines
+    if previous_boot:
+        endpoint = "/api/hassio/core/logs/boots/0"
+    else:
+        endpoint = f"/api/hassio/core/logs?lines={effective_max}"
+    result = make_ha_request(ha_url, ha_token, endpoint, timeout=30)
+    if not result.get("success") or not isinstance(result.get("data"), str):
+        return None
+    text = _strip_ansi_escape_codes(result["data"])
+    lines = [line + "\n" for line in text.splitlines()]
+    return lines[-effective_max:]
+
+
+def _acquire_log_lines(
+    log_file: str,
+    config_path: str,
+    ha_url: str,
+    ha_token: str,
+    max_lines: int | None = None,
+) -> tuple[list[str] | None, dict[str, object]]:
+    """Read log lines from the file, falling back to the Supervisor proxy.
+
+    Order: log file first, so installs that still write it keep working
+    unchanged; then the Supervisor proxy for HA OS/Supervised installs whose
+    logs live only in the systemd journal.
+    """
+    lines, meta = _read_log_file(log_file, config_path, max_lines)
+    if lines:
+        return lines, meta
+    if ha_url and ha_token:
+        supervisor_lines = _read_supervisor_core_logs(
+            ha_url, ha_token, max_lines, previous_boot=log_file != "home-assistant.log"
+        )
+        if supervisor_lines:
+            effective_max = 10000 if max_lines is None else max_lines
+            return supervisor_lines, {
+                "source": "supervisor_proxy",
+                "truncated": len(supervisor_lines) >= effective_max,
+                "max_lines": effective_max,
+            }
+    return None, meta
+
+
 def _extract_entities(text: str) -> set[str]:
     """Extract all entity ids from text."""
     return set(_ENTITY_PATTERN.findall(text))
@@ -201,8 +264,8 @@ def _do_get_log_insights(
         return cached  # type: ignore[no-any-return]
 
     hours = min(max(int(hours), 1), 24)
-    log_lines, file_meta = _read_log_file("home-assistant.log", config_path)
-    api_fallback_used = False
+    log_lines, file_meta = _acquire_log_lines("home-assistant.log", config_path, ha_url, ha_token)
+    api_fallback_used = bool(log_lines) and file_meta.get("source") == "supervisor_proxy"
 
     if not log_lines and ha_url and ha_token:
         from tools.utils import make_ha_request
@@ -450,10 +513,15 @@ def _do_analyze_log_errors(
     max_results = int(max_results)
 
     log_file = "home-assistant.log" if log_source == "current" else "home-assistant.log.1"
-    log_lines, _ = _read_log_file(log_file, config_path)
+    log_lines, _ = _acquire_log_lines(log_file, config_path, ha_url, ha_token)
 
     if not log_lines:
-        return {"error": f"{log_file} not found"}
+        return {
+            "error": (
+                f"{log_file} not found and the Supervisor log proxy "
+                "(api/hassio/core/logs) is unavailable"
+            )
+        }
 
     errors = []
     warnings = []
@@ -568,10 +636,12 @@ def _do_get_recent_logs(
     ha_token: str = "",
 ) -> dict[str, Any]:
     lines = min(int(lines), 500)
-    log_lines, _ = _read_log_file("home-assistant.log", config_path, lines * 2)
+    log_lines, log_meta = _acquire_log_lines(
+        "home-assistant.log", config_path, ha_url, ha_token, lines * 2
+    )
 
     if not log_lines:
-        return {"error": "home-assistant.log not found"}
+        return {"error": "home-assistant.log not found and the Supervisor log proxy is unavailable"}
 
     if level.lower() != "all":
         level_upper = level.upper()
@@ -582,6 +652,7 @@ def _do_get_recent_logs(
         "lines_requested": lines,
         "lines_returned": len(result_lines),
         "level_filter": level,
+        "source": log_meta.get("source"),
         "logs": "".join(result_lines),
     }
 
@@ -594,10 +665,15 @@ def _do_get_previous_logs(
     ha_token: str = "",
 ) -> dict[str, Any]:
     lines = min(int(lines), 500)
-    log_lines, _ = _read_log_file("home-assistant.log.1", config_path, lines * 2)
+    log_lines, log_meta = _acquire_log_lines(
+        "home-assistant.log.1", config_path, ha_url, ha_token, lines * 2
+    )
 
     if not log_lines:
-        return {"error": "home-assistant.log.1 not found"}
+        return {
+            "error": "home-assistant.log.1 not found and the previous-boot Supervisor "
+            "log proxy (api/hassio/core/logs/boots/0) is unavailable"
+        }
 
     if level.lower() != "all":
         level_upper = level.upper()
@@ -608,6 +684,7 @@ def _do_get_previous_logs(
         "lines_requested": lines,
         "lines_returned": len(result_lines),
         "level_filter": level,
+        "source": log_meta.get("source"),
         "logs": "".join(result_lines),
     }
 
@@ -638,7 +715,7 @@ def _do_search_logs(
         log_files.append(("previous", "home-assistant.log.1"))
 
     for source_name, log_file in log_files:
-        log_lines, _ = _read_log_file(log_file, config_path)
+        log_lines, _ = _acquire_log_lines(log_file, config_path, ha_url, ha_token)
 
         if not log_lines:
             continue
@@ -696,7 +773,7 @@ def _do_get_component_logs(
         log_files.append(("previous", "home-assistant.log.1"))
 
     for source_name, log_file in log_files:
-        log_lines, _ = _read_log_file(log_file, config_path)
+        log_lines, _ = _acquire_log_lines(log_file, config_path, ha_url, ha_token)
 
         if not log_lines:
             continue
@@ -750,10 +827,10 @@ def _do_get_startup_errors(
     ha_url: str = "",
     ha_token: str = "",
 ) -> dict[str, Any]:
-    log_lines, _ = _read_log_file("home-assistant.log", config_path)
+    log_lines, _ = _acquire_log_lines("home-assistant.log", config_path, ha_url, ha_token)
 
     if not log_lines:
-        return {"error": "home-assistant.log not found"}
+        return {"error": "home-assistant.log not found and the Supervisor log proxy is unavailable"}
 
     startup_logs = []
     found_startup = False
@@ -821,10 +898,15 @@ def _do_get_log_timeline(
         hours_int = 1
 
     log_file = "home-assistant.log" if log_source == "current" else "home-assistant.log.1"
-    log_lines, _ = _read_log_file(log_file, config_path)
+    log_lines, _ = _acquire_log_lines(log_file, config_path, ha_url, ha_token)
 
     if not log_lines:
-        return {"error": f"{log_file} not found"}
+        return {
+            "error": (
+                f"{log_file} not found and the Supervisor log proxy "
+                "(api/hassio/core/logs) is unavailable"
+            )
+        }
 
     cutoff_time = datetime.now(UTC) - timedelta(hours=hours_int)
     timeline = []
@@ -939,6 +1021,8 @@ def register_log_tools(  # type: ignore[no-untyped-def]
                 log_source=log_source,
                 max_results=max_results,
                 config_path=config_path,
+                ha_url=ha_url,
+                ha_token=ha_token,
             )
             if isinstance(result, dict) and "error" in result:
                 return _error_response(result["error"])
@@ -959,7 +1043,13 @@ def register_log_tools(  # type: ignore[no-untyped-def]
             the raw log content string.
         """
         try:
-            result = _do_get_recent_logs(lines=lines, level=level, config_path=config_path)
+            result = _do_get_recent_logs(
+                lines=lines,
+                level=level,
+                config_path=config_path,
+                ha_url=ha_url,
+                ha_token=ha_token,
+            )
             if isinstance(result, dict) and "error" in result:
                 return _error_response(result["error"])
             return _success_response(result)
@@ -979,7 +1069,13 @@ def register_log_tools(  # type: ignore[no-untyped-def]
             the raw log content string.
         """
         try:
-            result = _do_get_previous_logs(lines=lines, level=level, config_path=config_path)
+            result = _do_get_previous_logs(
+                lines=lines,
+                level=level,
+                config_path=config_path,
+                ha_url=ha_url,
+                ha_token=ha_token,
+            )
             if isinstance(result, dict) and "error" in result:
                 return _error_response(result["error"])
             return _success_response(result)
@@ -1012,6 +1108,8 @@ def register_log_tools(  # type: ignore[no-untyped-def]
                 max_results=max_results,
                 context_lines=context_lines,
                 config_path=config_path,
+                ha_url=ha_url,
+                ha_token=ha_token,
             )
             if isinstance(result, dict) and "error" in result:
                 return _error_response(result["error"])
@@ -1040,6 +1138,8 @@ def register_log_tools(  # type: ignore[no-untyped-def]
                 log_source=log_source,
                 max_results=max_results,
                 config_path=config_path,
+                ha_url=ha_url,
+                ha_token=ha_token,
             )
             if isinstance(result, dict) and "error" in result:
                 return _error_response(result["error"])
@@ -1055,7 +1155,9 @@ def register_log_tools(  # type: ignore[no-untyped-def]
             JSON with startup errors and warnings, and total counts for each.
         """
         try:
-            result = _do_get_startup_errors(config_path=config_path)
+            result = _do_get_startup_errors(
+                config_path=config_path, ha_url=ha_url, ha_token=ha_token
+            )
             if isinstance(result, dict) and "error" in result:
                 return _error_response(result["error"])
             return _success_response(result)
@@ -1079,6 +1181,8 @@ def register_log_tools(  # type: ignore[no-untyped-def]
                 hours=hours,
                 log_source=log_source,
                 config_path=config_path,
+                ha_url=ha_url,
+                ha_token=ha_token,
             )
             if isinstance(result, dict) and "error" in result:
                 return _error_response(result["error"])

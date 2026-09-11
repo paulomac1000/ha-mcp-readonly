@@ -419,8 +419,10 @@ class TestGetLogInsightsApiFallback:
         register_log_tools(mock_mcp, config_path, ha_url="http://ha:8123", ha_token="test")
 
         with patch("tools.utils.make_ha_request") as mock_request:
-            # First call (error_log) fails, second (logbook) succeeds
+            # First call (Supervisor proxy, issue #31) fails, second
+            # (error_log) fails, third (logbook) succeeds
             mock_request.side_effect = [
+                {"success": False, "error": "404: Not Found"},
                 {"success": False, "error": "not found"},
                 {
                     "success": True,
@@ -449,3 +451,124 @@ class TestGetLogInsightsApiFallback:
         data = json.loads(mock_mcp._tools["get_log_insights"](hours=1))
         assert data["success"] is False
         assert "not found" in data["error"].lower()
+
+
+# ========================================
+# SUPERVISOR LOG FALLBACK (issue #31)
+# ========================================
+
+
+class TestSupervisorLogFallback:
+    """HA OS/Supervised installs have no home-assistant.log (issue #31).
+
+    Log tools must fall back to the Supervisor proxy before failing, and
+    Core/Container installs (404) must keep the explicit file-path error.
+    """
+
+    def test_recent_logs_fall_back_to_supervisor_and_strip_ansi(
+        self, mock_mcp, tmp_path, ha_url, ha_token
+    ):
+        """File missing + Supervisor proxy answering 200 serves ANSI-stripped logs."""
+        register_log_tools(mock_mcp, str(tmp_path), ha_url=ha_url, ha_token=ha_token)
+
+        ansi_payload = (
+            "\x1b[32m2026-09-02 22:03:18.087 WARNING (MainThread) "
+            "[habluetooth.wrappers] BleakClient.connect() called\x1b[0m\n"
+            "2026-09-02 22:03:19.000 ERROR (MainThread) [mqtt] Connection failed\n"
+        )
+        with patch("tools.utils.make_ha_request") as mock_request:
+            mock_request.return_value = {"success": True, "data": ansi_payload}
+            data = json.loads(mock_mcp._tools["get_recent_logs"](lines=100))
+
+        assert data["success"] is True
+        assert data["source"] == "supervisor_proxy"
+        assert "\x1b" not in data["logs"]
+        assert "BleakClient.connect()" in data["logs"]
+
+    def test_recent_logs_request_lines_parameter(self, mock_mcp, tmp_path, ha_url, ha_token):
+        """The current-boot proxy request carries the requested line budget."""
+        register_log_tools(mock_mcp, str(tmp_path), ha_url=ha_url, ha_token=ha_token)
+
+        with patch("tools.utils.make_ha_request") as mock_request:
+            mock_request.return_value = {"success": True, "data": "line\n"}
+            json.loads(mock_mcp._tools["get_recent_logs"](lines=42))
+
+        endpoint = mock_request.call_args[0][2]
+        assert endpoint == "/api/hassio/core/logs?lines=84"
+
+    def test_previous_logs_use_boots_endpoint(self, mock_mcp, tmp_path, ha_url, ha_token):
+        """get_previous_logs maps home-assistant.log.1 to the previous-boot proxy."""
+        register_log_tools(mock_mcp, str(tmp_path), ha_url=ha_url, ha_token=ha_token)
+
+        with patch("tools.utils.make_ha_request") as mock_request:
+            mock_request.return_value = {"success": True, "data": "old boot line\n"}
+            data = json.loads(mock_mcp._tools["get_previous_logs"](lines=10))
+
+        endpoint = mock_request.call_args[0][2]
+        assert endpoint == "/api/hassio/core/logs/boots/0"
+        assert data["source"] == "supervisor_proxy"
+
+    def test_supervisor_404_keeps_explicit_error(self, mock_mcp, tmp_path, ha_url, ha_token):
+        """Core/Container installs answer 404: tools fail with the explicit message."""
+        register_log_tools(mock_mcp, str(tmp_path), ha_url=ha_url, ha_token=ha_token)
+
+        with patch("tools.utils.make_ha_request") as mock_request:
+            mock_request.return_value = {"success": False, "error": "404: Not Found"}
+            data = json.loads(mock_mcp._tools["get_recent_logs"](lines=10))
+
+        assert data["success"] is False
+        assert "Supervisor log proxy" in data["error"]
+
+    def test_file_still_preferred_over_supervisor(self, mock_mcp, tmp_path, ha_url, ha_token):
+        """Installs that still write the log file keep the file path (no API call)."""
+        (Path(tmp_path) / "home-assistant.log").write_text(
+            "2024-06-01 14:20:00.000 INFO (MainThread) [homeassistant.core] boot\n",
+            encoding="utf-8",
+        )
+        register_log_tools(mock_mcp, str(tmp_path), ha_url=ha_url, ha_token=ha_token)
+
+        with patch("tools.utils.make_ha_request") as mock_request:
+            data = json.loads(mock_mcp._tools["get_recent_logs"](lines=10))
+
+        mock_request.assert_not_called()
+        assert data["success"] is True
+        assert data["source"] == "log_file"
+
+    def test_analyze_log_errors_falls_back_to_supervisor(
+        self, mock_mcp, tmp_path, ha_url, ha_token
+    ):
+        """analyze_log_errors works through the proxy on log-less installs."""
+        register_log_tools(mock_mcp, str(tmp_path), ha_url=ha_url, ha_token=ha_token)
+
+        payload = (
+            "2026-09-02 22:03:18.087 ERROR (MainThread) [mqtt] Connection failed\n"
+            "2026-09-02 22:03:19.000 WARNING (MainThread) [mqtt] Retrying\n"
+        )
+        with patch("tools.utils.make_ha_request") as mock_request:
+            mock_request.return_value = {"success": True, "data": payload}
+            data = json.loads(mock_mcp._tools["analyze_log_errors"](log_source="current"))
+
+        assert data["success"] is True
+        assert data["total_errors"] == 1
+
+    def test_search_logs_scans_supervisor_content(self, mock_mcp, tmp_path, ha_url, ha_token):
+        """search_logs finds matches inside proxy-served journal lines."""
+        register_log_tools(mock_mcp, str(tmp_path), ha_url=ha_url, ha_token=ha_token)
+
+        with patch("tools.utils.make_ha_request") as mock_request:
+            mock_request.return_value = {
+                "success": True,
+                "data": "2026-09-02 22:03:18 ERROR (MainThread) [mqtt] bleak exploded\n",
+            }
+            data = json.loads(mock_mcp._tools["search_logs"](search_term="bleak"))
+
+        assert data["total_found"] == 1
+        assert "bleak" in data["results"][0]["content"]
+
+    def test_no_credentials_keeps_file_path_error(self, mock_mcp, config_path):
+        """Without credentials there is no proxy attempt and the error stays explicit."""
+        register_log_tools(mock_mcp, config_path)
+        data = json.loads(mock_mcp._tools["get_recent_logs"](lines=10))
+
+        assert data["success"] is False
+        assert "Supervisor log proxy" in data["error"]
