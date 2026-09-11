@@ -18,24 +18,29 @@ class TestMakeHaRequest:
     def test_successful_get_request(self, mock_requests):
         from tools.utils import make_ha_request
 
+        mock_session = MagicMock()
+        mock_requests.Session.return_value = mock_session
         mock_response = Mock()
         mock_response.json.return_value = {"test": "data"}
         mock_response.raise_for_status = Mock()
-        mock_requests.get.return_value = mock_response
+        mock_session.get.return_value = mock_response
 
         result = make_ha_request("http://localhost:8123", "test_token", "/api/states")
 
         assert result["success"] is True
         assert result["data"] == {"test": "data"}
+        assert mock_session.trust_env is False
 
     @patch("tools.utils.requests")
     def test_successful_post_request(self, mock_requests):
         from tools.utils import make_ha_request
 
+        mock_session = MagicMock()
+        mock_requests.Session.return_value = mock_session
         mock_response = Mock()
         mock_response.json.return_value = {"state": "on"}
         mock_response.raise_for_status = Mock()
-        mock_requests.post.return_value = mock_response
+        mock_session.post.return_value = mock_response
 
         result = make_ha_request(
             "http://localhost:8123",
@@ -46,18 +51,20 @@ class TestMakeHaRequest:
         )
 
         assert result["success"] is True
-        mock_requests.post.assert_called_once()
-        mock_requests.get.assert_not_called()
+        mock_session.post.assert_called_once()
+        mock_session.get.assert_not_called()
 
     @patch("tools.utils.requests")
     def test_non_json_response_returns_text(self, mock_requests):
         from tools.utils import make_ha_request
 
+        mock_session = MagicMock()
+        mock_requests.Session.return_value = mock_session
         mock_response = Mock()
         mock_response.json.side_effect = ValueError("not JSON")
         mock_response.text = "OK"
         mock_response.raise_for_status = Mock()
-        mock_requests.get.return_value = mock_response
+        mock_session.get.return_value = mock_response
 
         result = make_ha_request("http://localhost:8123", "tok", "/api/ping")
 
@@ -71,7 +78,9 @@ class TestMakeHaRequest:
         from tools.utils import make_ha_request
 
         mock_requests.exceptions = requests.exceptions
-        mock_requests.get.side_effect = requests.exceptions.ConnectionError("Test error")
+        mock_session = MagicMock()
+        mock_requests.Session.return_value = mock_session
+        mock_session.get.side_effect = requests.exceptions.ConnectionError("Test error")
 
         result = make_ha_request(
             "http://localhost:8123",
@@ -83,7 +92,7 @@ class TestMakeHaRequest:
 
         assert result["success"] is False
         assert "Test error" in result["error"]
-        assert mock_requests.get.call_count == 2
+        assert mock_session.get.call_count == 2
 
 
 class TestRegistryLoading:
@@ -494,7 +503,9 @@ class TestMakeHaRequestErrorCode:
         from tools.utils import make_ha_request
 
         mock_requests.exceptions = requests.exceptions
-        mock_requests.get.side_effect = requests.exceptions.ConnectionError("down")
+        mock_session = MagicMock()
+        mock_requests.Session.return_value = mock_session
+        mock_session.get.side_effect = requests.exceptions.ConnectionError("down")
         result = make_ha_request("http://h", "t", "/api/states", retries=1, backoff=0.01)
         assert result["success"] is False
         assert result["error_code"] == "HTTP_ERROR"
@@ -507,7 +518,9 @@ class TestMakeHaRequestErrorCode:
         from tools.utils import make_ha_request
 
         mock_requests.exceptions = requests.exceptions
-        mock_requests.get.side_effect = requests.exceptions.Timeout("slow")
+        mock_session = MagicMock()
+        mock_requests.Session.return_value = mock_session
+        mock_session.get.side_effect = requests.exceptions.Timeout("slow")
         result = make_ha_request("http://h", "t", "/api/states", retries=1, backoff=0.01)
         assert result["error_code"] == "TIMEOUT"
         assert result["retryable"] is True
@@ -631,18 +644,24 @@ if __name__ == "__main__":
 class TestCleartextTransportGuard:
     """The bearer token is never sent over cleartext HTTP to non-local hosts."""
 
-    @pytest.fixture(autouse=True)
-    def _clear_resolution_cache(self):
-        from tools.utils import _host_resolves_to_private
+    def _allowed(self, url: str):
+        with patch("tools.utils.requests") as mock_requests:
+            mock_session = MagicMock()
+            mock_requests.Session.return_value = mock_session
+            mock_response = Mock()
+            mock_response.json.return_value = {}
+            mock_response.raise_for_status = Mock()
+            mock_session.get.return_value = mock_response
 
-        _host_resolves_to_private.cache_clear()
-        yield
-        _host_resolves_to_private.cache_clear()
+            result = make_ha_request(url, "unit-test-token", "/api/states")
+
+        assert mock_session.trust_env is False
+        return result, mock_session
 
     def _refused(self, url: str):
         with patch("tools.utils.requests") as mock_requests:
             result = make_ha_request(url, "unit-test-token", "/api/states")
-        mock_requests.get.assert_not_called()
+        mock_requests.Session.assert_not_called()
         return result
 
     def test_public_ip_literal_refused(self):
@@ -652,24 +671,12 @@ class TestCleartextTransportGuard:
         assert result["error_code"] == "INSECURE_TRANSPORT"
 
     def test_private_ip_literal_allowed(self):
-        with patch("tools.utils.requests") as mock_requests:
-            mock_response = Mock()
-            mock_response.json.return_value = {}
-            mock_response.raise_for_status = Mock()
-            mock_requests.get.return_value = mock_response
-
-            result = make_ha_request("http://192.168.1.50:8123", "tok", "/api/states")
+        result, _ = self._allowed("http://192.168.1.50:8123/api/states")
 
         assert result["success"] is True
 
     def test_loopback_literal_allowed(self):
-        with patch("tools.utils.requests") as mock_requests:
-            mock_response = Mock()
-            mock_response.json.return_value = {}
-            mock_response.raise_for_status = Mock()
-            mock_requests.get.return_value = mock_response
-
-            result = make_ha_request("http://127.0.0.1:8123", "tok", "/api/states")
+        result, _ = self._allowed("http://127.0.0.1:8123/api/states")
 
         assert result["success"] is True
 
@@ -732,16 +739,10 @@ class TestCleartextTransportGuard:
             ]
 
         monkeypatch.setattr("tools.utils.socket.getaddrinfo", fake_getaddrinfo)
-
-        with patch("tools.utils.requests") as mock_requests:
-            mock_response = Mock()
-            mock_response.json.return_value = {}
-            mock_response.raise_for_status = Mock()
-            mock_requests.get.return_value = mock_response
-
-            result = make_ha_request("http://ha.example.com:8123", "tok", "/api/states")
+        result, session = self._allowed("http://ha.example.com:8123/api/states")
 
         assert result["success"] is True
+        assert session.get.call_args[0][0].startswith("http://10.0.0.8:8123")
 
     def test_unresolvable_dotted_hostname_refused(self, monkeypatch):
         def raising_getaddrinfo(host, port, *args, **kwargs):
@@ -757,11 +758,45 @@ class TestCleartextTransportGuard:
 
     def test_https_always_allowed(self):
         with patch("tools.utils.requests") as mock_requests:
+            mock_session = MagicMock()
+            mock_requests.Session.return_value = mock_session
             mock_response = Mock()
             mock_response.json.return_value = {}
             mock_response.raise_for_status = Mock()
-            mock_requests.get.return_value = mock_response
+            mock_session.get.return_value = mock_response
 
             result = make_ha_request("https://ha.example.com:8123", "tok", "/api/states")
 
         assert result["success"] is True
+
+    def test_environment_proxies_are_ignored_for_cleartext(self, monkeypatch):
+        monkeypatch.setenv("HTTP_PROXY", "http://proxy.example.com:3128")
+        monkeypatch.setenv("ALL_PROXY", "http://proxy.example.com:3128")
+        result, session = self._allowed("http://192.168.1.50:8123/api/states")
+
+        assert result["success"] is True
+        assert session.trust_env is False
+
+    def test_dns_rebinding_is_reevaluated_per_request(self, monkeypatch):
+        """A hostname approval is never cached: DNS answers are honored fresh."""
+        import socket as socket_module
+
+        public = [
+            (
+                socket_module.AF_INET,
+                socket_module.SOCK_STREAM,
+                6,
+                "",
+                ("93.184.216.34", 0),
+            )
+        ]
+        private = [(socket_module.AF_INET, socket_module.SOCK_STREAM, 6, "", ("10.0.0.8", 0))]
+
+        monkeypatch.setattr("tools.utils.socket.getaddrinfo", lambda *a, **k: public)
+        refused = self._refused("http://ha.example.com:8123/api/states")
+        assert refused["success"] is False
+
+        monkeypatch.setattr("tools.utils.socket.getaddrinfo", lambda *a, **k: private)
+        result, session = self._allowed("http://ha.example.com:8123/api/states")
+        assert result["success"] is True
+        assert session.get.call_args[0][0].startswith("http://10.0.0.8:8123")

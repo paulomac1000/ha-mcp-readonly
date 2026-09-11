@@ -62,7 +62,11 @@ def test_shared_http_client_does_not_retry_by_default(monkeypatch: pytest.Monkey
         calls += 1
         raise requests.exceptions.Timeout("timeout")
 
-    monkeypatch.setattr(requests, "get", timeout)
+    real_session = requests.Session()
+    real_session.get = timeout
+    real_session.trust_env = False
+    monkeypatch.setattr(requests, "Session", lambda: real_session)
+
     result = make_ha_request("http://ha", "token", "/api/states")
     assert result["success"] is False
     assert calls == 1

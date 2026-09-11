@@ -1,5 +1,5 @@
 {
-  "provenance": "Sanitized recording from a live Home Assistant instance: /api/config/config_entries/entry carries 61 generic-titled samples of 253 real rows preserving real domains, sources, versions, disabled_by and the real state distribution including setup_retry. Supervisor payloads follow the documented plain-text journal format with ANSI colour codes as observed in issue #31; the boots/0 404 was recorded live on a Container installation.",
+  "provenance": "Sanitized recordings. /api/config/config_entries/entry: sanitized live recording from a real Home Assistant instance (61 generic-titled samples of 253 real rows preserving real domains, sources, versions, disabled_by and the real state distribution including setup_retry). Supervisor proxy bodies: the successful current/previous-boot plain-text responses mirror the live 200 outputs recorded in issue #31 (plain long-lived access token on HA OS, quoted verbatim in the public report) with identifiers genericized; the boots/0 404 was recorded live on a Container installation. Residual: this repository has no Supervisor-backed instance, so the successful Supervisor bodies are sanitized transcriptions of the publicly recorded live responses rather than fresh captures.",
   "rest": {
     "/api/config/config_entries/entry": [
       {

@@ -26,7 +26,6 @@ import subprocess
 import threading
 import time
 from datetime import datetime
-from functools import lru_cache
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -120,48 +119,61 @@ def get_registry_cache_stats() -> dict[str, Any]:
 # =============================================================================
 
 
-def _is_local_destination(host: str) -> bool:
-    """Classify a cleartext destination as a trusted local address.
+_LOCAL_TLDS = frozenset({"local", "lan", "home", "internal"})
 
-    Local means loopback, RFC1918/link-local/unique-local, or a single-label
-    (Docker-style) or mDNS-style hostname. Literal IPs are classified
-    directly; hostnames are resolved and every returned address must be
-    private, because a mixed answer could route the token to a public host.
+
+def _validated_cleartext_target(ha_url: str) -> tuple[str, dict[str, str]] | None:
+    """Validate a cleartext HTTP destination and pin it to a vetted address.
+
+    HTTPS passes through unchanged. Cleartext is allowed for literal private
+    or loopback addresses, single-label (Docker-style) hostnames, and
+    mDNS-style local names. Dotted hostnames are resolved fresh on every
+    request and every returned address must be private; the request is then
+    rewritten to the validated address with the original authority preserved
+    in the Host header, so a later DNS change cannot reroute the token.
 
     Args:
-        host: Hostname or literal IP parsed from the configured HA URL.
+        ha_url: The configured Home Assistant base URL.
 
     Returns:
-        True only when cleartext transmission stays inside trusted local
-        address space.
+        Tuple of (pinned base URL, extra headers), or ``None`` when the
+        destination is refused.
     """
+    parsed = urlparse(ha_url)
+    host = parsed.hostname or ""
     if not host:
-        return False
+        return None
 
     try:
         address = ipaddress.ip_address(host)
     except ValueError:
         address = None
     if address is not None:
-        return address.is_private
+        return (ha_url, {}) if address.is_private else None
 
     hostname = host.lower().rstrip(".")
-    if "." not in hostname:
-        return True
-    if hostname.split(".")[-1] in {"local", "lan", "home", "internal"}:
-        return True
+    if "." not in hostname or hostname.rsplit(".", 1)[-1] in _LOCAL_TLDS:
+        return ha_url, {}
 
-    return _host_resolves_to_private(hostname)
-
-
-@lru_cache(maxsize=64)
-def _host_resolves_to_private(hostname: str) -> bool:
     try:
         infos = socket.getaddrinfo(hostname, None)
     except (OSError, UnicodeError):
-        return False
-    addresses = {ipaddress.ip_address(info[4][0]) for info in infos}
-    return bool(addresses) and all(addr.is_private for addr in addresses)
+        return None
+    addresses: list[ipaddress.IPv4Address | ipaddress.IPv6Address] = []
+    seen: set[ipaddress.IPv4Address | ipaddress.IPv6Address] = set()
+    for info in infos:
+        addr = ipaddress.ip_address(info[4][0])
+        if addr not in seen:
+            seen.add(addr)
+            addresses.append(addr)
+    if not addresses or not all(addr.is_private for addr in addresses):
+        return None
+
+    validated = addresses[0]
+    pinned_host = f"[{validated}]" if validated.version == 6 else str(validated)
+    pinned_netloc = f"{pinned_host}:{parsed.port}" if parsed.port else pinned_host
+    pinned_url = f"http://{pinned_netloc}"
+    return pinned_url, {"Host": parsed.netloc}
 
 
 def make_ha_request(
@@ -203,22 +215,26 @@ def make_ha_request(
             "POST retries require operation-specific handling and are not supported here"
         )
 
-    parsed_url = urlparse(ha_url)
-    if parsed_url.scheme == "http" and not _is_local_destination(parsed_url.hostname or ""):
-        return {
-            "success": False,
-            "error": (
-                "refusing to send the bearer token over cleartext HTTP to a "
-                f"non-local host ({parsed_url.hostname}); use HTTPS or a local address"
-            ),
-            "error_code": "INSECURE_TRANSPORT",
-            "retryable": False,
-        }
+    extra_headers: dict[str, str] = {}
+    if urlparse(ha_url).scheme == "http":
+        validated_target = _validated_cleartext_target(ha_url)
+        if validated_target is None:
+            return {
+                "success": False,
+                "error": (
+                    "refusing to send the bearer token over cleartext HTTP to a "
+                    "non-local destination; use HTTPS or a local address"
+                ),
+                "error_code": "INSECURE_TRANSPORT",
+                "retryable": False,
+            }
+        ha_url, extra_headers = validated_target
 
     url = f"{ha_url}{endpoint}"
     headers = {
         "Authorization": f"Bearer {ha_token}",
         "Content-Type": "application/json",
+        **extra_headers,
     }
 
     last_error: str | None = None
@@ -241,10 +257,17 @@ def make_ha_request(
             }
         request_timeout = timeout if remaining is None else max(0.001, min(timeout, remaining))
         try:
-            if normalized_method == "POST":
-                response = requests.post(url, headers=headers, json=data, timeout=request_timeout)
-            else:
-                response = requests.get(url, headers=headers, timeout=request_timeout)
+            session = requests.Session()
+            session.trust_env = False
+            try:
+                if normalized_method == "POST":
+                    response = session.post(
+                        url, headers=headers, json=data, timeout=request_timeout
+                    )
+                else:
+                    response = session.get(url, headers=headers, timeout=request_timeout)
+            finally:
+                session.close()
 
             response.raise_for_status()
 
