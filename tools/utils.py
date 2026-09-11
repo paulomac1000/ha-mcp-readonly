@@ -122,14 +122,13 @@ def get_registry_cache_stats() -> dict[str, Any]:
 def _validated_cleartext_target(ha_url: str) -> tuple[str, dict[str, str]] | None:
     """Validate a cleartext HTTP destination and pin it to a vetted address.
 
-    HTTPS passes through unchanged. Cleartext is allowed for literal private
-    or loopback addresses and single-label (Docker-style) hostnames, which
-    resolve inside the local network namespace by construction. Every dotted
-    hostname - mDNS-style names included, since a suffix is a naming
-    convention and not a security boundary - is resolved fresh on every
-    request and all returned addresses must be private; the request is then
-    rewritten to the validated address with the original authority preserved
-    in the Host header, so a later DNS change cannot reroute the token.
+    HTTPS passes through unchanged. Every hostname - single-label names,
+    mDNS-style names, and fully qualified names alike - is resolved fresh on
+    every request and all returned addresses must be private; the request is
+    then rewritten to the validated address with the original authority
+    preserved in the Host header, so a later DNS or search-domain change
+    cannot reroute the token. Cleartext is allowed without resolution only
+    for literal private or loopback addresses.
 
     Args:
         ha_url: The configured Home Assistant base URL.
@@ -151,10 +150,6 @@ def _validated_cleartext_target(ha_url: str) -> tuple[str, dict[str, str]] | Non
         return (ha_url, {}) if address.is_private else None
 
     hostname = host.lower().rstrip(".")
-    if "." not in hostname:
-        # Single-label names (docker-compose services, bare hostnames) resolve
-        # inside the local network namespace and are accepted without DNS.
-        return ha_url, {}
 
     try:
         infos = socket.getaddrinfo(hostname, None)

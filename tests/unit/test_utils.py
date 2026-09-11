@@ -3,6 +3,7 @@ Tests for tools/utils.py
 """
 
 import json
+import socket
 from unittest.mock import MagicMock, Mock, patch
 
 import pytest
@@ -497,11 +498,15 @@ class TestMakeHaRequestErrorCode:
     """Tests for the structured error siblings of make_ha_request."""
 
     @patch("tools.utils.requests")
-    def test_connection_error_code(self, mock_requests):
+    def test_connection_error_code(self, mock_requests, monkeypatch):
         import requests
 
         from tools.utils import make_ha_request
 
+        monkeypatch.setattr(
+            "tools.utils.socket.getaddrinfo",
+            lambda *a, **k: [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("10.0.0.5", 0))],
+        )
         mock_requests.exceptions = requests.exceptions
         mock_session = MagicMock()
         mock_requests.Session.return_value = mock_session
@@ -512,11 +517,15 @@ class TestMakeHaRequestErrorCode:
         assert result["retryable"] is True
 
     @patch("tools.utils.requests")
-    def test_timeout_error_code(self, mock_requests):
+    def test_timeout_error_code(self, mock_requests, monkeypatch):
         import requests
 
         from tools.utils import make_ha_request
 
+        monkeypatch.setattr(
+            "tools.utils.socket.getaddrinfo",
+            lambda *a, **k: [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("10.0.0.5", 0))],
+        )
         mock_requests.exceptions = requests.exceptions
         mock_session = MagicMock()
         mock_requests.Session.return_value = mock_session
@@ -680,18 +689,33 @@ class TestCleartextTransportGuard:
 
         assert result["success"] is True
 
-    def test_single_label_hostname_allowed_without_dns(self):
-        with patch("tools.utils.socket.getaddrinfo") as mock_getaddrinfo:
-            with patch("tools.utils.requests") as mock_requests:
-                mock_response = Mock()
-                mock_response.json.return_value = {}
-                mock_response.raise_for_status = Mock()
-                mock_requests.get.return_value = mock_response
+    def test_single_label_hostname_resolving_private_is_pinned(self, monkeypatch):
+        import socket as socket_module
 
-                result = make_ha_request("http://homeassistant:8123", "tok", "/api/states")
+        private = [(socket_module.AF_INET, socket_module.SOCK_STREAM, 6, "", ("172.20.0.5", 0))]
+        monkeypatch.setattr("tools.utils.socket.getaddrinfo", lambda *a, **k: private)
+        result, session = self._allowed("http://homeassistant:8123/api/states")
 
-        mock_getaddrinfo.assert_not_called()
         assert result["success"] is True
+        assert session.get.call_args[0][0].startswith("http://172.20.0.5:8123")
+
+    def test_single_label_hostname_resolving_public_refused(self, monkeypatch):
+        import socket as socket_module
+
+        public = [
+            (
+                socket_module.AF_INET,
+                socket_module.SOCK_STREAM,
+                6,
+                "",
+                ("93.184.216.34", 0),
+            )
+        ]
+        monkeypatch.setattr("tools.utils.socket.getaddrinfo", lambda *a, **k: public)
+        result = self._refused("http://homeassistant:8123/api/states")
+
+        assert result["success"] is False
+        assert result["error_code"] == "INSECURE_TRANSPORT"
 
     def test_mdns_style_hostname_validated_and_pinned(self, monkeypatch):
         import socket as socket_module
