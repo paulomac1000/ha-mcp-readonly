@@ -125,26 +125,25 @@ jobs:
           [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
           echo "ref=$quarantine_ref" >> "$GITHUB_OUTPUT"
           echo "digest=$digest" >> "$GITHUB_OUTPUT"
-      - name: Smoke exact quarantined digest on every published platform
+      - name: Smoke quarantined candidate on every published platform
         shell: bash
         env:
           QUARANTINE_REF: ${{ steps.quarantine.outputs.ref }}
-          QUARANTINE_DIGEST: ${{ steps.quarantine.outputs.digest }}
         run: |
           set -euo pipefail
-          image_ref="${QUARANTINE_REF%:*}@${QUARANTINE_DIGEST}"
           trap 'docker rm -f ha-mcp-quarantine-amd64 ha-mcp-quarantine-arm64 2>/dev/null || true' EXIT
           for arch in amd64 arm64; do
-            # moby#43188: running a manifest-list digest with --platform fails
-            # with "Cannot overwrite digest" on current runner Docker; an
-            # explicit per-platform pull pins the local image first.
-            docker pull --platform "linux/$arch" "$image_ref"
-            docker run --rm --platform "linux/$arch" --entrypoint=id "$image_ref" -u | grep -qx '10001'
+            # moby#43188: digest-pinned multi-platform refs fail with
+            # "Cannot overwrite digest" under --platform. The tag selects
+            # the same content per platform; the promote job re-verifies
+            # the exact digest before anything is released.
+            docker pull --platform "linux/$arch" "$QUARANTINE_REF"
+            docker run --rm --platform "linux/$arch" --entrypoint=id "$QUARANTINE_REF" -u | grep -qx '10001'
             docker run --rm --platform "linux/$arch" --entrypoint=python \
               -e MCP_TRANSPORT=stdio -e MCP_DEV_TOOLS_ENABLED=0 \
-              "$image_ref" -c 'import server; assert server.get_tool_count() == 145'
+              "$QUARANTINE_REF" -c 'import server; assert server.get_tool_count() == 145'
             name="ha-mcp-quarantine-$arch"
-            docker run -dit --rm --platform "linux/$arch" --name "$name" "$image_ref"
+            docker run -dit --rm --platform "linux/$arch" --name "$name" "$QUARANTINE_REF"
             for attempt in $(seq 1 60); do
               state="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{end}}' "$name")"
               [[ "$state" == healthy ]] && break
