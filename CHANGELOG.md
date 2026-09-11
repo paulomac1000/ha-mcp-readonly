@@ -16,6 +16,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [2.3.0] - 2026-09-11
+
 ### Security
 - `make_ha_request` refuses to send the Home Assistant bearer token over cleartext HTTP to non-local destinations (CWE-319): HTTP remains allowed for loopback, RFC1918/link-local/unique-local addresses, single-label Docker-style hostnames, and mDNS-style `.local`/`.lan`/`.home`/`.internal` names; dotted public hostnames (resolved addresses checked) and public IP literals now fail with `INSECURE_TRANSPORT` before any request is sent. HTTPS destinations are unaffected. Deployments serving Home Assistant over public cleartext HTTP must switch to HTTPS.
 
@@ -28,6 +30,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ### Added
 - Recorded-cassette protocol coverage for the two newly supported surfaces: a sanitized live recording of `/api/config/config_entries/entry` (61 generic-titled samples of 253 real rows preserving the real state distribution, including `setup_retry`) and the Supervisor proxy plain-text surfaces (current boot, previous boot at offset `-1`, recorded live 404 on a Container install), exercised end to end without mocks through a local replay server.
 - Smoke coverage for `search_config_entries` (API-backed states, state filtering) and integration coverage for `setup_retry` filtering plus honest `summary_only` state counts.
+
+### Dependencies
+- Dependency group updates: `anyio` 4.15.0, `ast-serialize` 0.9.0, `cyclopts` 4.24.0, `mcp` 1.29.1, `ruff` 0.16.6, `sse-starlette` 3.4.10, `starlette` 1.6.0. `fastmcp` stays on the 3.4.x line: FastMCP 4.x requires `mcp>=2.0.0`, which conflicts with the held-back `mcp` 1.x line; Dependabot now ignores `fastmcp`/`fastmcp-slim` semver-major updates alongside `mcp`.
 
 ## [2.2.0] - 2026-09-11
 

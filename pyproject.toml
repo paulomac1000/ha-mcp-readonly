@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ha-mcp-readonly"
-version = "2.2.0"
+version = "2.3.0"
 description = "Read-only MCP server for Home Assistant observation by AI assistants"
 readme = "README.md"
 license = "MIT"
@@ -25,7 +25,7 @@ classifiers = [
     "Topic :: Home Automation",
 ]
 dependencies = [
-    "fastmcp>=3.4.6,<4.1",
+    "fastmcp>=3.4.6,<3.5",
     "requests>=2.34.2,<2.35",
     "pyyaml>=6.0.3,<6.1",
     "starlette>=1.0,<2",

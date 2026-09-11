@@ -18,9 +18,17 @@ updates:
     cooldown:
       default-days: 7
     ignore:
-      # FastMCP 3.4.x requires mcp>=1.24,<2. Remove this guard when the
+      # FastMCP 3.4.x requires mcp>=1.24,<2. Remove these guards when the
       # application intentionally migrates to a FastMCP line supporting MCP 2.x.
       - dependency-name: "mcp"
+        update-types:
+          - "version-update:semver-major"
+      # FastMCP 4.x requires mcp>=2.0.0, which conflicts with the held-back
+      # mcp 1.x line above.
+      - dependency-name: "fastmcp"
+        update-types:
+          - "version-update:semver-major"
+      - dependency-name: "fastmcp-slim"
         update-types:
           - "version-update:semver-major"
     groups:
