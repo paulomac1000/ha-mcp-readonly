@@ -566,7 +566,7 @@ def register_config_entry_tools(mcp: Any, config_path: str, ha_url: str, ha_toke
     """Register config entry management tools."""
 
     @mcp.tool()
-    async def get_config_entry_details(entry_id: str) -> str:
+    def get_config_entry_details(entry_id: str) -> str:
         """[READ] Get details for a single config entry with full context.
 
         Args:
@@ -581,7 +581,7 @@ def register_config_entry_tools(mcp: Any, config_path: str, ha_url: str, ha_toke
             return _error_response(str(e))
 
     @mcp.tool()
-    async def search_config_entries(
+    def search_config_entries(
         domain: str | None = None,
         title: str | None = None,
         state: str | None = None,
@@ -618,7 +618,7 @@ def register_config_entry_tools(mcp: Any, config_path: str, ha_url: str, ha_toke
             return _error_response(str(e))
 
     @mcp.tool()
-    async def diagnose_config_entry(entry_id: str) -> str:
+    def diagnose_config_entry(entry_id: str) -> str:
         """[READ] Provide diagnostics for a config entry using registry, API, and logs.
 
         Args:

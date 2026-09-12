@@ -82,12 +82,12 @@ jobs:
           import importlib.metadata
 
           assert importlib.metadata.version("fastmcp") == "3.4.6"
-          assert importlib.metadata.version("mcp") == "1.29.0"
-          assert importlib.metadata.version("starlette") == "1.4.1"
+          assert importlib.metadata.version("mcp") == "1.29.1"
+          assert importlib.metadata.version("starlette") == "1.6.0"
           PY
           python -m venv /tmp/migration-official-client
-          /tmp/migration-official-client/bin/python -m pip install 'mcp==1.29.0'
-          MCP_EXPECTED_VERSION=2.2.0 \
+          /tmp/migration-official-client/bin/python -m pip install 'mcp==1.29.1'
+          MCP_EXPECTED_VERSION=2.3.0 \
             /tmp/migration-official-client/bin/python scripts/verify_official_mcp_client.py stdio \
               --command /tmp/migration-wheel/bin/ha-mcp-readonly --config-path /tmp
 

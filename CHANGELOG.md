@@ -16,6 +16,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [2.3.0] - 2026-09-11
+
+### Security
+- `make_ha_request` refuses to send the Home Assistant bearer token over cleartext HTTP to non-local destinations (CWE-319): HTTP remains allowed for loopback and private/link-local/unique-local addresses, and for hostnames that resolve exclusively to such addresses. Every hostname — single-label, mDNS-style, and fully qualified names alike — is resolved fresh on every request, all returned addresses must be private, and the request is pinned to the validated address with the original authority preserved in the `Host` header. Public cleartext destinations fail with `INSECURE_TRANSPORT` before any request is sent. HTTPS destinations are unaffected. Deployments serving Home Assistant over public cleartext HTTP must switch to HTTPS.
+
+### Fixed
+- `search_config_entries`, `get_config_entry_details`, and `diagnose_config_entry` are synchronous tools again: they execute in the bounded tool executor instead of running blocking Home Assistant requests directly on the MCP event loop, where a slow or unreachable instance stalled every concurrent invocation.
+- `get_previous_logs` and every `log_source="previous"` operation on Supervisor-backed installs now read the actual previous boot (`/api/hassio/core/logs/boots/-1`); the previously used boot index `0` is the current boot, so the tools silently analyzed current logs.
+- `get_log_insights` no longer mislabels Supervisor-proxy-served lines as `api_fallback` and keeps the real source metadata.
+- New helper docstrings document `Args`/`Returns`, and log/config-entry test payloads use generic fixture names instead of hardcoded component identifiers.
+
+### Added
+- Recorded-cassette protocol coverage for the two newly supported surfaces: a sanitized live recording of `/api/config/config_entries/entry` (61 generic-titled samples of 253 real rows preserving the real state distribution, including `setup_retry`) and the Supervisor proxy plain-text surfaces (current boot, previous boot at offset `-1`, recorded live 404 on a Container install), exercised end to end without mocks through a local replay server.
+- Smoke coverage for `search_config_entries` (API-backed states, state filtering) and integration coverage for `setup_retry` filtering plus honest `summary_only` state counts.
+- A repository dependency-contract check keeps the runtime ranges in `requirements.txt` identical to `pyproject.toml`, so the documented install path cannot drift from the enforced FastMCP 3.4.x hold-back (protocol suite).
+
+### Dependencies
+- Dependency group updates: `anyio` 4.15.0, `ast-serialize` 0.9.0, `cyclopts` 4.24.0, `mcp` 1.29.1, `ruff` 0.16.6, `sse-starlette` 3.4.10, `starlette` 1.6.0. `fastmcp` stays on the 3.4.x line: FastMCP 4.x requires `mcp>=2.0.0`, which conflicts with the held-back `mcp` 1.x line; Dependabot now ignores `fastmcp`/`fastmcp-slim` semver-major updates alongside `mcp`.
+
 ## [2.2.0] - 2026-09-11
 
 ### Fixed

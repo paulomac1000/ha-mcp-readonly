@@ -124,7 +124,14 @@ _ANSI_ESCAPE_PATTERN = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
 
 
 def _strip_ansi_escape_codes(text: str) -> str:
-    """Remove ANSI colour escape sequences from Supervisor log output."""
+    """Remove ANSI colour escape sequences from Supervisor log output.
+
+    Args:
+        text: Raw Supervisor proxy response body.
+
+    Returns:
+        Text with all ANSI escape sequences removed.
+    """
     return _ANSI_ESCAPE_PATTERN.sub("", text)
 
 
@@ -137,12 +144,23 @@ def _read_supervisor_core_logs(
     Home Assistant 2025.11 (issue #31); the Supervisor proxy serves the same
     records with a plain long-lived access token. Core and Container installs
     have no Supervisor and answer 404, which maps to ``None``.
+
+    Args:
+        ha_url: Home Assistant base URL.
+        ha_token: Long-lived access token.
+        max_lines: Maximum number of trailing lines to return (default 10000).
+        previous_boot: Select the previous boot (journal offset ``-1``) instead
+            of the current one.
+
+    Returns:
+        Log lines terminated by newlines, or ``None`` when the proxy is
+        unavailable or the request fails.
     """
     from tools.utils import make_ha_request
 
     effective_max = 10000 if max_lines is None else max_lines
     if previous_boot:
-        endpoint = "/api/hassio/core/logs/boots/0"
+        endpoint = "/api/hassio/core/logs/boots/-1"
     else:
         endpoint = f"/api/hassio/core/logs?lines={effective_max}"
     result = make_ha_request(ha_url, ha_token, endpoint, timeout=30)
@@ -165,6 +183,18 @@ def _acquire_log_lines(
     Order: log file first, so installs that still write it keep working
     unchanged; then the Supervisor proxy for HA OS/Supervised installs whose
     logs live only in the systemd journal.
+
+    Args:
+        log_file: Log file name relative to the config directory; any name
+            other than ``home-assistant.log`` maps to the previous boot.
+        config_path: Home Assistant config directory.
+        ha_url: Home Assistant base URL (empty disables the proxy fallback).
+        ha_token: Long-lived access token.
+        max_lines: Maximum number of trailing lines to return (default 10000).
+
+    Returns:
+        Tuple of (lines list or None, metadata dict with ``source``,
+        ``truncated``, and ``max_lines``).
     """
     lines, meta = _read_log_file(log_file, config_path, max_lines)
     if lines:
@@ -265,7 +295,7 @@ def _do_get_log_insights(
 
     hours = min(max(int(hours), 1), 24)
     log_lines, file_meta = _acquire_log_lines("home-assistant.log", config_path, ha_url, ha_token)
-    api_fallback_used = bool(log_lines) and file_meta.get("source") == "supervisor_proxy"
+    api_fallback_used = False
 
     if not log_lines and ha_url and ha_token:
         from tools.utils import make_ha_request

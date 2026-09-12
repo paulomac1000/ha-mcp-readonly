@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import inspect
 import json
+import socket
 from pathlib import Path
 from starlette.testclient import TestClient
 
@@ -62,7 +63,15 @@ def test_shared_http_client_does_not_retry_by_default(monkeypatch: pytest.Monkey
         calls += 1
         raise requests.exceptions.Timeout("timeout")
 
-    monkeypatch.setattr(requests, "get", timeout)
+    real_session = requests.Session()
+    real_session.get = timeout
+    real_session.trust_env = False
+    monkeypatch.setattr(requests, "Session", lambda: real_session)
+    monkeypatch.setattr(
+        "tools.utils.socket.getaddrinfo",
+        lambda *a, **k: [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("10.0.0.5", 0))],
+    )
+
     result = make_ha_request("http://ha", "token", "/api/states")
     assert result["success"] is False
     assert calls == 1

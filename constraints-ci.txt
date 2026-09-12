@@ -1,7 +1,7 @@
 aiofile==3.12.3
 annotated-types==0.8.0
-anyio==4.14.2
-ast_serialize==0.8.0
+anyio==4.15.0
+ast_serialize==0.9.0
 attrs==26.1.0
 Authlib==1.8.0
 bandit==1.9.4
@@ -15,7 +15,7 @@ charset-normalizer==3.5.1
 click==8.5.0
 coverage==7.16.0
 cryptography==50.0.1
-cyclopts==4.23.3
+cyclopts==4.24.0
 dnspython==2.8.0
 docstring_parser==0.18.0
 email-validator==2.3.0
@@ -41,7 +41,7 @@ jsonschema==4.26.0
 keyring==25.7.0
 librt==0.15.0
 markdown-it-py==4.2.0
-mcp==1.29.0
+mcp==1.29.1
 mdurl==0.1.2
 more-itertools==11.1.0
 mypy==2.3.1
@@ -74,12 +74,12 @@ requests==2.34.2
 rich-rst==2.1.0
 rich==15.0.0
 rpds-py==2026.6.3
-ruff==0.16.5
+ruff==0.16.6
 SecretStorage==3.5.0
 setuptools==84.0.0
 six==1.17.0
-sse-starlette==3.4.8
-starlette==1.4.1
+sse-starlette==3.4.10
+starlette==1.6.0
 stevedore==5.9.1
 typing-inspection==0.4.4
 typing_extensions==4.16.0

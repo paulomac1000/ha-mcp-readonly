@@ -16,16 +16,19 @@ CHANGES vs original:
 - All existing public functions preserved -- zero breaking changes
 """
 
+import ipaddress
 import json
 import logging
 import os
 import re
+import socket
 import subprocess
 import threading
 import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 import requests
 
@@ -116,6 +119,59 @@ def get_registry_cache_stats() -> dict[str, Any]:
 # =============================================================================
 
 
+def _validated_cleartext_target(ha_url: str) -> tuple[str, dict[str, str]] | None:
+    """Validate a cleartext HTTP destination and pin it to a vetted address.
+
+    HTTPS passes through unchanged. Every hostname - single-label names,
+    mDNS-style names, and fully qualified names alike - is resolved fresh on
+    every request and all returned addresses must be private; the request is
+    then rewritten to the validated address with the original authority
+    preserved in the Host header, so a later DNS or search-domain change
+    cannot reroute the token. Cleartext is allowed without resolution only
+    for literal private or loopback addresses.
+
+    Args:
+        ha_url: The configured Home Assistant base URL.
+
+    Returns:
+        Tuple of (pinned base URL, extra headers), or ``None`` when the
+        destination is refused.
+    """
+    parsed = urlparse(ha_url)
+    host = parsed.hostname or ""
+    if not host:
+        return None
+
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        address = None
+    if address is not None:
+        return (ha_url, {}) if address.is_private else None
+
+    hostname = host.lower().rstrip(".")
+
+    try:
+        infos = socket.getaddrinfo(hostname, None)
+    except (OSError, UnicodeError):
+        return None
+    addresses: list[ipaddress.IPv4Address | ipaddress.IPv6Address] = []
+    seen: set[ipaddress.IPv4Address | ipaddress.IPv6Address] = set()
+    for info in infos:
+        addr = ipaddress.ip_address(info[4][0])
+        if addr not in seen:
+            seen.add(addr)
+            addresses.append(addr)
+    if not addresses or not all(addr.is_private for addr in addresses):
+        return None
+
+    validated = addresses[0]
+    pinned_host = f"[{validated}]" if validated.version == 6 else str(validated)
+    pinned_netloc = f"{pinned_host}:{parsed.port}" if parsed.port else pinned_host
+    pinned_url = f"http://{pinned_netloc}"
+    return pinned_url, {"Host": parsed.netloc}
+
+
 def make_ha_request(
     ha_url: str | None,
     ha_token: str | None,
@@ -155,10 +211,26 @@ def make_ha_request(
             "POST retries require operation-specific handling and are not supported here"
         )
 
+    extra_headers: dict[str, str] = {}
+    if urlparse(ha_url).scheme == "http":
+        validated_target = _validated_cleartext_target(ha_url)
+        if validated_target is None:
+            return {
+                "success": False,
+                "error": (
+                    "refusing to send the bearer token over cleartext HTTP to a "
+                    "non-local destination; use HTTPS or a local address"
+                ),
+                "error_code": "INSECURE_TRANSPORT",
+                "retryable": False,
+            }
+        ha_url, extra_headers = validated_target
+
     url = f"{ha_url}{endpoint}"
     headers = {
         "Authorization": f"Bearer {ha_token}",
         "Content-Type": "application/json",
+        **extra_headers,
     }
 
     last_error: str | None = None
@@ -181,10 +253,17 @@ def make_ha_request(
             }
         request_timeout = timeout if remaining is None else max(0.001, min(timeout, remaining))
         try:
-            if normalized_method == "POST":
-                response = requests.post(url, headers=headers, json=data, timeout=request_timeout)
-            else:
-                response = requests.get(url, headers=headers, timeout=request_timeout)
+            session = requests.Session()
+            session.trust_env = False
+            try:
+                if normalized_method == "POST":
+                    response = session.post(
+                        url, headers=headers, json=data, timeout=request_timeout
+                    )
+                else:
+                    response = session.get(url, headers=headers, timeout=request_timeout)
+            finally:
+                session.close()
 
             response.raise_for_status()
 

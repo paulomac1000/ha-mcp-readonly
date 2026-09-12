@@ -776,3 +776,35 @@ class TestTemplateEntityCodeSmoke:
             eid = templates[0].get("entity_id")
             data = _call_tool("get_template_entity_code", entity_id=eid)
             assert data["success"] is True
+
+
+class TestCriticalConfigEntryStates:
+    """Config entry states come from the Home Assistant API (issue #32)."""
+
+    def test_search_config_entries_report_api_states(self):
+        """Every matched entry carries a real state when the API is reachable."""
+        data = _call_tool("search_config_entries")
+
+        assert data["success"] is True
+        assert data["total_entries"] > 0
+        if data.get("state_source") == "api":
+            assert all(entry.get("state") for entry in data.get("entries", []))
+            valid_states = {
+                "loaded",
+                "not_loaded",
+                "setup_retry",
+                "setup_in_progress",
+                "setup_error",
+                "failed",
+                "migrated",
+            }
+            assert all(entry.get("state") in valid_states for entry in data.get("entries", []))
+        else:
+            assert all("state" not in entry for entry in data.get("entries", []))
+
+    def test_search_config_entries_state_filter(self):
+        """Filtering by a real state returns only entries in that state."""
+        data = _call_tool("search_config_entries", state="loaded")
+
+        assert data["success"] is True
+        assert all(entry.get("state") == "loaded" for entry in data.get("entries", []))

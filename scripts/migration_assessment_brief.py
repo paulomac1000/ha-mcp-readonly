@@ -40,8 +40,8 @@ def main() -> None:
                 "pull_request": args.pr,
                 "required_external_evidence": [
                     "successful exact-head CI jobs and artifact digests",
-                    "official mcp==1.29.0 stdio smoke for negotiated 2025-11-25 on the exact wheel",
-                    "official mcp==1.29.0 Streamable HTTP smoke for negotiated 2025-11-25 on the exact container",
+                    "official mcp==1.29.1 stdio smoke for negotiated 2025-11-25 on the exact wheel",
+                    "official mcp==1.29.1 Streamable HTTP smoke for negotiated 2025-11-25 on the exact container",
                     "real Home Assistant smoke, E2E, and integration suites",
                     "independent GitHub APPROVED review bound to the same revision",
                 ],

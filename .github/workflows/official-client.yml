@@ -13,7 +13,7 @@ concurrency:
 
 env:
   PIP_DISABLE_PIP_VERSION_CHECK: "1"
-  MCP_EXPECTED_VERSION: "2.2.0"
+  MCP_EXPECTED_VERSION: "2.3.0"
   ASSESSED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
 
 jobs:
@@ -54,13 +54,13 @@ jobs:
           /tmp/ha-server/bin/python - <<'PY'
           import importlib.metadata
           assert importlib.metadata.version('fastmcp') == '3.4.6'
-          assert importlib.metadata.version('mcp') == '1.29.0'
-          assert importlib.metadata.version('starlette') == '1.4.1'
+          assert importlib.metadata.version('mcp') == '1.29.1'
+          assert importlib.metadata.version('starlette') == '1.6.0'
           PY
       - name: Install independent official MCP client for the supported 2025-11-25 lane
         run: |
           python -m venv /tmp/official-client
-          /tmp/official-client/bin/python -m pip install 'mcp==1.29.0'
+          /tmp/official-client/bin/python -m pip install 'mcp==1.29.1'
       - name: Official-client stdio verification
         env:
           PYTHONPATH: ${{ github.workspace }}
