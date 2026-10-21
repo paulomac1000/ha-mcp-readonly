@@ -29,9 +29,9 @@ dependencies = [
     "requests>=2.34.2,<2.35",
     "pyyaml>=6.0.3,<6.1",
     "starlette>=1.0,<2",
-    "uvicorn>=0.52,<0.53",
+    "uvicorn>=0.52,<0.55",
     "python-dateutil>=2.9.0.post0,<3",
-    "pydantic>=2.13.4,<2.14",
+    "pydantic>=2.13.4,<2.15",
     "websockets>=17.0,<18",
 ]
 
@@ -42,12 +42,12 @@ ha-mcp-readonly = "server:main"
 dev = [
     "pytest==9.1.1",
     "pytest-asyncio==1.4.0",
-    "pytest-mock==3.15.1",
+    "pytest-mock==3.16.0",
     "pytest-cov==7.1.0",
-    "ruff==0.16.6",
-    "mypy==2.3.1",
+    "ruff==0.17.0",
+    "mypy==2.4.0",
     "bandit==1.9.4",
-    "build==1.6.0",
+    "build==1.6.1",
     "wheel==0.48.0",
     "httpx==0.28.1",
 ]
