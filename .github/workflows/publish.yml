@@ -79,7 +79,7 @@ jobs:
           test "$(git rev-parse HEAD)" = "$release_sha"
           echo "sha=$release_sha" >> "$GITHUB_OUTPUT"
           echo "tag=$release_tag" >> "$GITHUB_OUTPUT"
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
         with:
           python-version: "3.13"
       - name: Test exact release source and build wheel
@@ -95,8 +95,8 @@ jobs:
           pytest tests/unit tests/protocol -q
           python -m build --wheel --no-isolation
           test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
-      - uses: docker/setup-qemu-action@1f40c72289eff860ee54a304f1438e3cff362e0a # v4
-      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
       - name: Log in only to isolated quarantine registry
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
         with:
@@ -166,7 +166,7 @@ jobs:
       id-token: write
       attestations: write
     steps:
-      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
       # Docker credentials are keyed by registry hostname, so two ghcr.io logins
       # overwrite each other. Keep this protected environment credential out of
       # the candidate job and grant it only read access to quarantine plus write
