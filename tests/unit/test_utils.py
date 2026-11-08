@@ -72,6 +72,44 @@ class TestMakeHaRequest:
         assert result["success"] is True
         assert result["data"] == "OK"
 
+    @patch("tools.utils.requests.Session")
+    def test_supervisor_logs_without_charset_decode_utf8(self, session_factory):
+        """Supervisor sends valid UTF-8 bytes but Requests assumes Latin-1."""
+        from requests import Response
+
+        response = Response()
+        response.status_code = 200
+        response.headers["Content-Type"] = "text/plain"
+        response.encoding = "ISO-8859-1"  # Requests' text/plain default
+        response._content = "MVM belépés sikertelen".encode("utf-8")
+        session_factory.return_value.get.return_value = response
+
+        result = make_ha_request(
+            "http://localhost:8123", "tok", "/api/hassio/core/logs"
+        )
+
+        assert result["success"] is True
+        assert result["data"] == "MVM belépés sikertelen"
+        assert "belÃ©pÃ©s" not in result["data"]
+
+    @patch("tools.utils.requests.Session")
+    def test_explicit_legacy_charset_is_preserved(self, session_factory):
+        """Explicit encodings on other endpoints and proxy logs take precedence."""
+        from requests import Response
+
+        response = Response()
+        response.status_code = 200
+        response.headers["Content-Type"] = "text/plain; charset=iso-8859-1"
+        response.encoding = "ISO-8859-1"
+        response._content = b"caf\xe9"
+        session_factory.return_value.get.return_value = response
+
+        result = make_ha_request(
+            "http://localhost:8123", "tok", "/api/hassio/core/logs"
+        )
+        assert result["success"] is True
+        assert result["data"] == "café"
+
     @patch("tools.utils.requests")
     def test_failed_request_with_retry(self, mock_requests):
         import requests
