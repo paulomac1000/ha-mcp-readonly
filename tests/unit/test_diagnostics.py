@@ -716,7 +716,7 @@ class TestIntegrationHealthEdgeCases:
         assert data["stats"]["total_entities"] == 0
         assert "does not prove" in data["readiness_reason"]
 
- 
+
     def test_integration_health_without_config_path_is_observation_only(self):
         """A healthy entity sample does not establish loaded integration readiness."""
         from tools.diagnostics import _do_get_integration_health
@@ -730,15 +730,12 @@ class TestIntegrationHealthEdgeCases:
                 "data": [{"entity_id": "mqtt.online", "state": "on"}],
             }
             mock_reg.return_value = {"data": {"entities": []}}
-            result = _do_get_integration_health(
-                "mqtt", "http://localhost:8123", "fake-token", None
-            )
+            result = _do_get_integration_health("mqtt", "http://localhost:8123", "fake-token", None)
 
         assert result["success"] is True
         assert result["status"] == "Healthy"
         assert result["readiness"] == "UNVERIFIED"
         assert result["recent_log_issues_count"] == 0
-
 
 
 class TestDiagnoseSystemHealthApiFailure:
