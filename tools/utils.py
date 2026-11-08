@@ -270,6 +270,19 @@ def make_ha_request(
             try:
                 return {"success": True, "data": response.json()}
             except ValueError:
+                # The Supervisor HA OS log proxy serves UTF-8 text/plain without
+                # a charset. Requests defaults such responses to ISO-8859-1,
+                # corrupting non-ASCII log search terms and diagnostic evidence.
+                # Limit the override to the known proxy, leaving explicit
+                # charsets and all other API responses unchanged.
+                if endpoint.startswith("/api/hassio/core/logs"):
+                    content_type = response.headers.get("Content-Type", "")
+                    if "charset=" not in content_type.lower():
+                        try:
+                            return {"success": True, "data": response.content.decode("utf-8")}
+                        except UnicodeDecodeError:
+                            # Preserve legacy response decoding for invalid bytes.
+                            pass
                 return {"success": True, "data": response.text}
 
         except requests.exceptions.RequestException as exc:
