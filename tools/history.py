@@ -168,7 +168,15 @@ def _do_get_entity_state_history_summary(
         )
 
     # Cap numeric-sensor state cardinality, reporting any omitted labels.
-    sorted_states = sorted(states_stats.items(), key=lambda item: (-item[1]["count"], str(item[0])))
+    # Failure states must remain visible even when numerical values flood the bounded result.
+    sorted_states = sorted(
+        states_stats.items(),
+        key=lambda item: (
+            0 if item[0] in ("unavailable", "unknown") else 1,
+            -item[1]["count"],
+            str(item[0]),
+        ),
+    )
     omitted_states = max(0, len(sorted_states) - MAX_BREAKDOWN_STATES)
     final_stats = {}
     for state, stats in sorted_states[:MAX_BREAKDOWN_STATES]:
