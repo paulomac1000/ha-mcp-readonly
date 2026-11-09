@@ -130,6 +130,31 @@ class TestGetLogInsights:
         assert "not found" in data["error"].lower()
 
 
+    def test_insights_cache_does_not_cross_ha_source_roots(
+        self, mock_mcp, tmp_path
+    ):
+        first_root = tmp_path / "first"
+        second_root = tmp_path / "second"
+        first_root.mkdir()
+        second_root.mkdir()
+        (first_root / "home-assistant.log").write_text(
+            "2099-01-01 12:00:00 ERROR [component] only-first\n",
+            encoding="utf-8",
+        )
+        (second_root / "home-assistant.log").write_text(
+            "2099-01-01 12:00:00 INFO [component] only-second\n",
+            encoding="utf-8",
+        )
+        register_log_tools(mock_mcp, str(first_root))
+        first = json.loads(mock_mcp._tools["get_log_insights"]())
+        register_log_tools(mock_mcp, str(second_root))
+        second = json.loads(mock_mcp._tools["get_log_insights"]())
+        assert first["summary"]["total_errors"] == 1
+        assert second["summary"]["total_errors"] == 0
+        assert first["_meta"]["excerpt_sha256"] != second["_meta"]["excerpt_sha256"]
+        assert second["_meta"]["boot_generation"] == "UNKNOWN"
+
+
 class TestAnalyzeLogErrors:
     def test_analyze_with_tracebacks(self, mock_mcp, config_path, sample_log_lines):
         log_path = Path(config_path) / "home-assistant.log"
