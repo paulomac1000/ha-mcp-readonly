@@ -326,9 +326,7 @@ def _do_get_log_insights(
         return cached  # type: ignore[no-any-return]
     _meta["excerpt_sha256"] = excerpt_digest
     _meta["boot_generation"] = "UNKNOWN"
-    _meta["coverage_status"] = (
-        "PARTIAL" if _meta.get("truncated") else "SOURCE_SNAPSHOT_ONLY"
-    )
+    _meta["coverage_status"] = "PARTIAL" if _meta.get("truncated") else "SOURCE_SNAPSHOT_ONLY"
 
     cutoff_time = datetime.now(UTC) - timedelta(hours=hours)
 
