@@ -129,10 +129,7 @@ class TestGetLogInsights:
         assert data["success"] is False
         assert "not found" in data["error"].lower()
 
-
-    def test_insights_cache_does_not_cross_ha_source_roots(
-        self, mock_mcp, tmp_path
-    ):
+    def test_insights_cache_does_not_cross_ha_source_roots(self, mock_mcp, tmp_path):
         first_root = tmp_path / "first"
         second_root = tmp_path / "second"
         first_root.mkdir()
