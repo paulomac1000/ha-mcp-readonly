@@ -287,13 +287,6 @@ def _do_get_log_insights(
     ha_url: str = "",
     ha_token: str = "",
 ) -> dict[str, Any]:
-    cache_key = (
-        f"insights_{hours}_{severity}_{group_similar}_{include_affected_entities}_{max_patterns}"
-    )
-    cached = _get_cached_result(cache_key)
-    if cached:
-        return cached  # type: ignore[no-any-return]
-
     hours = min(max(int(hours), 1), 24)
     log_lines, file_meta = _acquire_log_lines("home-assistant.log", config_path, ha_url, ha_token)
     api_fallback_used = False
@@ -319,6 +312,22 @@ def _do_get_log_insights(
         {"source": "api_fallback", "truncated": False, "max_lines": 10000}
         if api_fallback_used
         else dict(file_meta)
+    )
+    # The old key ignored the actual log source/target. Two independent HA
+    # installations could receive each other's cached diagnostics.
+    excerpt_digest = hashlib.sha256("".join(log_lines).encode("utf-8")).hexdigest()
+    target_digest = hashlib.sha256((config_path + "\0" + ha_url).encode("utf-8")).hexdigest()
+    cache_key = (
+        f"insights_{target_digest}_{excerpt_digest}_{hours}_{severity}_"
+        f"{group_similar}_{include_affected_entities}_{max_patterns}"
+    )
+    cached = _get_cached_result(cache_key)
+    if cached is not None:
+        return cached  # type: ignore[no-any-return]
+    _meta["excerpt_sha256"] = excerpt_digest
+    _meta["boot_generation"] = "UNKNOWN"
+    _meta["coverage_status"] = (
+        "PARTIAL" if _meta.get("truncated") else "SOURCE_SNAPSHOT_ONLY"
     )
 
     cutoff_time = datetime.now(UTC) - timedelta(hours=hours)
