@@ -24,6 +24,7 @@ TOOLS_VERSION = "1.0.0"
 MAX_HISTORY_HOURS: int = 168
 MAX_RECENT_MINUTES: int = 60
 MAX_RETURNED_CHANGES: int = 50
+MAX_BREAKDOWN_STATES: int = 32
 RAPID_CYCLING_SECONDS: int = 60
 RAPID_CYCLING_COUNT: int = 3
 
@@ -38,7 +39,8 @@ def _parse_timestamp(ts_str: str) -> datetime | None:
     if not ts_str:
         return None
     try:
-        return datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+        parsed = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+        return parsed if parsed.tzinfo is not None else None
     except ValueError:
         return None
 
@@ -102,6 +104,15 @@ def _do_get_entity_state_history_summary(
                 "period_hours": hours_back,
                 "state_changes": 0,
                 "message": "No history found for this period",
+                "recorder_coverage": {
+                    "source": "HA_RECORDER_HISTORY_API",
+                    "status": "UNVERIFIED",
+                    "reason": "Missing recorder rows do not prove absence of events",
+                    "requested_start_utc": start_time.isoformat(),
+                    "requested_end_utc": end_time.isoformat(),
+                    "observed_rows": 0,
+                    "unknown_unavailable_retained": True,
+                },
             }
         )
 
@@ -112,22 +123,25 @@ def _do_get_entity_state_history_summary(
     processed_changes = []
 
     last_change_time = None
+    invalid_timestamp_count = 0
     rapid_changes = 0
 
     for i, state in enumerate(changes):
-        state_val = state.get("state")
-        if state_val in ["unavailable", "unknown"]:
-            continue
-
+        state_val = state.get("state") or "unknown"
+        # Unavailable/unknown are observed states, not noise to drop.
         current_time = _parse_timestamp(state.get("last_changed"))
         if not current_time:
+            invalid_timestamp_count += 1
             continue
 
         if i < len(changes) - 1:
             next_time = _parse_timestamp(changes[i + 1].get("last_changed"))
-            duration = _calculate_duration(current_time, next_time) if next_time else 0
         else:
-            duration = _calculate_duration(current_time, end_time)
+            next_time = end_time
+        # The Recorder may prepend a state from before the requested window.
+        interval_start = max(current_time, start_time)
+        interval_end = min(next_time, end_time) if next_time else interval_start
+        duration = max(0.0, _calculate_duration(interval_start, interval_end))
 
         states_stats[state_val]["count"] += 1
         states_stats[state_val]["total_duration_min"] += duration
@@ -153,8 +167,11 @@ def _do_get_entity_state_history_summary(
             }
         )
 
+    # Cap numeric-sensor state cardinality, reporting any omitted labels.
+    sorted_states = sorted(states_stats.items(), key=lambda item: (-item[1]["count"], str(item[0])))
+    omitted_states = max(0, len(sorted_states) - MAX_BREAKDOWN_STATES)
     final_stats = {}
-    for state, stats in states_stats.items():
+    for state, stats in sorted_states[:MAX_BREAKDOWN_STATES]:
         avg = stats["total_duration_min"] / max(stats["count"], 1)
         final_stats[state] = {
             "count": stats["count"],
@@ -171,9 +188,9 @@ def _do_get_entity_state_history_summary(
             if not ts:
                 continue
             if group_by == "hour":
-                bucket_key = ts.strftime("%Y-%m-%dT%H:00")
+                bucket_key = ts.astimezone(UTC).strftime("%Y-%m-%dT%H:00Z")
             else:
-                bucket_key = ts.strftime("%Y-%m-%d")
+                bucket_key = ts.astimezone(UTC).strftime("%Y-%m-%d")
             state_val = ch["state"]
             try:
                 numeric_val = float(state_val)
@@ -196,6 +213,18 @@ def _do_get_entity_state_history_summary(
         "total_changes": len(processed_changes),
         "states_breakdown": final_stats,
         "anomalies": anomalies,
+        "recorder_coverage": {
+            "source": "HA_RECORDER_HISTORY_API",
+            "status": "UNVERIFIED",
+            "reason": "Recorder rows do not prove full event-bus or window coverage",
+            "requested_start_utc": start_time.isoformat(),
+            "requested_end_utc": end_time.isoformat(),
+            "observed_rows": len(changes),
+            "invalid_timestamps": invalid_timestamp_count,
+            "unknown_unavailable_retained": True,
+            "state_breakdown_truncated": omitted_states > 0,
+            "omitted_state_labels": omitted_states,
+        },
         "current_state_duration_min": processed_changes[-1]["duration_min"]
         if processed_changes
         else 0,
