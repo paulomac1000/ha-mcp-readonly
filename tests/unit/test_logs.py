@@ -154,7 +154,6 @@ class TestAnalyzeLogErrors:
         assert data["success"] is False
         assert "not found" in data["error"].lower()
 
-
     def test_window_tracks_source_time_without_claiming_utc_or_full_boot(
         self, mock_mcp, config_path
     ):
@@ -214,7 +213,10 @@ class TestAnalyzeLogErrors:
         changed = json.loads(tool())
         assert changed["total_errors"] == 0
         assert changed["analysis_outcome"] == "NO_ERRORS_OBSERVED_ONLY"
-        assert changed["source_metadata"]["excerpt_sha256"] != first["source_metadata"]["excerpt_sha256"]
+        assert (
+            changed["source_metadata"]["excerpt_sha256"]
+            != first["source_metadata"]["excerpt_sha256"]
+        )
 
     def test_log_tail_truncation_remains_partial(self, mock_mcp, config_path):
         register_log_tools(mock_mcp, config_path)
@@ -228,9 +230,7 @@ class TestAnalyzeLogErrors:
         assert data["source_metadata"]["truncated"] is True
         assert data["analysis_outcome"] == "NO_ERRORS_OBSERVED_ONLY"
 
-    def test_info_flood_does_not_inflate_warning_or_group_counts(
-        self, mock_mcp, config_path
-    ):
+    def test_info_flood_does_not_inflate_warning_or_group_counts(self, mock_mcp, config_path):
         log = Path(config_path) / "home-assistant.log"
         records = [
             f"2099-01-01 12:00:00 INFO [automation.test] Running automation actions {n}\n"
@@ -241,8 +241,7 @@ class TestAnalyzeLogErrors:
             for n in range(80)
         ]
         records += [
-            f"2099-01-01 12:02:00 ERROR [integration.error] Error number {n}\n"
-            for n in range(21)
+            f"2099-01-01 12:02:00 ERROR [integration.error] Error number {n}\n" for n in range(21)
         ]
         log.write_text("".join(records), encoding="utf-8")
         register_log_tools(mock_mcp, config_path)
