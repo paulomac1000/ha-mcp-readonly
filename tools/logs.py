@@ -9,6 +9,7 @@ Optimizations:
 - TTL cache
 """
 
+import hashlib
 import logging
 import re
 import threading
@@ -534,17 +535,38 @@ def _do_analyze_log_errors(
     config_path: str = "",
     ha_url: str = "",
     ha_token: str = "",
+    since_source_time: str | None = None,
+    until_source_time: str | None = None,
 ) -> dict[str, Any]:
-    cache_key = f"analyze_{log_source}_{max_results}"
-    cached = _get_cached_result(cache_key)
-    if cached:
-        return cached  # type: ignore[no-any-return]
+    """Summarize an observed log excerpt without claiming full-boot coverage.
 
-    max_results = int(max_results)
+    Optional boundaries use the source log's naive wall-clock timestamp, NOT
+    UTC. An unqualified timezone cannot produce a UTC/boot acceptance receipt.
+    """
+    if log_source not in {"current", "previous"}:
+        return {"error": "log_source must be 'current' or 'previous'"}
+    try:
+        max_results = int(max_results)
+    except (TypeError, ValueError):
+        return {"error": "max_results must be an integer from 1 to 50"}
+    if not 1 <= max_results <= 50:
+        return {"error": "max_results must be an integer from 1 to 50"}
+
+    for value in (since_source_time, until_source_time):
+        if value is not None:
+            if not isinstance(value, str) or not re.fullmatch(
+                r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}", value
+            ):
+                return {"error": "window bounds must use YYYY-MM-DD HH:MM:SS (source local)"}
+            try:
+                datetime.strptime(value, "%Y-%m-%d %H:%M:%S")
+            except ValueError:
+                return {"error": "invalid source-local timestamp"}
+    if since_source_time and until_source_time and since_source_time > until_source_time:
+        return {"error": "since_source_time must be <= until_source_time"}
 
     log_file = "home-assistant.log" if log_source == "current" else "home-assistant.log.1"
-    log_lines, _ = _acquire_log_lines(log_file, config_path, ha_url, ha_token)
-
+    log_lines, source_meta = _acquire_log_lines(log_file, config_path, ha_url, ha_token)
     if not log_lines:
         return {
             "error": (
@@ -552,6 +574,21 @@ def _do_analyze_log_errors(
                 "(api/hassio/core/logs) is unavailable"
             )
         }
+
+    # Cache by the bounded *actual content* and target identity. The prior
+    # cache key ignored file/target changes and could replay another source's
+    # counts for 60 seconds, even if the caller requested a different HA.
+    excerpt_digest = hashlib.sha256("".join(log_lines).encode("utf-8")).hexdigest()
+    target_digest = hashlib.sha256(
+        (config_path + "\0" + ha_url).encode("utf-8")
+    ).hexdigest()
+    cache_key = (
+        f"analyze_{target_digest}_{log_source}_{max_results}_"
+        f"{since_source_time}_{until_source_time}_{excerpt_digest}"
+    )
+    cached = _get_cached_result(cache_key)
+    if cached is not None:
+        return cached  # type: ignore[no-any-return]
 
     errors = []
     warnings = []
@@ -561,9 +598,32 @@ def _do_analyze_log_errors(
 
     current_traceback = []
     in_traceback = False
+    has_window = since_source_time is not None or until_source_time is not None
+    last_dated_in_window = not has_window
+    seen_timestamps: list[str] = []
+    undated_or_unparsed = 0
+    omitted_outside_window = 0
+    grouped: dict[tuple[str, str, str], dict[str, Any]] = {}
 
     for line in log_lines:
         parsed = _parse_log_line(line)
+        ts = parsed.get("timestamp")
+        if isinstance(ts, str):
+            seen_timestamps.append(ts)
+            last_dated_in_window = (
+                (since_source_time is None or ts >= since_source_time)
+                and (until_source_time is None or ts <= until_source_time)
+            )
+            if not last_dated_in_window and in_traceback:
+                in_traceback = False
+                current_traceback = []
+        elif has_window and not last_dated_in_window:
+            undated_or_unparsed += 1
+        if has_window and not last_dated_in_window:
+            omitted_outside_window += 1
+            continue
+        if not isinstance(ts, str):
+            undated_or_unparsed += int(not has_window)
 
         # Detect traceback
         if "Traceback (most recent call last):" in line:
@@ -591,6 +651,26 @@ def _do_analyze_log_errors(
         component = parsed.get("component", "")
         message = parsed.get("message", "")
 
+        if level in {"ERROR", "WARNING"}:
+            key = (level, str(component), _normalize_pattern(str(message)))
+            entry = grouped.setdefault(
+                key,
+                {
+                    "severity": level,
+                    "component": component,
+                    "pattern": key[2],
+                    "count": 0,
+                    "first_source_time": None,
+                    "last_source_time": None,
+                },
+            )
+            entry["count"] += 1
+            if isinstance(ts, str):
+                if entry["first_source_time"] is None or ts < entry["first_source_time"]:
+                    entry["first_source_time"] = ts
+                if entry["last_source_time"] is None or ts > entry["last_source_time"]:
+                    entry["last_source_time"] = ts
+
         if level == "ERROR":
             errors.append(parsed)
 
@@ -616,16 +696,50 @@ def _do_analyze_log_errors(
     error_comp_counter = Counter([e.get("component", "") for e in errors])
     warning_comp_counter = Counter([w.get("component", "") for w in warnings])
 
+    source_truncated = bool(source_meta.get("truncated"))
+    source_coverage = (
+        "PARTIAL" if source_truncated or undated_or_unparsed else "SOURCE_SNAPSHOT_ONLY"
+    )
     summary = {
         "success": True,
         "log_source": log_file,
+        "analysis_outcome": "ERRORS_OBSERVED" if errors else "NO_ERRORS_OBSERVED_ONLY",
+        "coverage_status": source_coverage,
+        "source_observed_at_utc": datetime.now(UTC).isoformat(),
+        "source_metadata": {
+            "backend": source_meta.get("source", "unknown"),
+            "truncated": source_truncated,
+            "max_lines": source_meta.get("max_lines"),
+            "observed_lines": len(log_lines),
+            "excerpt_sha256": excerpt_digest,
+            "boot_generation": "UNKNOWN",
+        },
+        "requested_window": {
+            "since": since_source_time,
+            "until": until_source_time,
+            "time_basis": "SOURCE_LOG_LOCAL_UNVERIFIED",
+        },
+        "observed_source_window": {
+            "earliest": min(seen_timestamps, default=None),
+            "latest": max(seen_timestamps, default=None),
+            "excluded_lines": omitted_outside_window,
+            "undated_lines": undated_or_unparsed,
+        },
+        "raw_level_counts": {
+            "ERROR": len(errors),
+            "WARNING": len(warnings),
+        },
+        "grouped_signatures": sorted(
+            grouped.values(), key=lambda e: (-e["count"], e["severity"], e["component"], e["pattern"])
+        )[:min(max_results, 20)],
+        "grouped_signatures_omitted": max(0, len(grouped) - min(max_results, 20)),
         "total_errors": len(errors),
         "total_warnings": len(warnings),
         "total_tracebacks": len(tracebacks),
         "most_common_errors": [
             {"message": msg, "count": count}
-            for msg, count in error_counter.most_common(max_results)
-        ][:20],
+            for msg, count in error_counter.most_common(min(max_results, 20))
+        ],
         "components_with_errors": [
             {"component": comp, "count": count}
             for comp, count in error_comp_counter.most_common(20)
@@ -1035,16 +1149,26 @@ def register_log_tools(  # type: ignore[no-untyped-def]
             return _error_response(str(e))
 
     @mcp.tool()
-    def analyze_log_errors(log_source: str = "current", max_results: int = 50) -> str:
-        """[READ] Analyzes logs and returns intelligent summary of errors and warnings.
+    def analyze_log_errors(
+        log_source: str = "current",
+        max_results: int = 50,
+        since_source_time: str | None = None,
+        until_source_time: str | None = None,
+    ) -> str:
+        """[READ] Bounded error and warning summary with source coverage.
+
+        Source-local log times have no verified UTC offset. Counts are
+        observations, never proof that a boot or deployment had zero errors.
 
         Args:
             log_source: "current" or "previous"
-            max_results: Maximum number of results (default: 50)
+            max_results: Maximum patterns returned (1..50)
+            since_source_time: Inclusive YYYY-MM-DD HH:MM:SS in source log time
+            until_source_time: Inclusive YYYY-MM-DD HH:MM:SS in source log time
 
         Returns:
-            JSON with error and warning counts, most common errors, component
-            breakdowns, device issues, and recent tracebacks.
+            JSON with raw severity counts, grouped signatures, bounded
+            provenance, unknown boot generation and coverage status.
         """
         try:
             result = _do_analyze_log_errors(
@@ -1053,6 +1177,8 @@ def register_log_tools(  # type: ignore[no-untyped-def]
                 config_path=config_path,
                 ha_url=ha_url,
                 ha_token=ha_token,
+                since_source_time=since_source_time,
+                until_source_time=until_source_time,
             )
             if isinstance(result, dict) and "error" in result:
                 return _error_response(result["error"])
