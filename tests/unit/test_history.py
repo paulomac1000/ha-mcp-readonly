@@ -170,10 +170,12 @@ class TestGetEntityStateHistorySummary:
     @pytest.mark.asyncio
     async def test_missing_timestamp_never_proves_completeness(self):
         now = datetime.now(UTC)
-        rows = [[
-            {"state": "on", "last_changed": (now - timedelta(minutes=5)).isoformat()},
-            {"state": "unavailable", "last_changed": "not-a-date"},
-        ]]
+        rows = [
+            [
+                {"state": "on", "last_changed": (now - timedelta(minutes=5)).isoformat()},
+                {"state": "unavailable", "last_changed": "not-a-date"},
+            ]
+        ]
         with patch("tools.history.make_ha_request") as mock_request:
             mock_request.return_value = {"success": True, "data": rows}
             register_history_tools(self.mock_mcp, self.ha_url, self.ha_token)
@@ -188,10 +190,12 @@ class TestGetEntityStateHistorySummary:
     @pytest.mark.asyncio
     async def test_pre_window_duration_is_clamped(self):
         now = datetime.now(UTC)
-        rows = [[
-            {"state": "on", "last_changed": (now - timedelta(hours=48)).isoformat()},
-            {"state": "off", "last_changed": (now - timedelta(hours=1)).isoformat()},
-        ]]
+        rows = [
+            [
+                {"state": "on", "last_changed": (now - timedelta(hours=48)).isoformat()},
+                {"state": "off", "last_changed": (now - timedelta(hours=1)).isoformat()},
+            ]
+        ]
         with patch("tools.history.make_ha_request") as mock_request:
             mock_request.return_value = {"success": True, "data": rows}
             register_history_tools(self.mock_mcp, self.ha_url, self.ha_token)
@@ -206,10 +210,12 @@ class TestGetEntityStateHistorySummary:
     @pytest.mark.asyncio
     async def test_high_cardinality_state_breakdown_is_bounded(self):
         now = datetime.now(UTC)
-        rows = [[
-            {"state": str(i), "last_changed": (now - timedelta(minutes=80-i)).isoformat()}
-            for i in range(80)
-        ]]
+        rows = [
+            [
+                {"state": str(i), "last_changed": (now - timedelta(minutes=80 - i)).isoformat()}
+                for i in range(80)
+            ]
+        ]
         with patch("tools.history.make_ha_request") as mock_request:
             mock_request.return_value = {"success": True, "data": rows}
             register_history_tools(self.mock_mcp, self.ha_url, self.ha_token)
