@@ -557,18 +557,12 @@ def _do_analyze_log_errors(
             if not isinstance(value, str) or not re.fullmatch(
                 r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}", value
             ):
-                return {
-                    "error": "window bounds must use YYYY-MM-DD HH:MM:SS (source local)"
-                }
+                return {"error": "window bounds must use YYYY-MM-DD HH:MM:SS (source local)"}
             try:
                 datetime.strptime(value, "%Y-%m-%d %H:%M:%S")
             except ValueError:
                 return {"error": "invalid source-local timestamp"}
-    if (
-        since_source_time
-        and until_source_time
-        and since_source_time > until_source_time
-    ):
+    if since_source_time and until_source_time and since_source_time > until_source_time:
         return {"error": "since_source_time must be <= until_source_time"}
 
     log_file = "home-assistant.log" if log_source == "current" else "home-assistant.log.1"
@@ -585,9 +579,7 @@ def _do_analyze_log_errors(
     # cache key ignored file/target changes and could replay another source's
     # counts for 60 seconds, even if the caller requested a different HA.
     excerpt_digest = hashlib.sha256("".join(log_lines).encode("utf-8")).hexdigest()
-    target_digest = hashlib.sha256(
-        (config_path + "\0" + ha_url).encode("utf-8")
-    ).hexdigest()
+    target_digest = hashlib.sha256((config_path + "\0" + ha_url).encode("utf-8")).hexdigest()
     cache_key = (
         f"analyze_{target_digest}_{log_source}_{max_results}_"
         f"{since_source_time}_{until_source_time}_{excerpt_digest}"
@@ -602,7 +594,7 @@ def _do_analyze_log_errors(
     device_issues = defaultdict(list)
     permission_errors = []
 
-    current_traceback = []
+    current_traceback: list[str] = []
     in_traceback = False
     has_window = since_source_time is not None or until_source_time is not None
     last_dated_in_window = not has_window
@@ -616,9 +608,8 @@ def _do_analyze_log_errors(
         ts = parsed.get("timestamp")
         if isinstance(ts, str):
             seen_timestamps.append(ts)
-            last_dated_in_window = (
-                (since_source_time is None or ts >= since_source_time)
-                and (until_source_time is None or ts <= until_source_time)
+            last_dated_in_window = (since_source_time is None or ts >= since_source_time) and (
+                until_source_time is None or ts <= until_source_time
             )
             if not last_dated_in_window and in_traceback:
                 in_traceback = False
@@ -705,14 +696,8 @@ def _do_analyze_log_errors(
     source_truncated = bool(source_meta.get("truncated"))
     window_exceeds_observed = has_window and (
         not seen_timestamps
-        or (
-            since_source_time is not None
-            and since_source_time < min(seen_timestamps)
-        )
-        or (
-            until_source_time is not None
-            and until_source_time > max(seen_timestamps)
-        )
+        or (since_source_time is not None and since_source_time < min(seen_timestamps))
+        or (until_source_time is not None and until_source_time > max(seen_timestamps))
     )
     source_coverage = (
         "PARTIAL"
