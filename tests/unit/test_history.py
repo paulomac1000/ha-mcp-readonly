@@ -133,10 +133,11 @@ class TestGetEntityStateHistorySummary:
         data = json.loads(result)
         assert data["success"] is True
         assert "No history" in data.get("message", "")
+        assert data["recorder_coverage"]["status"] == "UNVERIFIED"
 
     @pytest.mark.asyncio
-    async def test_unavailable_states_filtered(self):
-        """'unavailable' and 'unknown' states must not appear in states_breakdown."""
+    async def test_unavailable_states_retained(self):
+        """Recorder failures must remain visible, with explicit unverified coverage."""
         now = datetime.now(UTC)
         history_with_noise = [
             [
@@ -159,9 +160,67 @@ class TestGetEntityStateHistorySummary:
             )
         data = json.loads(result)
         assert data["success"] is True
-        assert "unavailable" not in data["states_breakdown"]
-        assert "unknown" not in data["states_breakdown"]
+        assert "unavailable" in data["states_breakdown"]
+        assert "unknown" in data["states_breakdown"]
         assert "on" in data["states_breakdown"]
+        assert data["total_changes"] == 3
+        assert data["recorder_coverage"]["status"] == "UNVERIFIED"
+        assert data["recorder_coverage"]["unknown_unavailable_retained"] is True
+
+    @pytest.mark.asyncio
+    async def test_missing_timestamp_never_proves_completeness(self):
+        now = datetime.now(UTC)
+        rows = [[
+            {"state": "on", "last_changed": (now - timedelta(minutes=5)).isoformat()},
+            {"state": "unavailable", "last_changed": "not-a-date"},
+        ]]
+        with patch("tools.history.make_ha_request") as mock_request:
+            mock_request.return_value = {"success": True, "data": rows}
+            register_history_tools(self.mock_mcp, self.ha_url, self.ha_token)
+            result = await self.mock_mcp._tools["get_entity_state_history_summary"](
+                "switch.test", 24
+            )
+        data = json.loads(result)
+        assert data["success"] is True
+        assert data["recorder_coverage"]["invalid_timestamps"] == 1
+        assert data["recorder_coverage"]["status"] == "UNVERIFIED"
+
+    @pytest.mark.asyncio
+    async def test_pre_window_duration_is_clamped(self):
+        now = datetime.now(UTC)
+        rows = [[
+            {"state": "on", "last_changed": (now - timedelta(hours=48)).isoformat()},
+            {"state": "off", "last_changed": (now - timedelta(hours=1)).isoformat()},
+        ]]
+        with patch("tools.history.make_ha_request") as mock_request:
+            mock_request.return_value = {"success": True, "data": rows}
+            register_history_tools(self.mock_mcp, self.ha_url, self.ha_token)
+            result = await self.mock_mcp._tools["get_entity_state_history_summary"](
+                "switch.test", 24
+            )
+        data = json.loads(result)
+        assert data["success"] is True
+        assert 22.9 * 60 <= data["states_breakdown"]["on"]["total_duration_min"] <= 23.1 * 60
+        assert data["recorder_coverage"]["status"] == "UNVERIFIED"
+
+    @pytest.mark.asyncio
+    async def test_high_cardinality_state_breakdown_is_bounded(self):
+        now = datetime.now(UTC)
+        rows = [[
+            {"state": str(i), "last_changed": (now - timedelta(minutes=80-i)).isoformat()}
+            for i in range(80)
+        ]]
+        with patch("tools.history.make_ha_request") as mock_request:
+            mock_request.return_value = {"success": True, "data": rows}
+            register_history_tools(self.mock_mcp, self.ha_url, self.ha_token)
+            result = await self.mock_mcp._tools["get_entity_state_history_summary"](
+                "sensor.test", 24
+            )
+        data = json.loads(result)
+        assert data["success"] is True
+        assert len(data["states_breakdown"]) == 32
+        assert data["recorder_coverage"]["state_breakdown_truncated"] is True
+        assert data["recorder_coverage"]["omitted_state_labels"] == 48
 
     @pytest.mark.asyncio
     async def test_detail_level_full_default_backward_compat(self):
