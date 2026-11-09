@@ -53,9 +53,20 @@ jobs:
           /tmp/ha-server/bin/python -m pip check
           /tmp/ha-server/bin/python - <<'PY'
           import importlib.metadata
-          assert importlib.metadata.version('fastmcp') == '3.4.6'
-          assert importlib.metadata.version('mcp') == '1.29.1'
-          assert importlib.metadata.version('starlette') == '1.6.0'
+          from pathlib import Path
+
+          # Check actual installed artifacts against the single pinned constraints file.
+          pins = {}
+          for raw in Path("constraints-ci.txt").read_text(encoding="utf-8").splitlines():
+              line = raw.strip()
+              if line and not line.startswith("#") and "==" in line:
+                  name, version = line.split("==", 1)
+                  pins[name.lower()] = version
+
+          for package in ("fastmcp", "mcp", "starlette"):
+              assert package in pins, f"Missing constrained package: {package}"
+              actual = importlib.metadata.version(package)
+              assert actual == pins[package], f"{package} installed {actual}, pinned {pins[package]}"
           PY
       - name: Install independent official MCP client for the supported 2025-11-25 lane
         run: |
