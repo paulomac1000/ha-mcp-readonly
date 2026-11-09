@@ -727,7 +727,7 @@ def _do_audit_config_orphans(
     ha_url: str,
     ha_token: str,
 ) -> dict[str, Any]:
-    """Find orphan entities, never-triggered automations, broken entity references, and unused blueprints."""
+    """Report incomplete reference-scan candidates without cleanup authority."""
     warnings: list[str] = []
     try:
         ent_reg = load_registry("core.entity_registry", config_path)
@@ -829,17 +829,42 @@ def _do_audit_config_orphans(
         except Exception:
             warnings.append("Could not scan blueprints directory")
 
+        # This scanner does not cover packages, template ownership, instantiated
+        # blueprints or arbitrary dynamic references. Missing observed references
+        # are *candidates*, never proven unused entities or a deletion grant.
+        reference_coverage = {
+            "automations_yaml": "FAILED" if auto_warn else "SCANNED",
+            "scripts_yaml": "SCANNED" if os.path.exists(scripts_path) else "NOT_PRESENT",
+            "scenes_yaml": "SCANNED" if os.path.exists(scenes_path) else "NOT_PRESENT",
+            "packages": "NOT_SCANNED",
+            "templates": "NOT_SCANNED",
+            "blueprint_instances": "NOT_SCANNED",
+            "dynamic_references": "UNRESOLVED",
+        }
+        warnings.append(
+            "Reference scan is incomplete: candidates are not proven orphans "
+            "and MUST NOT authorize deletion or destructive cleanup"
+        )
+
         return {
+            "reference_evidence_class": "REFERENCE_CANDIDATE",
+            "reference_source_coverage": reference_coverage,
+            "reference_coverage_complete": False,
+            "safe_to_delete": False,
+            "unreferenced_candidates": orphan_entities[:100],
+            "unreferenced_candidate_count": len(orphan_entities),
             "orphan_entities": orphan_entities[:100],
             "orphan_count": len(orphan_entities),
             "never_triggered_automations": never_triggered,
             "never_triggered_count": len(never_triggered),
             "never_triggered_status": "unknown" if not states_api_ok else "complete",
             "data_quality": (
-                {"overall": "complete"}
+                {"overall": "partial", "states_api": "complete", "reference_sources": "partial"}
                 if states_api_ok
                 else {
+                    "overall": "partial",
                     "states_api": "failed",
+                    "reference_sources": "partial",
                     "states_error": states_api_error or "Unknown error",
                 }
             ),
@@ -848,10 +873,10 @@ def _do_audit_config_orphans(
             "unused_blueprints": unused_blueprints,
             "unused_blueprint_count": len(unused_blueprints),
             "summary": (
-                f"{len(orphan_entities)} orphan entities, "
-                f"{len(never_triggered)} never-triggered automations, "
-                f"{len(broken_references)} broken references, "
-                f"{len(unused_blueprints)} unused blueprints"
+                f"{len(orphan_entities)} unreferenced candidates (NOT proven orphans), "
+                f"{len(never_triggered)} automations without recorded trigger, "
+                f"{len(broken_references)} potentially broken reference candidates, "
+                f"{len(unused_blueprints)} blueprint candidates (partial scan)"
             ),
             "warnings": warnings,
         }
@@ -994,7 +1019,7 @@ def register_composite_tools(  # type: ignore[no-untyped-def]
 
         Returns:
             JSON with:
-            - orphan_entities: entities never used in automations/scripts/scenes/dashboards
+            - orphan_entities: LEGACY alias for advisory reference candidates (NOT proven orphans)
             - never_triggered_automations: automations with no last_triggered
             - broken_references: entity references in configs but missing from registry
             - unused_blueprints: blueprint files not used by any automation or script
