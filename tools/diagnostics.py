@@ -644,11 +644,24 @@ def _do_get_integration_health(
     ]
 
     if not domain_entities:
+        # An integration may be loaded but expose no state entities (or have all
+        # entities disabled). The states API cannot prove its lifecycle.
         return {
-            "success": False,
+            "success": True,
             "domain": domain,
-            "status": "Not Found / No Entities",
-            "error": f"No entities found for domain '{domain}'",
+            "status": "Unknown (No Matching Entity Observations)",
+            "readiness": "UNVERIFIED",
+            "readiness_reason": (
+                "No matching state entities; this does not prove that the "
+                "integration is missing or unloaded. Check the config entry API."
+            ),
+            "evidence_class": "ENTITY_STATE_ONLY",
+            "stats": {
+                "total_entities": 0,
+                "unavailable": 0,
+                "available": 0,
+                "availability_pct": None,
+            },
         }
 
     unavailable = [e for e in domain_entities if e["state"] in ["unavailable", "unknown"]]
@@ -656,14 +669,16 @@ def _do_get_integration_health(
     log_issues = []
     if config_path is not None:
         log_path = Path(config_path) / "home-assistant.log"
-    if log_path.exists():
-        try:
-            with open(log_path, encoding="utf-8", errors="ignore") as f:
-                for line in f.readlines()[-2000:]:
-                    if domain.lower() in line.lower() and ("ERROR" in line or "WARNING" in line):
-                        log_issues.append(line.strip()[:200])
-        except Exception:
-            pass
+        if log_path.exists():
+            try:
+                with open(log_path, encoding="utf-8", errors="ignore") as f:
+                    for line in f.readlines()[-2000:]:
+                        if domain.lower() in line.lower() and (
+                            "ERROR" in line or "WARNING" in line
+                        ):
+                            log_issues.append(line.strip()[:200])
+            except OSError:
+                pass
 
     availability_pct = (
         ((len(domain_entities) - len(unavailable)) / len(domain_entities) * 100)
@@ -698,6 +713,12 @@ def _do_get_integration_health(
         "success": True,
         "domain": domain,
         "status": status,
+        "readiness": "UNVERIFIED",
+        "readiness_reason": (
+            "Entity availability is not the integration's config-entry lifecycle "
+            "or proof that an automation and its triggers are loaded."
+        ),
+        "evidence_class": "ENTITY_STATE_ONLY",
         "stats": {
             "total_entities": len(domain_entities),
             "unavailable": len(unavailable),

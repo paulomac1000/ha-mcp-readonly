@@ -709,11 +709,55 @@ class TestIntegrationHealthEdgeCases:
             result = tool("nonexistent_integration")
             data = json.loads(result)
 
-        assert data["success"] is False
-        assert (
-            "not found" in data["status"].lower() or "no entities" in data.get("error", "").lower()
-        )
+        assert data["success"] is True
         assert data["domain"] == "nonexistent_integration"
+        assert data["readiness"] == "UNVERIFIED"
+        assert data["evidence_class"] == "ENTITY_STATE_ONLY"
+        assert data["stats"]["total_entities"] == 0
+        assert "does not prove" in data["readiness_reason"]
+
+    def test_integration_health_without_config_path_is_observation_only(self):
+        """A healthy entity sample does not establish loaded integration readiness."""
+        from tools.diagnostics import _do_get_integration_health
+
+        with (
+            patch("tools.diagnostics.make_ha_request") as mock_req,
+            patch("tools.diagnostics.load_registry") as mock_reg,
+        ):
+            mock_req.return_value = {
+                "success": True,
+                "data": [{"entity_id": "mqtt.online", "state": "on"}],
+            }
+            mock_reg.return_value = {"data": {"entities": []}}
+            result = _do_get_integration_health("mqtt", "http://localhost:8123", "fake-token", None)
+
+        assert result["success"] is True
+        assert result["status"] == "Healthy"
+        assert result["readiness"] == "UNVERIFIED"
+        assert result["recent_log_issues_count"] == 0
+
+    def test_integration_health_log_read_error_is_not_lifecycle_failure(self, tmp_path):
+        """Unavailable optional file logs do not erase entity observations."""
+        from tools.diagnostics import _do_get_integration_health
+
+        (tmp_path / "home-assistant.log").write_text("ERROR [mqtt] fake message")
+        with (
+            patch("tools.diagnostics.make_ha_request") as mock_req,
+            patch("tools.diagnostics.load_registry") as mock_reg,
+            patch("builtins.open", side_effect=OSError("permission denied")),
+        ):
+            mock_req.return_value = {
+                "success": True,
+                "data": [{"entity_id": "mqtt.online", "state": "on"}],
+            }
+            mock_reg.return_value = {"data": {"entities": []}}
+            result = _do_get_integration_health(
+                "mqtt", "http://localhost:8123", "fake-token", str(tmp_path)
+            )
+
+        assert result["success"] is True
+        assert result["readiness"] == "UNVERIFIED"
+        assert result["recent_log_issues_count"] == 0
 
 
 class TestDiagnoseSystemHealthApiFailure:
