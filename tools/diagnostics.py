@@ -673,7 +673,9 @@ def _do_get_integration_health(
             try:
                 with open(log_path, encoding="utf-8", errors="ignore") as f:
                     for line in f.readlines()[-2000:]:
-                        if domain.lower() in line.lower() and ("ERROR" in line or "WARNING" in line):
+                        if domain.lower() in line.lower() and (
+                            "ERROR" in line or "WARNING" in line
+                        ):
                             log_issues.append(line.strip()[:200])
             except OSError:
                 pass
