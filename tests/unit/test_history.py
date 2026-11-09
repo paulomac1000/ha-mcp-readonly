@@ -229,6 +229,31 @@ class TestGetEntityStateHistorySummary:
         assert data["recorder_coverage"]["omitted_state_labels"] == 48
 
     @pytest.mark.asyncio
+    async def test_unavailable_survives_high_cardinality_truncation(self):
+        now = datetime.now(UTC)
+        rows = [
+            [
+                {
+                    "state": str(i),
+                    "last_changed": (now - timedelta(minutes=81 - i)).isoformat(),
+                }
+                for i in range(80)
+            ]
+            + [{"state": "unavailable", "last_changed": now.isoformat()}]
+        ]
+        with patch("tools.history.make_ha_request") as mock_request:
+            mock_request.return_value = {"success": True, "data": rows}
+            register_history_tools(self.mock_mcp, self.ha_url, self.ha_token)
+            result = await self.mock_mcp._tools["get_entity_state_history_summary"](
+                "sensor.test", 24
+            )
+        data = json.loads(result)
+        assert data["success"] is True
+        assert len(data["states_breakdown"]) == 32
+        assert "unavailable" in data["states_breakdown"]
+        assert data["recorder_coverage"]["omitted_state_labels"] == 49
+
+    @pytest.mark.asyncio
     async def test_detail_level_full_default_backward_compat(self):
         """detail_level='full' (default) uses minimal_response=false in the API call."""
         with patch("tools.history.make_ha_request") as mock_request:
