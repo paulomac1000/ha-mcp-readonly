@@ -557,12 +557,18 @@ def _do_analyze_log_errors(
             if not isinstance(value, str) or not re.fullmatch(
                 r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}", value
             ):
-                return {"error": "window bounds must use YYYY-MM-DD HH:MM:SS (source local)"}
+                return {
+                    "error": "window bounds must use YYYY-MM-DD HH:MM:SS (source local)"
+                }
             try:
                 datetime.strptime(value, "%Y-%m-%d %H:%M:%S")
             except ValueError:
                 return {"error": "invalid source-local timestamp"}
-    if since_source_time and until_source_time and since_source_time > until_source_time:
+    if (
+        since_source_time
+        and until_source_time
+        and since_source_time > until_source_time
+    ):
         return {"error": "since_source_time must be <= until_source_time"}
 
     log_file = "home-assistant.log" if log_source == "current" else "home-assistant.log.1"
@@ -697,8 +703,23 @@ def _do_analyze_log_errors(
     warning_comp_counter = Counter([w.get("component", "") for w in warnings])
 
     source_truncated = bool(source_meta.get("truncated"))
+    window_exceeds_observed = has_window and (
+        not seen_timestamps
+        or (
+            since_source_time is not None
+            and since_source_time < min(seen_timestamps)
+        )
+        or (
+            until_source_time is not None
+            and until_source_time > max(seen_timestamps)
+        )
+    )
     source_coverage = (
-        "PARTIAL" if source_truncated or undated_or_unparsed else "SOURCE_SNAPSHOT_ONLY"
+        "PARTIAL"
+        if source_truncated or undated_or_unparsed
+        else "WINDOW_UNVERIFIED"
+        if window_exceeds_observed
+        else "SOURCE_SNAPSHOT_ONLY"
     )
     summary = {
         "success": True,
@@ -730,8 +751,14 @@ def _do_analyze_log_errors(
             "WARNING": len(warnings),
         },
         "grouped_signatures": sorted(
-            grouped.values(), key=lambda e: (-e["count"], e["severity"], e["component"], e["pattern"])
-        )[:min(max_results, 20)],
+            grouped.values(),
+            key=lambda e: (
+                -e["count"],
+                e["severity"],
+                e["component"],
+                e["pattern"],
+            ),
+        )[: min(max_results, 20)],
         "grouped_signatures_omitted": max(0, len(grouped) - min(max_results, 20)),
         "total_errors": len(errors),
         "total_warnings": len(warnings),
