@@ -129,6 +129,28 @@ class TestGetLogInsights:
         assert data["success"] is False
         assert "not found" in data["error"].lower()
 
+    def test_insights_cache_does_not_cross_ha_source_roots(self, mock_mcp, tmp_path):
+        first_root = tmp_path / "first"
+        second_root = tmp_path / "second"
+        first_root.mkdir()
+        second_root.mkdir()
+        (first_root / "home-assistant.log").write_text(
+            "2099-01-01 12:00:00 ERROR [component] only-first\n",
+            encoding="utf-8",
+        )
+        (second_root / "home-assistant.log").write_text(
+            "2099-01-01 12:00:00 INFO [component] only-second\n",
+            encoding="utf-8",
+        )
+        register_log_tools(mock_mcp, str(first_root))
+        first = json.loads(mock_mcp._tools["get_log_insights"]())
+        register_log_tools(mock_mcp, str(second_root))
+        second = json.loads(mock_mcp._tools["get_log_insights"]())
+        assert first["summary"]["total_errors"] == 1
+        assert second["summary"]["total_errors"] == 0
+        assert first["_meta"]["excerpt_sha256"] != second["_meta"]["excerpt_sha256"]
+        assert second["_meta"]["boot_generation"] == "UNKNOWN"
+
 
 class TestAnalyzeLogErrors:
     def test_analyze_with_tracebacks(self, mock_mcp, config_path, sample_log_lines):
@@ -153,6 +175,105 @@ class TestAnalyzeLogErrors:
         data = json.loads(mock_mcp._tools["analyze_log_errors"](log_source="previous"))
         assert data["success"] is False
         assert "not found" in data["error"].lower()
+
+    def test_window_tracks_source_time_without_claiming_utc_or_full_boot(
+        self, mock_mcp, config_path
+    ):
+        log = Path(config_path) / "home-assistant.log"
+        log.write_text(
+            "2099-01-01 12:00:00.000 ERROR [integration.a] old error\n"
+            "2099-01-01 12:02:00.000 WARNING [integration.b] new warning\n"
+            "2099-01-01 12:03:00.000 INFO [integration.b] Running automation actions\n"
+            "2099-01-01 12:04:00.000 ERROR [integration.c] new error\n",
+            encoding="utf-8",
+        )
+        register_log_tools(mock_mcp, config_path)
+        result = json.loads(
+            mock_mcp._tools["analyze_log_errors"](
+                since_source_time="2099-01-01 12:02:00",
+                until_source_time="2099-01-01 12:04:00",
+            )
+        )
+        assert result["success"] is True
+        assert result["raw_level_counts"] == {"ERROR": 1, "WARNING": 1}
+        assert result["total_errors"] == 1
+        assert result["requested_window"]["time_basis"] == "SOURCE_LOG_LOCAL_UNVERIFIED"
+        assert result["source_metadata"]["boot_generation"] == "UNKNOWN"
+        assert result["source_metadata"]["excerpt_sha256"]
+        assert result["analysis_outcome"] == "ERRORS_OBSERVED"
+        assert result["coverage_status"] == "SOURCE_SNAPSHOT_ONLY"
+        assert result["observed_source_window"]["excluded_lines"] == 1
+
+    def test_invalid_window_and_source_fail_before_log_io(self, mock_mcp, config_path):
+        register_log_tools(mock_mcp, config_path)
+        tool = mock_mcp._tools["analyze_log_errors"]
+        with patch("tools.logs._acquire_log_lines") as acquire:
+            for kwargs in (
+                {"log_source": "other"},
+                {"since_source_time": "2099-02-31 12:00:00"},
+                {"since_source_time": "2099-01-01T12:00:00Z"},
+                {
+                    "since_source_time": "2099-01-02 12:00:00",
+                    "until_source_time": "2099-01-01 12:00:00",
+                },
+                {"max_results": 0},
+            ):
+                result = json.loads(tool(**kwargs))
+                assert result["success"] is False
+            acquire.assert_not_called()
+
+    def test_source_content_change_invalidates_cached_summary(self, mock_mcp, config_path):
+        log = Path(config_path) / "home-assistant.log"
+        register_log_tools(mock_mcp, config_path)
+        tool = mock_mcp._tools["analyze_log_errors"]
+
+        log.write_text("2099-01-01 12:00:00 ERROR [component] first\n")
+        first = json.loads(tool())
+        assert first["total_errors"] == 1
+
+        log.write_text("2099-01-01 12:00:00 INFO [component] now fine\n")
+        changed = json.loads(tool())
+        assert changed["total_errors"] == 0
+        assert changed["analysis_outcome"] == "NO_ERRORS_OBSERVED_ONLY"
+        assert (
+            changed["source_metadata"]["excerpt_sha256"]
+            != first["source_metadata"]["excerpt_sha256"]
+        )
+
+    def test_log_tail_truncation_remains_partial(self, mock_mcp, config_path):
+        register_log_tools(mock_mcp, config_path)
+        lines = ["2099-01-01 12:00:00 INFO [component] normal\n"]
+        with patch(
+            "tools.logs._acquire_log_lines",
+            return_value=(lines, {"source": "log_file", "truncated": True, "max_lines": 1}),
+        ):
+            data = json.loads(mock_mcp._tools["analyze_log_errors"]())
+        assert data["coverage_status"] == "PARTIAL"
+        assert data["source_metadata"]["truncated"] is True
+        assert data["analysis_outcome"] == "NO_ERRORS_OBSERVED_ONLY"
+
+    def test_info_flood_does_not_inflate_warning_or_group_counts(self, mock_mcp, config_path):
+        log = Path(config_path) / "home-assistant.log"
+        records = [
+            f"2099-01-01 12:00:00 INFO [automation.test] Running automation actions {n}\n"
+            for n in range(700)
+        ]
+        records += [
+            f"2099-01-01 12:01:00 WARNING [integration.warning] Reconnect attempt {n}\n"
+            for n in range(80)
+        ]
+        records += [
+            f"2099-01-01 12:02:00 ERROR [integration.error] Error number {n}\n" for n in range(21)
+        ]
+        log.write_text("".join(records), encoding="utf-8")
+        register_log_tools(mock_mcp, config_path)
+        data = json.loads(mock_mcp._tools["analyze_log_errors"]())
+        assert data["raw_level_counts"] == {"ERROR": 21, "WARNING": 80}
+        assert data["total_errors"] == 21
+        assert data["total_warnings"] == 80
+        assert len(data["grouped_signatures"]) <= 20
+        assert not any(x["severity"] == "INFO" for x in data["grouped_signatures"])
+        assert any(x["count"] == 80 for x in data["grouped_signatures"])
 
 
 class TestBasicLogReading:
