@@ -1397,6 +1397,14 @@ class TestAuditConfigOrphans:
         assert result["success"] is True
         assert result["orphan_count"] > 0
         assert "sensor.orphan_unused" in result["orphan_entities"]
+        assert "sensor.orphan_unused" in result["unreferenced_candidates"]
+        assert result["unreferenced_candidate_count"] == result["orphan_count"]
+        assert result["reference_evidence_class"] == "REFERENCE_CANDIDATE"
+        assert result["reference_coverage_complete"] is False
+        assert result["safe_to_delete"] is False
+        assert result["reference_source_coverage"]["packages"] == "NOT_SCANNED"
+        assert result["reference_source_coverage"]["blueprint_instances"] == "NOT_SCANNED"
+        assert "NOT proven orphans" in result["summary"]
 
     @pytest.mark.asyncio
     async def test_broken_references(self):
@@ -1502,6 +1510,8 @@ class TestAuditConfigOrphans:
 
         assert result["success"] is True
         assert result["data_quality"]["states_api"] == "failed"
+        assert result["data_quality"]["overall"] == "partial"
+        assert result["safe_to_delete"] is False
         assert "Connection refused" in result["data_quality"]["states_error"]
         assert result["never_triggered_status"] == "unknown"
         assert result["never_triggered_automations"] == []
@@ -1541,7 +1551,9 @@ class TestAuditConfigOrphans:
             result = json.loads(await self.mcp._tools["audit_config_orphans"]())
 
         assert result["success"] is True
-        assert result["data_quality"]["overall"] == "complete"
+        assert result["data_quality"]["overall"] == "partial"
+        assert result["data_quality"]["states_api"] == "complete"
+        assert result["data_quality"]["reference_sources"] == "partial"
         assert result["never_triggered_status"] == "complete"
         # Automation was triggered, so never_triggered should be empty
         assert result["never_triggered_automations"] == []
