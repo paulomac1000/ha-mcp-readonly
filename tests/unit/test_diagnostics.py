@@ -716,7 +716,6 @@ class TestIntegrationHealthEdgeCases:
         assert data["stats"]["total_entities"] == 0
         assert "does not prove" in data["readiness_reason"]
 
-
     def test_integration_health_without_config_path_is_observation_only(self):
         """A healthy entity sample does not establish loaded integration readiness."""
         from tools.diagnostics import _do_get_integration_health
