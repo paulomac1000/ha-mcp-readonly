@@ -160,10 +160,10 @@ class TestAnalyzeLogErrors:
     ):
         log = Path(config_path) / "home-assistant.log"
         log.write_text(
-            "2099-01-01 12:00:00.000 ERROR [integration.a] old error\\n"
-            "2099-01-01 12:02:00.000 WARNING [integration.b] new warning\\n"
-            "2099-01-01 12:03:00.000 INFO [integration.b] Running automation actions\\n"
-            "2099-01-01 12:04:00.000 ERROR [integration.c] new error\\n",
+            "2099-01-01 12:00:00.000 ERROR [integration.a] old error\n"
+            "2099-01-01 12:02:00.000 WARNING [integration.b] new warning\n"
+            "2099-01-01 12:03:00.000 INFO [integration.b] Running automation actions\n"
+            "2099-01-01 12:04:00.000 ERROR [integration.c] new error\n",
             encoding="utf-8",
         )
         register_log_tools(mock_mcp, config_path)
@@ -206,11 +206,11 @@ class TestAnalyzeLogErrors:
         register_log_tools(mock_mcp, config_path)
         tool = mock_mcp._tools["analyze_log_errors"]
 
-        log.write_text("2099-01-01 12:00:00 ERROR [component] first\\n")
+        log.write_text("2099-01-01 12:00:00 ERROR [component] first\n")
         first = json.loads(tool())
         assert first["total_errors"] == 1
 
-        log.write_text("2099-01-01 12:00:00 INFO [component] now fine\\n")
+        log.write_text("2099-01-01 12:00:00 INFO [component] now fine\n")
         changed = json.loads(tool())
         assert changed["total_errors"] == 0
         assert changed["analysis_outcome"] == "NO_ERRORS_OBSERVED_ONLY"
@@ -218,7 +218,7 @@ class TestAnalyzeLogErrors:
 
     def test_log_tail_truncation_remains_partial(self, mock_mcp, config_path):
         register_log_tools(mock_mcp, config_path)
-        lines = ["2099-01-01 12:00:00 INFO [component] normal\\n"]
+        lines = ["2099-01-01 12:00:00 INFO [component] normal\n"]
         with patch(
             "tools.logs._acquire_log_lines",
             return_value=(lines, {"source": "log_file", "truncated": True, "max_lines": 1}),
@@ -233,15 +233,15 @@ class TestAnalyzeLogErrors:
     ):
         log = Path(config_path) / "home-assistant.log"
         records = [
-            f"2099-01-01 12:00:00 INFO [automation.test] Running automation actions {n}\\n"
+            f"2099-01-01 12:00:00 INFO [automation.test] Running automation actions {n}\n"
             for n in range(700)
         ]
         records += [
-            f"2099-01-01 12:01:00 WARNING [integration.warning] Reconnect attempt {n}\\n"
+            f"2099-01-01 12:01:00 WARNING [integration.warning] Reconnect attempt {n}\n"
             for n in range(80)
         ]
         records += [
-            f"2099-01-01 12:02:00 ERROR [integration.error] Error number {n}\\n"
+            f"2099-01-01 12:02:00 ERROR [integration.error] Error number {n}\n"
             for n in range(21)
         ]
         log.write_text("".join(records), encoding="utf-8")
