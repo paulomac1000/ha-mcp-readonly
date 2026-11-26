@@ -9,14 +9,17 @@ Optimizations:
 - TTL cache
 """
 
+import hashlib
+import json
 import logging
 import re
 import threading
 import time
 from collections import Counter, defaultdict
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, timezone, tzinfo
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from tools.utils import _error_response, _success_response, tail_log_file
 
@@ -93,6 +96,89 @@ def _parse_log_line(line: str) -> dict[str, Any]:
         result["unparsed"] = True  # type: ignore[assignment]
 
     return result
+
+
+_OFFSET_PATTERN = re.compile(r"([+-])(\d{2}):(\d{2})")
+_STARTUP_MARKER = "Starting Home Assistant"
+
+
+def _parse_trusted_timezone(value: str | None) -> tzinfo | None:
+    """Parse a caller-supplied IANA timezone or fixed UTC offset."""
+    if value is None:
+        return None
+    candidate = value.strip()
+    if not candidate:
+        return None
+    if candidate.upper() in {"Z", "UTC"}:
+        return UTC
+    offset_match = _OFFSET_PATTERN.fullmatch(candidate)
+    if offset_match is not None:
+        sign = 1 if offset_match.group(1) == "+" else -1
+        delta = timedelta(
+            hours=int(offset_match.group(2)),
+            minutes=int(offset_match.group(3)),
+        )
+        return timezone(sign * delta)
+    try:
+        return ZoneInfo(candidate)
+    except (ZoneInfoNotFoundError, ValueError):
+        return None
+
+
+def _source_time_to_utc(value: str, zone: tzinfo) -> datetime:
+    """Convert a naive source timestamp using a trusted timezone."""
+    return datetime.strptime(value, "%Y-%m-%d %H:%M:%S").replace(tzinfo=zone).astimezone(UTC)
+
+
+def _offset_label(value: datetime) -> str:
+    """Return a compact +HH:MM offset label for an aware datetime."""
+    return value.isoformat()[-6:]
+
+
+def _local_offset_label(value: str, zone: tzinfo) -> str:
+    """Return the source-local offset for a naive timestamp."""
+    return _offset_label(datetime.strptime(value, "%Y-%m-%d %H:%M:%S").replace(tzinfo=zone))
+
+
+def _scan_generation_evidence(log_lines: list[str]) -> dict[str, Any]:
+    """Derive boot generation and file span without assuming a clean boot."""
+    marker_indices = [index for index, line in enumerate(log_lines) if _STARTUP_MARKER in line]
+    dated = [
+        match.group(1)
+        for line in log_lines
+        if (match := _TIMESTAMP_PATTERN.search(line)) is not None
+    ]
+    marker_count = len(marker_indices)
+    marker_source_time: str | None = None
+    generation: str | None = None
+    if marker_indices:
+        marker_source_time = _parse_log_line(log_lines[marker_indices[-1]]).get("timestamp")
+    if marker_count == 1:
+        segment = "".join(log_lines[marker_indices[0] :]).encode("utf-8")
+        generation = "sha256:" + hashlib.sha256(segment).hexdigest()
+        status = "DERIVED"
+    elif marker_count > 1:
+        status = "MIXED_GENERATIONS"
+    else:
+        status = "START_MARKER_MISSING"
+    return {
+        "status": status,
+        "generation": generation,
+        "startup_marker_count": marker_count,
+        "startup_marker_source_time": marker_source_time,
+        "marker_indices": marker_indices,
+        "source_file_span": {
+            "earliest": min(dated, default=None),
+            "latest": max(dated, default=None),
+        },
+    }
+
+
+def _evidence_digest(payload: dict[str, Any]) -> str:
+    """Hash a stable projection of the evidence receipt, excluding clock churn."""
+    return hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+    ).hexdigest()
 
 
 def _read_log_file(
@@ -286,13 +372,6 @@ def _do_get_log_insights(
     ha_url: str = "",
     ha_token: str = "",
 ) -> dict[str, Any]:
-    cache_key = (
-        f"insights_{hours}_{severity}_{group_similar}_{include_affected_entities}_{max_patterns}"
-    )
-    cached = _get_cached_result(cache_key)
-    if cached:
-        return cached  # type: ignore[no-any-return]
-
     hours = min(max(int(hours), 1), 24)
     log_lines, file_meta = _acquire_log_lines("home-assistant.log", config_path, ha_url, ha_token)
     api_fallback_used = False
@@ -319,6 +398,31 @@ def _do_get_log_insights(
         if api_fallback_used
         else dict(file_meta)
     )
+    # The old key ignored the actual log source/target. Two independent HA
+    # installations could receive each other's cached diagnostics.
+    excerpt_digest = hashlib.sha256("".join(log_lines).encode("utf-8")).hexdigest()
+    target_digest = hashlib.sha256((config_path + "\0" + ha_url).encode("utf-8")).hexdigest()
+    cache_key = repr(
+        (
+            "insights",
+            target_digest,
+            excerpt_digest,
+            hours,
+            severity,
+            group_similar,
+            include_affected_entities,
+            max_patterns,
+            _meta.get("source"),
+            bool(_meta.get("truncated")),
+            _meta.get("max_lines"),
+        )
+    )
+    cached = _get_cached_result(cache_key)
+    if cached is not None:
+        return cached  # type: ignore[no-any-return]
+    _meta["excerpt_sha256"] = excerpt_digest
+    _meta["boot_generation"] = "UNKNOWN"
+    _meta["coverage_status"] = "PARTIAL" if _meta.get("truncated") else "SOURCE_SNAPSHOT_ONLY"
 
     cutoff_time = datetime.now(UTC) - timedelta(hours=hours)
 
@@ -523,6 +627,17 @@ def _do_get_log_insights(
             }
         )
 
+    result["count_semantics"] = {
+        "version": 1,
+        "raw": "SEVERITY_PREFIX",
+        "grouped": "NORMALIZED_SIGNATURE",
+    }
+    result["raw_level_counts"] = {"ERROR": len(errors), "WARNING": len(warnings)}
+    result["requested_utc_window"] = {
+        "status": "UNVERIFIED",
+        "reason": "Source timestamps have no trusted UTC offset",
+    }
+    _meta["cutoff_reason"] = "TRUNCATED_MAX_LINES" if _meta.get("truncated") else "NONE"
     result["_meta"] = _meta
     _set_cache_result(cache_key, result)
     return result
@@ -534,17 +649,46 @@ def _do_analyze_log_errors(
     config_path: str = "",
     ha_url: str = "",
     ha_token: str = "",
+    since_source_time: str | None = None,
+    until_source_time: str | None = None,
+    source_timezone: str | None = None,
+    owner_component: str | None = None,
 ) -> dict[str, Any]:
-    cache_key = f"analyze_{log_source}_{max_results}"
-    cached = _get_cached_result(cache_key)
-    if cached:
-        return cached  # type: ignore[no-any-return]
+    """Summarize an observed log excerpt without claiming full-boot coverage.
 
-    max_results = int(max_results)
+    Optional boundaries use the source log's naive wall-clock timestamp, NOT
+    UTC. Exact UTC windows are produced only when the caller supplies a trusted
+    source timezone or fixed offset.
+    """
+    if log_source not in {"current", "previous"}:
+        return {"error": "log_source must be 'current' or 'previous'"}
+    try:
+        max_results = int(max_results)
+    except (TypeError, ValueError):
+        return {"error": "max_results must be a positive integer"}
+    if max_results < 1:
+        return {"error": "max_results must be a positive integer"}
+    max_results = min(max_results, 20)
+
+    for value in (since_source_time, until_source_time):
+        if value is not None:
+            if not isinstance(value, str) or not re.fullmatch(
+                r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}", value
+            ):
+                return {"error": "window bounds must use YYYY-MM-DD HH:MM:SS (source local)"}
+            try:
+                datetime.strptime(value, "%Y-%m-%d %H:%M:%S")
+            except ValueError:
+                return {"error": "invalid source-local timestamp"}
+    if since_source_time and until_source_time and since_source_time > until_source_time:
+        return {"error": "since_source_time must be <= until_source_time"}
+
+    trusted_tz = _parse_trusted_timezone(source_timezone)
+    if source_timezone is not None and trusted_tz is None:
+        return {"error": "source_timezone must be a valid IANA name or +HH:MM offset"}
 
     log_file = "home-assistant.log" if log_source == "current" else "home-assistant.log.1"
-    log_lines, _ = _acquire_log_lines(log_file, config_path, ha_url, ha_token)
-
+    log_lines, source_meta = _acquire_log_lines(log_file, config_path, ha_url, ha_token)
     if not log_lines:
         return {
             "error": (
@@ -553,17 +697,79 @@ def _do_analyze_log_errors(
             )
         }
 
+    # Cache by the bounded *actual content* and target identity. The prior
+    # cache key ignored file/target changes and could replay another source's
+    # counts for 60 seconds, even if the caller requested a different HA.
+    excerpt_digest = hashlib.sha256("".join(log_lines).encode("utf-8")).hexdigest()
+    target_digest = hashlib.sha256((config_path + "\0" + ha_url).encode("utf-8")).hexdigest()
+    cache_key = repr(
+        (
+            "analyze",
+            target_digest,
+            log_source,
+            max_results,
+            since_source_time,
+            until_source_time,
+            source_timezone,
+            owner_component,
+            excerpt_digest,
+            source_meta.get("source"),
+            bool(source_meta.get("truncated")),
+            source_meta.get("max_lines"),
+        )
+    )
+    observed_at = datetime.now(UTC).isoformat()
+    cached = _get_cached_result(cache_key)
+    if cached is not None:
+        return {**cached, "replay_status": "UNCHANGED"}
+
+    generation_evidence = _scan_generation_evidence(log_lines)
+    marker_indices = generation_evidence["marker_indices"]
+    current_generation_start = marker_indices[-1] if marker_indices else None
+    critical_error_count = 0
+    owner_level_counts: Counter[str] = Counter()
+    sightings: list[tuple[str, str]] = []
+
     errors = []
     warnings = []
     tracebacks = []
     device_issues = defaultdict(list)
     permission_errors = []
 
-    current_traceback = []
+    current_traceback: list[str] = []
     in_traceback = False
+    has_window = since_source_time is not None or until_source_time is not None
+    last_dated_in_window = not has_window
+    seen_timestamps: list[str] = []
+    undated_or_unparsed = 0
+    omitted_outside_window = 0
+    grouped: dict[tuple[str, str, str], dict[str, Any]] = {}
 
-    for line in log_lines:
+    for line_index, line in enumerate(log_lines):
         parsed = _parse_log_line(line)
+        ts = parsed.get("timestamp")
+        if (
+            current_generation_start is not None
+            and line_index >= current_generation_start
+            and parsed.get("level") == "ERROR"
+        ):
+            critical_error_count += 1
+        if isinstance(ts, str):
+            last_dated_in_window = (since_source_time is None or ts >= since_source_time) and (
+                until_source_time is None or ts <= until_source_time
+            )
+            if last_dated_in_window:
+                seen_timestamps.append(ts)
+            if not last_dated_in_window and in_traceback:
+                in_traceback = False
+                current_traceback = []
+        elif has_window and not last_dated_in_window:
+            undated_or_unparsed += 1
+        if has_window and not last_dated_in_window:
+            omitted_outside_window += 1
+            continue
+        if not isinstance(ts, str):
+            undated_or_unparsed += int(not has_window)
 
         # Detect traceback
         if "Traceback (most recent call last):" in line:
@@ -591,6 +797,31 @@ def _do_analyze_log_errors(
         component = parsed.get("component", "")
         message = parsed.get("message", "")
 
+        if level in {"ERROR", "WARNING"}:
+            if isinstance(ts, str):
+                sightings.append((ts, level))
+            if owner_component and owner_component.lower() in str(component).lower():
+                owner_level_counts[level] += 1
+
+            key = (level, str(component), _normalize_pattern(str(message)))
+            entry = grouped.setdefault(
+                key,
+                {
+                    "severity": level,
+                    "component": component,
+                    "pattern": key[2],
+                    "count": 0,
+                    "first_source_time": None,
+                    "last_source_time": None,
+                },
+            )
+            entry["count"] += 1
+            if isinstance(ts, str):
+                if entry["first_source_time"] is None or ts < entry["first_source_time"]:
+                    entry["first_source_time"] = ts
+                if entry["last_source_time"] is None or ts > entry["last_source_time"]:
+                    entry["last_source_time"] = ts
+
         if level == "ERROR":
             errors.append(parsed)
 
@@ -616,16 +847,208 @@ def _do_analyze_log_errors(
     error_comp_counter = Counter([e.get("component", "") for e in errors])
     warning_comp_counter = Counter([w.get("component", "") for w in warnings])
 
+    source_truncated = bool(source_meta.get("truncated"))
+    marker_count = int(generation_evidence["startup_marker_count"])
+    generation_status = str(generation_evidence["status"])
+    generation = generation_evidence["generation"]
+    sightings.sort(key=lambda item: item[0])
+    first_source_time = sightings[0][0] if sightings else None
+    last_source_time = sightings[-1][0] if sightings else None
+    generation_scope = "SINGLE" if marker_count == 1 else "MIXED" if marker_count > 1 else "UNKNOWN"
+    first_sighting = {
+        "source_time": first_source_time,
+        "utc": _source_time_to_utc(first_source_time, trusted_tz).isoformat()
+        if trusted_tz is not None and first_source_time is not None
+        else None,
+        "generation_scope": generation_scope,
+    }
+    last_sighting = {
+        "source_time": last_source_time,
+        "utc": _source_time_to_utc(last_source_time, trusted_tz).isoformat()
+        if trusted_tz is not None and last_source_time is not None
+        else None,
+        "generation_scope": generation_scope,
+    }
+    if trusted_tz is not None and first_source_time is not None:
+        local_offset = _local_offset_label(first_source_time, trusted_tz)
+    elif trusted_tz is not None and since_source_time is not None:
+        local_offset = _local_offset_label(since_source_time, trusted_tz)
+    else:
+        local_offset = None
+    if trusted_tz is not None and (since_source_time is not None or until_source_time is not None):
+        requested_utc_window = {
+            "status": "VERIFIED",
+            "since_utc": _source_time_to_utc(since_source_time, trusted_tz).isoformat()
+            if since_source_time is not None
+            else None,
+            "until_utc": _source_time_to_utc(until_source_time, trusted_tz).isoformat()
+            if until_source_time is not None
+            else None,
+        }
+    elif trusted_tz is not None:
+        requested_utc_window = {"status": "NOT_REQUESTED", "since_utc": None, "until_utc": None}
+    else:
+        requested_utc_window = {
+            "status": "UNVERIFIED",
+            "since_utc": None,
+            "until_utc": None,
+            "reason": "Source timestamps have no trusted UTC offset",
+        }
+    if trusted_tz is not None and sightings:
+        covered_utc_window = {
+            "status": "VERIFIED",
+            "first_seen_utc": _source_time_to_utc(first_source_time, trusted_tz).isoformat()
+            if first_source_time is not None
+            else None,
+            "last_seen_utc": _source_time_to_utc(last_source_time, trusted_tz).isoformat()
+            if last_source_time is not None
+            else None,
+        }
+    else:
+        covered_utc_window = {
+            "status": "UNVERIFIED",
+            "first_seen_utc": None,
+            "last_seen_utc": None,
+            "reason": "Source timestamps have no trusted UTC offset"
+            if trusted_tz is None
+            else "No dated error or warning sightings in the selected window",
+        }
+    if log_source == "previous":
+        rotation_coverage = "LOG_ROTATED"
+    elif marker_count == 0:
+        rotation_coverage = "UNKNOWN"
+    elif marker_count > 1:
+        rotation_coverage = "MIXED_GENERATIONS"
+    else:
+        rotation_coverage = "SINGLE_GENERATION"
+    if source_truncated:
+        cutoff_reason = "TRUNCATED_MAX_LINES"
+    elif log_source == "previous":
+        cutoff_reason = "ROTATION"
+    elif marker_count == 0:
+        cutoff_reason = "UNKNOWN"
+    else:
+        cutoff_reason = "NONE"
+    if marker_count == 0:
+        global_critical: bool | None = None
+        critical_reason = "START_MARKER_MISSING"
+    elif source_truncated:
+        global_critical = None
+        critical_reason = "COVERAGE_PARTIAL"
+    elif marker_count > 1:
+        global_critical = None
+        critical_reason = "MIXED_GENERATIONS"
+    else:
+        global_critical = critical_error_count > 0
+        critical_reason = None
+    if owner_component:
+        owner_counts = {
+            "ERROR": owner_level_counts.get("ERROR", 0),
+            "WARNING": owner_level_counts.get("WARNING", 0),
+        }
+        owner_outcome = (
+            "OWNER_ERRORS_OBSERVED"
+            if owner_counts["ERROR"] or owner_counts["WARNING"]
+            else "OWNER_WINDOW_NO_ERRORS"
+        )
+    else:
+        owner_counts = None
+        owner_outcome = "NOT_REQUESTED"
+    window_exceeds_observed = has_window and (
+        not seen_timestamps
+        or (since_source_time is not None and since_source_time < min(seen_timestamps))
+        or (until_source_time is not None and until_source_time > max(seen_timestamps))
+    )
+    source_coverage = (
+        "PARTIAL"
+        if source_truncated or undated_or_unparsed or marker_count != 1 or log_source == "previous"
+        else "WINDOW_UNVERIFIED"
+        if window_exceeds_observed
+        else "SOURCE_SNAPSHOT_ONLY"
+    )
     summary = {
         "success": True,
         "log_source": log_file,
+        "analysis_outcome": "ERRORS_OBSERVED" if errors else "NO_ERRORS_OBSERVED_ONLY",
+        "coverage_status": source_coverage,
+        "source_observed_at_utc": observed_at,
+        "source_metadata": {
+            "backend": source_meta.get("source", "unknown"),
+            "truncated": source_truncated,
+            "max_lines": source_meta.get("max_lines"),
+            "observed_lines": len(log_lines),
+            "excerpt_sha256": excerpt_digest,
+            "boot_generation": generation if isinstance(generation, str) else "UNKNOWN",
+        },
+        "requested_window": {
+            "since": since_source_time,
+            "until": until_source_time,
+            "time_basis": "CALLER_TRUSTED_OFFSET"
+            if trusted_tz is not None
+            else "SOURCE_LOG_LOCAL_UNVERIFIED",
+        },
+        "time_basis": {
+            "clock_confidence": "CALLER_TRUSTED_OFFSET"
+            if trusted_tz is not None
+            else "TIME_BASIS_UNKNOWN",
+            "timezone_source": "CALLER" if trusted_tz is not None else "UNKNOWN",
+            "source_timezone": source_timezone,
+            "local_offset": local_offset,
+        },
+        "requested_utc_window": requested_utc_window,
+        "covered_utc_window": covered_utc_window,
+        "observed_utc_window": covered_utc_window,
+        "first_sighting": first_sighting,
+        "last_sighting": last_sighting,
+        "source_file_span": generation_evidence["source_file_span"],
+        "ha_start_generation": {
+            "status": generation_status,
+            "generation": generation,
+            "startup_marker_count": marker_count,
+            "startup_marker_source_time": generation_evidence["startup_marker_source_time"],
+        },
+        "rotation_coverage": rotation_coverage,
+        "cutoff_reason": cutoff_reason,
+        "owner_receipt": {
+            "owner_scope": owner_component,
+            "owner_outcome": owner_outcome,
+            "owner_raw_level_counts": owner_counts,
+            "global_critical_startup_errors_present": global_critical,
+            "global_critical_error_count": critical_error_count if marker_count > 0 else 0,
+            "reason": critical_reason,
+        },
+        "count_semantics": {
+            "version": 1,
+            "raw": "SEVERITY_PREFIX",
+            "grouped": "NORMALIZED_SIGNATURE",
+        },
+        "observed_source_window": {
+            "earliest": min(seen_timestamps, default=None),
+            "latest": max(seen_timestamps, default=None),
+            "excluded_lines": omitted_outside_window,
+            "undated_lines": undated_or_unparsed,
+        },
+        "raw_level_counts": {
+            "ERROR": len(errors),
+            "WARNING": len(warnings),
+        },
+        "grouped_signatures": sorted(
+            grouped.values(),
+            key=lambda e: (
+                -e["count"],
+                e["severity"],
+                e["component"],
+                e["pattern"],
+            ),
+        )[:max_results],
+        "grouped_signatures_omitted": max(0, len(grouped) - max_results),
         "total_errors": len(errors),
         "total_warnings": len(warnings),
         "total_tracebacks": len(tracebacks),
         "most_common_errors": [
             {"message": msg, "count": count}
             for msg, count in error_counter.most_common(max_results)
-        ][:20],
+        ],
         "components_with_errors": [
             {"component": comp, "count": count}
             for comp, count in error_comp_counter.most_common(20)
@@ -649,6 +1072,26 @@ def _do_analyze_log_errors(
         ],
     }
 
+    summary["replay_status"] = "OBSERVED"
+    summary["evidence_digest"] = _evidence_digest(
+        {
+            "backend": source_meta.get("source", "unknown"),
+            "log_source": log_file,
+            "excerpt_sha256": excerpt_digest,
+            "generation_status": generation_status,
+            "generation": generation,
+            "rotation_coverage": rotation_coverage,
+            "cutoff_reason": cutoff_reason,
+            "requested": [since_source_time, until_source_time, source_timezone],
+            "raw_level_counts": summary["raw_level_counts"],
+            "owner_scope": owner_component,
+            "owner_counts": owner_counts,
+            "grouped": [
+                [item["severity"], item["component"], item["pattern"], item["count"]]
+                for item in summary["grouped_signatures"]
+            ],
+        }
+    )
     _set_cache_result(cache_key, summary)
     return summary
 
@@ -928,7 +1371,7 @@ def _do_get_log_timeline(
         hours_int = 1
 
     log_file = "home-assistant.log" if log_source == "current" else "home-assistant.log.1"
-    log_lines, _ = _acquire_log_lines(log_file, config_path, ha_url, ha_token)
+    log_lines, source_meta = _acquire_log_lines(log_file, config_path, ha_url, ha_token)
 
     if not log_lines:
         return {
@@ -938,7 +1381,8 @@ def _do_get_log_timeline(
             )
         }
 
-    cutoff_time = datetime.now(UTC) - timedelta(hours=hours_int)
+    # Source timestamps are naive wall-clock values. Do not relabel them UTC.
+    cutoff_time = datetime.now() - timedelta(hours=hours_int)
     timeline = []
 
     for line in log_lines:
@@ -954,7 +1398,7 @@ def _do_get_log_timeline(
             continue
 
         try:
-            timestamp = datetime.strptime(timestamp_str, "%Y-%m-%d %H:%M:%S").replace(tzinfo=UTC)
+            timestamp = datetime.strptime(timestamp_str, "%Y-%m-%d %H:%M:%S")
 
             if timestamp >= cutoff_time:
                 timeline.append(
@@ -973,6 +1417,25 @@ def _do_get_log_timeline(
     return {
         "log_source": log_file,
         "time_range_hours": hours_int,
+        "raw_level_counts": {
+            "ERROR": sum(1 for event in timeline if event["level"] == "ERROR"),
+            "WARNING": sum(1 for event in timeline if event["level"] == "WARNING"),
+        },
+        "cutoff_reason": "TRUNCATED_MAX_LINES" if source_meta.get("truncated") else "NONE",
+        "time_basis": "SOURCE_LOG_LOCAL_UNVERIFIED",
+        "requested_utc_window": {
+            "status": "UNVERIFIED",
+            "reason": "Source timestamps have no trusted UTC offset",
+        },
+        "observed_source_window": {
+            "earliest": min((event["timestamp"] for event in timeline), default=None),
+            "latest": max((event["timestamp"] for event in timeline), default=None),
+        },
+        "count_semantics": {
+            "version": 1,
+            "raw": "SEVERITY_PREFIX",
+            "grouped": "NORMALIZED_SIGNATURE",
+        },
         "total_events_found": total_found,
         "events_returned": min(len(timeline), 100),
         "timeline": timeline[-100:],
@@ -1035,16 +1498,32 @@ def register_log_tools(  # type: ignore[no-untyped-def]
             return _error_response(str(e))
 
     @mcp.tool()
-    def analyze_log_errors(log_source: str = "current", max_results: int = 50) -> str:
-        """[READ] Analyzes logs and returns intelligent summary of errors and warnings.
+    def analyze_log_errors(
+        log_source: str = "current",
+        max_results: int = 50,
+        since_source_time: str | None = None,
+        until_source_time: str | None = None,
+        source_timezone: str | None = None,
+        owner_component: str | None = None,
+    ) -> str:
+        """[READ] Bounded error and warning summary with source coverage.
+
+        Source-local log times have no verified UTC offset unless the caller
+        supplies a trusted timezone or fixed offset. Counts are observations,
+        never proof that a boot or deployment had zero errors.
 
         Args:
             log_source: "current" or "previous"
-            max_results: Maximum number of results (default: 50)
+            max_results: Requested maximum patterns (positive integer, capped at 20).
+            since_source_time: Inclusive YYYY-MM-DD HH:MM:SS in source log time
+            until_source_time: Inclusive YYYY-MM-DD HH:MM:SS in source log time
+            source_timezone: Trusted IANA zone (e.g. Europe/Warsaw) or +HH:MM offset
+            owner_component: Optional component/owner scope for a post-deploy receipt
 
         Returns:
-            JSON with error and warning counts, most common errors, component
-            breakdowns, device issues, and recent tracebacks.
+            JSON with raw severity counts, grouped signatures, bounded
+            provenance, boot/rotation identity, UTC evidence when trusted,
+            optional owner receipt and explicit coverage status.
         """
         try:
             result = _do_analyze_log_errors(
@@ -1053,6 +1532,10 @@ def register_log_tools(  # type: ignore[no-untyped-def]
                 config_path=config_path,
                 ha_url=ha_url,
                 ha_token=ha_token,
+                since_source_time=since_source_time,
+                until_source_time=until_source_time,
+                source_timezone=source_timezone,
+                owner_component=owner_component,
             )
             if isinstance(result, dict) and "error" in result:
                 return _error_response(result["error"])
