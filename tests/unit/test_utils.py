@@ -107,6 +107,40 @@ class TestMakeHaRequest:
         assert result["data"] == "café"
 
     @patch("tools.utils.requests.Session")
+    def test_supervisor_declared_charset_wins_over_requests_default(self, session_factory):
+        """Parsed charset and raw-byte decoding must agree."""
+        from requests import Response
+
+        response = Response()
+        response.status_code = 200
+        response.headers["Content-Type"] = (
+            'text/plain; charset=utf-8; note="x;charset=iso-8859-1;y"'
+        )
+        response.encoding = "ISO-8859-1"
+        response._content = "café".encode()
+        session_factory.return_value.get.return_value = response
+
+        result = make_ha_request("http://localhost:8123", "tok", "/api/hassio/core/logs")
+
+        assert result == {"success": True, "data": "café"}
+
+    @patch("tools.utils.requests.Session")
+    def test_supervisor_mime_charset_star_is_honored(self, session_factory):
+        """An RFC2231 charset* declaration must decode with that charset."""
+        from requests import Response
+
+        response = Response()
+        response.status_code = 200
+        response.headers["Content-Type"] = "text/plain; charset*=us-ascii''windows-1252"
+        response.encoding = "ISO-8859-1"
+        response._content = b"\x80"
+        session_factory.return_value.get.return_value = response
+
+        result = make_ha_request("http://localhost:8123", "tok", "/api/hassio/core/logs")
+
+        assert result == {"success": True, "data": "€"}
+
+    @patch("tools.utils.requests.Session")
     def test_supervisor_invalid_utf8_uses_existing_text_fallback(self, session_factory):
         """Do not fail a log read for a legacy byte sequence that is not UTF-8."""
         from requests import Response
@@ -121,6 +155,33 @@ class TestMakeHaRequest:
         result = make_ha_request("http://localhost:8123", "tok", "/api/hassio/core/logs")
         assert result["success"] is True
         assert result["data"] == "non-utf8-ÿ"
+
+    @pytest.mark.parametrize(
+        ("endpoint", "content_type", "expected"),
+        [
+            ("/api/hassio/core/logs?lines=8", 'text/plain; note="charset=utf-8"', "café"),
+            ("/api/hassio/core/logs/boots/-1", "text/plain", "café"),
+            ("/api/hassio/core/logs/boots/-1", 'text/plain; ChArSeT = "iso-8859-1"', "cafÃ©"),
+            ("/api/hassio/core/logs_other", "text/plain", "cafÃ©"),
+            ("/api/error_log", "text/plain", "cafÃ©"),
+        ],
+    )
+    @patch("tools.utils.requests.Session")
+    def test_utf8_default_is_limited_to_supervisor_logs_without_charset(
+        self, session_factory: MagicMock, endpoint: str, content_type: str, expected: str
+    ) -> None:
+        from requests import Response, utils
+
+        response = Response()
+        response.status_code = 200
+        response.headers["Content-Type"] = content_type
+        response.encoding = utils.get_encoding_from_headers(response.headers)
+        response._content = b"caf\xc3\xa9"
+        session_factory.return_value.get.return_value = response
+
+        result = make_ha_request("http://127.0.0.1:8123", "tok", endpoint)
+
+        assert result == {"success": True, "data": expected}
 
     @patch("tools.utils.requests")
     def test_failed_request_with_retry(self, mock_requests):

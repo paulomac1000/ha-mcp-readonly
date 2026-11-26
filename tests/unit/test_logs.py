@@ -249,6 +249,7 @@ class TestGetPreviousLogs:
         data = json.loads(result)
         assert data["success"] is False
         assert "not found" in data["error"].lower()
+        assert "/api/hassio/core/logs/boots/-1" in data["error"]
 
     def test_get_previous_logs_level_filter(self, mock_mcp, config_path, sample_log_lines):
         log_path = Path(config_path) / "home-assistant.log.1"

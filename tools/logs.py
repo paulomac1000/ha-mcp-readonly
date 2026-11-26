@@ -702,7 +702,7 @@ def _do_get_previous_logs(
     if not log_lines:
         return {
             "error": "home-assistant.log.1 not found and the previous-boot Supervisor "
-            "log proxy (api/hassio/core/logs/boots/0) is unavailable"
+            "log proxy (/api/hassio/core/logs/boots/-1) is unavailable"
         }
 
     if level.lower() != "all":
