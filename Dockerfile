@@ -7,7 +7,8 @@ COPY pyproject.toml README.md LICENSE version.py server.py ./
 COPY tools/ ./tools/
 COPY context_generator/ ./context_generator/
 COPY ha_graph/ ./ha_graph/
-RUN python -m pip install --no-cache-dir build==1.6.0 setuptools==84.0.0 wheel==0.48.0 \
+COPY constraints-ci.txt ./constraints-ci.txt
+RUN python -m pip install --no-cache-dir -c constraints-ci.txt build setuptools wheel \
     && python -m build --wheel --no-isolation
 
 FROM ${PYTHON_IMAGE} AS runtime
