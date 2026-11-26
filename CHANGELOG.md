@@ -34,6 +34,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Updated the constrained Python stack to FastMCP 3.4.11, MCP 1.30.0, Pydantic 2.14.3, Starlette 1.10.0 and Uvicorn 0.54.0, with matching `pyproject.toml`, `requirements.txt`, build-system and development pins. Clean constrained installation, dependency checks, unit/protocol tests and wheel construction use the same source of truth.
 - Updated pinned GitHub Actions across CI, migration evidence, official-client, Semgrep and protected publication workflows while preserving exact-digest quarantine and promotion boundaries.
 
+### Corrections
+Correction: 1.1.5 contained a duplicate `Added` heading; its two blocks are consolidated without changing the recorded release behavior.
+
 ## [2.3.0] - 2026-09-11
 
 ### Security
@@ -553,6 +556,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - `tests/unit/test_lovelace.py` — 27 tests covering all new endpoints, edge cases
   (empty registries, corrupt files, strategy dashboards, badges, multi-criteria
   search), and backward compatibility.
+- Tests for `automation_validate_triggers` — validates trigger IDs against their
+  handlers in choose/if/parallel blocks, detects orphaned triggers, duplicate IDs,
+  and missing handler references.
+- Tests for `diagnose_person_tracking` — person state, tracker freshness analysis,
+  automation references.
+- Tests for `get_area_automation_summary` — area intelligence with device mappings,
+  entity breakdown, and automation linking.
+- Tests for `server.py` REST API endpoints: tool calling, context generation,
+  download, status, OpenAPI schema, error paths.
+- Tests for `context_generator` analyzers (`RegistryCollector`, `AutomationAnalyzer`,
+  `LogAnalyzer`, `DashboardAnalyzer`, `TemplateEntityCollector`, `HistoryAnalyzer`)
+  and formatter (`ReportGenerator`).
+- Edge case tests: registry loading errors, YAML fallback tags, corrupt scene/script
+  files, storage history stats, empty registries, search filters.
 
 ### Fixed
 - `get_lovelace_dashboards()` — corrected registry filename from `lovelace.dashboards`
@@ -570,22 +587,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   `tools/scripts.py` reached 100%; `tools/storage.py` 73% → 96%;
   `tools/dev_tools.py` 67% → 83%; `server.py` 66% → 80%;
   `tools/diagnostics.py` 50% → 75%; `context_generator` 3-13% → 28-55%.
-
-### Added
-- Tests for `automation_validate_triggers` — validates trigger IDs against their
-  handlers in choose/if/parallel blocks, detects orphaned triggers, duplicate IDs,
-  and missing handler references.
-- Tests for `diagnose_person_tracking` — person state, tracker freshness analysis,
-  automation references.
-- Tests for `get_area_automation_summary` — area intelligence with device mappings,
-  entity breakdown, and automation linking.
-- Tests for `server.py` REST API endpoints: tool calling, context generation,
-  download, status, OpenAPI schema, error paths.
-- Tests for `context_generator` analyzers (`RegistryCollector`, `AutomationAnalyzer`,
-  `LogAnalyzer`, `DashboardAnalyzer`, `TemplateEntityCollector`, `HistoryAnalyzer`)
-  and formatter (`ReportGenerator`).
-- Edge case tests: registry loading errors, YAML fallback tags, corrupt scene/script
-  files, storage history stats, empty registries, search filters.
 
 ## [1.1.3] - 2026-05-06
 
