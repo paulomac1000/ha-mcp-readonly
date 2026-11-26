@@ -16,6 +16,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Fixed
+- Supervisor log searches and diagnostics preserve non-ASCII text in UTF-8 responses without a declared charset. The missing previous-boot diagnostic names the actual `/api/hassio/core/logs/boots/-1` endpoint.
+
 ## [2.3.0] - 2026-09-11
 
 ### Security

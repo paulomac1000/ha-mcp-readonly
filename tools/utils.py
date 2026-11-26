@@ -26,6 +26,7 @@ import subprocess
 import threading
 import time
 from datetime import datetime
+from email.message import Message
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -270,6 +271,32 @@ def make_ha_request(
             try:
                 return {"success": True, "data": response.json()}
             except ValueError:
+                # The Supervisor HA OS log proxy serves UTF-8 text/plain without
+                # a charset. Requests defaults such responses to ISO-8859-1,
+                # corrupting non-ASCII log search terms and diagnostic evidence.
+                # Limit the override to the known proxy, leaving explicit
+                # charsets and all other API responses unchanged.
+                if endpoint.partition("?")[0] in {
+                    "/api/hassio/core/logs",
+                    "/api/hassio/core/logs/boots/-1",
+                }:
+                    content_type = Message()
+                    content_type["Content-Type"] = response.headers.get("Content-Type", "")
+                    declared = content_type.get_param("charset")
+                    if isinstance(declared, tuple):
+                        declared = declared[2]
+                    if isinstance(declared, str) and declared:
+                        try:
+                            return {"success": True, "data": response.content.decode(declared)}
+                        except (LookupError, UnicodeDecodeError):
+                            # Preserve legacy response decoding for invalid bytes.
+                            pass
+                    else:
+                        try:
+                            return {"success": True, "data": response.content.decode("utf-8")}
+                        except UnicodeDecodeError:
+                            # Preserve legacy response decoding for invalid bytes.
+                            pass
                 return {"success": True, "data": response.text}
 
         except requests.exceptions.RequestException as exc:

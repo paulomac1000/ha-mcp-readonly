@@ -81,7 +81,7 @@ jobs:
           /tmp/migration-wheel/bin/python - <<'PY'
           import importlib.metadata
 
-          assert importlib.metadata.version("fastmcp") == "3.4.6"
+          assert importlib.metadata.version("fastmcp") == "3.4.7"
           assert importlib.metadata.version("mcp") == "1.29.1"
           assert importlib.metadata.version("starlette") == "1.6.0"
           PY
