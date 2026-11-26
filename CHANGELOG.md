@@ -16,8 +16,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [2.4.0] - 2026-11-26
+
+### Added
+- Log analysis results carry source-bound evidence: bounded source windows, startup/boot and rotation identity, trusted UTC observations, and a stable evidence digest. Incomplete or unavailable source evidence is reported explicitly instead of being treated as a healthy result.
+- History results retain `unknown` and `unavailable` states and expose recorder coverage limits, including unavailable or partial recorder windows, so consumers can distinguish observed state changes from missing history.
+- The orphan-reference audit scans package includes, template configuration and blueprint instances, reports per-source coverage, and returns advisory candidates without automated cleanup authority. Missing package or blueprint evidence can no longer be interpreted as proof that an entity is unused.
+- A shared runtime-pin check validates the installed FastMCP, MCP and Starlette versions against `constraints-ci.txt` in release and interoperability workflows. A release-smoke protocol test binds those workflow claims to the assessed source revision.
+
 ### Fixed
 - Supervisor log searches and diagnostics preserve non-ASCII text in UTF-8 responses without a declared charset. The missing previous-boot diagnostic names the actual `/api/hassio/core/logs/boots/-1` endpoint.
+- Config-entry details and integration health prefer the authoritative Home Assistant config-entry API. When lifecycle evidence is unavailable, readiness remains `UNKNOWN`; post-update diagnostics count unknown lifecycle states instead of promoting missing evidence to healthy.
+- Log error summaries no longer report false-green results when source identity, boot/rotation generation or time-window evidence is incomplete. Cache identity and summaries are bound to the actual bounded source content.
+- Package include directives now normalize `!include`, `!include_dir_list`, `!include_dir_named`, `!include_dir_merge_list` and `!include_dir_merge_named` correctly, so directory-based package references are scanned rather than silently skipped.
+
+### Dependencies
+- Updated the constrained Python stack to FastMCP 3.4.11, MCP 1.30.0, Pydantic 2.14.3, Starlette 1.10.0 and Uvicorn 0.54.0, with matching `pyproject.toml`, `requirements.txt`, build-system and development pins. Clean constrained installation, dependency checks, unit/protocol tests and wheel construction use the same source of truth.
+- Updated pinned GitHub Actions across CI, migration evidence, official-client, Semgrep and protected publication workflows while preserving exact-digest quarantine and promotion boundaries.
 
 ## [2.3.0] - 2026-09-11
 
