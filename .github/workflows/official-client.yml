@@ -51,12 +51,7 @@ jobs:
           python -m venv /tmp/ha-server
           /tmp/ha-server/bin/python -m pip install -c constraints-ci.txt dist/*.whl
           /tmp/ha-server/bin/python -m pip check
-          /tmp/ha-server/bin/python - <<'PY'
-          import importlib.metadata
-          assert importlib.metadata.version('fastmcp') == '3.4.7'
-          assert importlib.metadata.version('mcp') == '1.29.1'
-          assert importlib.metadata.version('starlette') == '1.6.0'
-          PY
+          /tmp/ha-server/bin/python scripts/check_runtime_pins.py
       - name: Install independent official MCP client for the supported 2025-11-25 lane
         run: |
           python -m venv /tmp/official-client
