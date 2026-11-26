@@ -786,7 +786,8 @@ def _collect_package_records(
     match = re.fullmatch(r"!include(_dir_(?:list|named|merge_list|merge_named))?\s+(\S+)", packages)
     if match is None:
         return [], "PARTIAL"
-    mode, relative = match.groups()
+    mode_suffix, relative = match.groups()
+    mode = f"!include{mode_suffix}" if mode_suffix else "!include"
     root = Path(config_path).resolve()
     target = (root / relative).resolve()
     if root not in target.parents and target != root:
@@ -794,7 +795,7 @@ def _collect_package_records(
     records: list[dict[str, Any]] = []
     failures = 0
     try:
-        if mode is None:
+        if mode == "!include":
             data = _read_include_file(target)
             if isinstance(data, list):
                 records = [item for item in data if isinstance(item, dict)]

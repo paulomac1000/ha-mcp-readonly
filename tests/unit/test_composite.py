@@ -1681,3 +1681,140 @@ class TestAuditConfigOrphans:
 
         assert result["success"] is False
         assert "audit failed" in result["error"]
+
+
+class TestAuditCoverageHelpers:
+    """Focused coverage for package/template/blueprint evidence helpers."""
+
+    def test_configuration_root_states(self, tmp_path):
+        from tools.composite import _read_configuration_root
+
+        assert _read_configuration_root(str(tmp_path)) == (None, "NOT_PRESENT")
+        Path(tmp_path, "configuration.yaml").write_text("[]\n", encoding="utf-8")
+        assert _read_configuration_root(str(tmp_path)) == (None, "FAILED")
+
+    def test_package_inline_and_template_records(self, tmp_path):
+        from tools.composite import _collect_package_records, _collect_template_records
+
+        configuration = {
+            "homeassistant": {"packages": {"room": {"automation": [{"id": "pkg"}]}}},
+            "template": [{"sensor": [{"name": "x"}]}],
+        }
+        records, status = _collect_package_records(str(tmp_path), configuration)
+        assert status == "SCANNED"
+        assert records[0]["automation"]
+        assert _collect_template_records(configuration) == (
+            [{"sensor": [{"name": "x"}]}],
+            "SCANNED",
+        )
+        assert _collect_template_records(None) == ([], "NOT_PRESENT")
+        assert _collect_template_records({"template": "bad"}) == ([], "FAILED")
+
+    def test_package_include_file_and_directory_forms(self, tmp_path):
+        from tools.composite import _collect_package_records
+
+        Path(tmp_path, "one.yaml").write_text("- id: one\n", encoding="utf-8")
+        assert (
+            _collect_package_records(
+                str(tmp_path), {"homeassistant": {"packages": "!include one.yaml"}}
+            )[1]
+            == "SCANNED"
+        )
+        pkg_dir = Path(tmp_path, "packages")
+        pkg_dir.mkdir()
+        Path(pkg_dir, "list.yaml").write_text("- id: list\n", encoding="utf-8")
+        assert _collect_package_records(
+            str(tmp_path), {"homeassistant": {"packages": "!include_dir_list packages"}}
+        )[0] == [{"id": "list"}]
+        Path(pkg_dir, "named.yaml").write_text("named:\n  id: named\n", encoding="utf-8")
+        assert _collect_package_records(
+            str(tmp_path), {"homeassistant": {"packages": "!include_dir_named packages"}}
+        )[1] in {"SCANNED", "PARTIAL"}
+
+    def test_package_invalid_and_missing_sources(self, tmp_path):
+        from tools.composite import _collect_package_records
+
+        assert (
+            _collect_package_records(str(tmp_path), {"homeassistant": {"packages": 1}})[1]
+            == "FAILED"
+        )
+        assert (
+            _collect_package_records(
+                str(tmp_path), {"homeassistant": {"packages": "!other value"}}
+            )[1]
+            == "PARTIAL"
+        )
+        assert (
+            _collect_package_records(
+                str(tmp_path), {"homeassistant": {"packages": "!include missing.yaml"}}
+            )[1]
+            == "FAILED"
+        )
+        assert (
+            _collect_package_records(
+                str(tmp_path), {"homeassistant": {"packages": "!include ../../etc/passwd"}}
+            )[1]
+            == "FAILED"
+        )
+
+    def test_without_dynamic_strings_passthrough(self):
+        from tools.composite import _without_dynamic_strings
+
+        assert _without_dynamic_strings(3) == 3
+        assert _without_dynamic_strings({"service": "light.turn_on"}) == {"service": ""}
+        assert _without_dynamic_strings("{{ dynamic }}") == ""
+
+    @pytest.mark.asyncio
+    async def test_blueprint_coverage_scanned_and_partial(
+        self, mock_mcp, config_path, ha_url, ha_token
+    ):
+        from tools.composite import register_composite_tools
+
+        root = Path(config_path)
+        (root / "blueprints" / "automation").mkdir(parents=True)
+        Path(root / "blueprints" / "automation" / "used.yaml").write_text(
+            "blueprint: {}\n", encoding="utf-8"
+        )
+        Path(root / "automations.yaml").write_text(
+            yaml.dump([{"id": "bp", "use_blueprint": {"path": "automation/used.yaml"}}]),
+            encoding="utf-8",
+        )
+        with (
+            patch("tools.composite.load_registry", return_value={}),
+            patch("tools.composite.make_ha_request", return_value={"success": True, "data": []}),
+        ):
+            register_composite_tools(mock_mcp, config_path, ha_url, ha_token)
+            scanned = json.loads(await mock_mcp._tools["audit_config_orphans"]())
+        assert scanned["reference_source_coverage"]["blueprint_instances"] == "SCANNED"
+
+        Path(root / "automations.yaml").write_text(
+            yaml.dump([{"id": "bp", "use_blueprint": {"path": "automation/missing.yaml"}}]),
+            encoding="utf-8",
+        )
+        with (
+            patch("tools.composite.load_registry", return_value={}),
+            patch("tools.composite.make_ha_request", return_value={"success": True, "data": []}),
+        ):
+            register_composite_tools(mock_mcp, config_path, ha_url, ha_token)
+            partial = json.loads(await mock_mcp._tools["audit_config_orphans"]())
+        assert partial["reference_source_coverage"]["blueprint_instances"] == "PARTIAL"
+
+    @pytest.mark.asyncio
+    async def test_never_triggered_branch(self, mock_mcp, config_path, ha_url, ha_token):
+        from tools.composite import register_composite_tools
+
+        with (
+            patch("tools.composite.load_registry", return_value={}),
+            patch(
+                "tools.composite.make_ha_request",
+                return_value={
+                    "success": True,
+                    "data": [{"entity_id": "automation.idle", "state": "on", "attributes": {}}],
+                },
+            ),
+            patch("tools.composite._load_automations", return_value=([], None)),
+        ):
+            register_composite_tools(mock_mcp, config_path, ha_url, ha_token)
+            result = json.loads(await mock_mcp._tools["audit_config_orphans"]())
+        assert result["never_triggered_count"] == 1
+        assert result["never_triggered_automations"][0]["entity_id"] == "automation.idle"
