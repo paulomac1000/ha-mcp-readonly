@@ -17,7 +17,7 @@ import time
 from collections import Counter, defaultdict
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 
 import yaml
 
@@ -28,6 +28,7 @@ from tools.yaml_utils import HomeAssistantLoader
 _logger = logging.getLogger(__name__)
 
 TOOLS_VERSION = "1.0.0"
+_INTEGRATION_LOG_TAIL_BYTES: Final = 256 * 1024
 
 # ========================================
 # CACHE CONFIGURATION
@@ -36,6 +37,30 @@ TOOLS_VERSION = "1.0.0"
 _DIAGNOSTICS_CACHE: dict[str, tuple[Any, float]] = {}
 _CACHE_TTL = 60  # seconds
 _CACHE_LOCK = threading.Lock()
+
+
+def _classify_integration_lifecycle(
+    entries: list[dict[str, Any]] | None,
+    components: list[str],
+    observed_entity_count: int,
+    registered_entity_count: int,
+) -> tuple[str, str]:
+    """Classify config-entry lifecycle without using entity availability as proof."""
+    if entries is None:
+        return "UNKNOWN", "CONFIG_ENTRY_LIFECYCLE_UNAVAILABLE"
+    if not entries:
+        if registered_entity_count:
+            return "UNKNOWN", "REGISTRY_WITHOUT_CONFIG_ENTRY_UNVERIFIED"
+        if components:
+            return "INSTALLED_NOT_CONFIGURED", "COMPONENT_PRESENT_NO_CONFIG_ENTRY"
+        return "ABSENT", "NO_COMPONENT_OR_CONFIG_ENTRY"
+    if any(entry.get("disabled_by") for entry in entries):
+        return "CONFIGURED_NOT_LOADED", "CONFIG_ENTRY_DISABLED"
+    if any(entry.get("state") == "loaded" for entry in entries):
+        if observed_entity_count == 0:
+            return "LOADED_INERT", "CONFIG_ENTRY_LOADED_NO_ENTITIES"
+        return "ACTIVE", "CONFIG_ENTRY_LOADED"
+    return "CONFIGURED_NOT_LOADED", "CONFIG_ENTRY_NOT_LOADED"
 
 
 def _get_cached(key: str) -> Any | None:
@@ -643,12 +668,51 @@ def _do_get_integration_health(
         if s["entity_id"].startswith(f"{domain}.") or s["entity_id"] in platform_entity_ids
     ]
 
+    entries_result = make_ha_request(ha_url, ha_token, "/api/config/config_entries/entry")
+    entries_data = entries_result.get("data") if entries_result.get("success") else None
+    entries: list[dict[str, Any]] | None = None
+    if isinstance(entries_data, list) and all(
+        isinstance(entry, dict) and "entry_id" in entry and "domain" in entry
+        for entry in entries_data
+    ):
+        entries = [entry for entry in entries_data if entry.get("domain") == domain]
+    components: list[str] = []
+    if entries == []:
+        config_result = make_ha_request(ha_url, ha_token, "/api/config")
+        config_data = config_result.get("data") if config_result.get("success") else None
+        if isinstance(config_data, dict):
+            components = [name for name in config_data.get("components", []) if name == domain]
+    lifecycle, lifecycle_reason = _classify_integration_lifecycle(
+        entries, components, len(domain_entities), len(platform_entity_ids)
+    )
+    lifecycle_observation = {
+        "source": "HA_CONFIG_ENTRIES_API",
+        "observed_at_utc": datetime.now(UTC).isoformat(),
+        "generation": "UNKNOWN",
+    }
+
     if not domain_entities:
+        # An integration may be loaded but expose no state entities (or have all
+        # entities disabled). The states API cannot prove its lifecycle.
         return {
-            "success": False,
+            "success": True,
             "domain": domain,
-            "status": "Not Found / No Entities",
-            "error": f"No entities found for domain '{domain}'",
+            "status": "Unknown (No Matching Entity Observations)",
+            "readiness": "UNVERIFIED",
+            "readiness_reason": (
+                "No matching state entities; this does not prove that the "
+                "integration is missing or unloaded. Check the config entry API."
+            ),
+            "lifecycle": lifecycle,
+            "lifecycle_reason": lifecycle_reason,
+            "lifecycle_observation": lifecycle_observation,
+            "evidence_class": "ENTITY_STATE_ONLY",
+            "stats": {
+                "total_entities": 0,
+                "unavailable": 0,
+                "available": 0,
+                "availability_pct": None,
+            },
         }
 
     unavailable = [e for e in domain_entities if e["state"] in ["unavailable", "unknown"]]
@@ -656,14 +720,20 @@ def _do_get_integration_health(
     log_issues = []
     if config_path is not None:
         log_path = Path(config_path) / "home-assistant.log"
-    if log_path.exists():
-        try:
-            with open(log_path, encoding="utf-8", errors="ignore") as f:
-                for line in f.readlines()[-2000:]:
+        if log_path.exists():
+            try:
+                with open(log_path, "rb") as file:
+                    end = file.seek(0, 2)
+                    start = max(0, end - _INTEGRATION_LOG_TAIL_BYTES)
+                    file.seek(start)
+                    excerpt = file.read(min(end, _INTEGRATION_LOG_TAIL_BYTES))
+                if start:
+                    excerpt = excerpt.partition(b"\n")[2]
+                for line in excerpt.decode("utf-8", errors="ignore").splitlines()[-2000:]:
                     if domain.lower() in line.lower() and ("ERROR" in line or "WARNING" in line):
                         log_issues.append(line.strip()[:200])
-        except Exception:
-            pass
+            except OSError:
+                pass
 
     availability_pct = (
         ((len(domain_entities) - len(unavailable)) / len(domain_entities) * 100)
@@ -698,6 +768,15 @@ def _do_get_integration_health(
         "success": True,
         "domain": domain,
         "status": status,
+        "readiness": "UNVERIFIED",
+        "readiness_reason": (
+            "Entity availability is not the integration's config-entry lifecycle "
+            "or proof that an automation and its triggers are loaded."
+        ),
+        "lifecycle": lifecycle,
+        "lifecycle_reason": lifecycle_reason,
+        "lifecycle_observation": lifecycle_observation,
+        "evidence_class": "ENTITY_STATE_ONLY",
         "stats": {
             "total_entities": len(domain_entities),
             "unavailable": len(unavailable),
@@ -1797,6 +1876,7 @@ def _do_diagnose_post_update_integrations(
         "custom_components_total": 0,
         "loaded": 0,
         "failed": 0,
+        "unknown": 0,
         "fragile_highlighted": [],
         "per_integration": {},
         "recent_errors": [],
@@ -1899,6 +1979,7 @@ def _do_diagnose_post_update_integrations(
                 "total": 0,
                 "loaded": 0,
                 "failed": 0,
+                "unknown": 0,
                 "entries": [],
             },
         )
@@ -1906,9 +1987,12 @@ def _do_diagnose_post_update_integrations(
         if entry_state == "loaded":
             per["loaded"] += 1
             result["loaded"] += 1
-        else:
+        elif entry_state in {"failed", "setup_retry", "not_loaded"}:
             per["failed"] += 1
             result["failed"] += 1
+        else:
+            per["unknown"] += 1
+            result["unknown"] += 1
         per["entries"].append({"entry_id": entry_id, "title": title, "state": entry_state})
         result["per_integration"][domain] = per
 
@@ -1937,6 +2021,12 @@ def _do_diagnose_post_update_integrations(
     if result["failed"] > 0:
         result["recommendations"].append(
             f"{result['failed']} integration(s) failed to load — may be incompatible with current HA version"
+        )
+
+    if result["unknown"] > 0:
+        result["recommendations"].append(
+            f"{result['unknown']} integration(s) have unknown lifecycle state; "
+            "verify config-entry evidence before declaring health"
         )
 
     if not result["recommendations"]:

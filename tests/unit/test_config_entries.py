@@ -130,6 +130,45 @@ class TestGetConfigEntryDetails:
         assert data["state"] == "failed"
 
     @pytest.mark.asyncio
+    async def test_api_entry_state_overrides_entity_availability_heuristic(self):
+        unavailable = [{"entity_id": "sensor.sonoff_button_battery", "state": "unavailable"}]
+        with ExitStack() as stack:
+            mock_load = stack.enter_context(patch("tools.config_entries.load_registry"))
+            mock_load.side_effect = lambda name, path: self.mock_registry_data.get(name, {})
+            mock_entities = stack.enter_context(patch("tools.config_entries.get_registry_entities"))
+            mock_entities.return_value = [
+                e
+                for e in self.mock_registry_data["core.entity_registry"]["data"]["entities"]
+                if e.get("config_entry_id") == "e01182bae2f8b20605c8317f4623d1e9"
+            ]
+            mock_devices = stack.enter_context(patch("tools.config_entries.get_registry_devices"))
+            mock_devices.return_value = []
+            mock_request = stack.enter_context(patch("tools.config_entries.make_ha_request"))
+
+            def fake_request(_url, _token, endpoint, **_kwargs):
+                if endpoint == "/api/config/config_entries/entry":
+                    return {
+                        "success": True,
+                        "data": [
+                            {
+                                "entry_id": "e01182bae2f8b20605c8317f4623d1e9",
+                                "state": "setup_retry",
+                            }
+                        ],
+                    }
+                return {"success": True, "data": unavailable}
+
+            mock_request.side_effect = fake_request
+            register_config_entry_tools(self.mock_mcp, self.config_path, self.ha_url, self.ha_token)
+            result = self.mock_mcp._tools["get_config_entry_details"](
+                "e01182bae2f8b20605c8317f4623d1e9"
+            )
+
+        data = json.loads(result)
+        assert data["state"] == "setup_retry"
+        assert data["state_source"] == "config_entries_api"
+
+    @pytest.mark.asyncio
     async def test_get_nonexistent_entry(self):
         """Test getting details of a non-existent config entry."""
         with patch("tools.config_entries.load_registry") as mock_load:

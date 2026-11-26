@@ -69,6 +69,16 @@ def _get_entry_state(
         return {
             "state": "not_loaded",
             "reason": f"Disabled by: {entry.get('disabled_by')}",
+            "state_source": "config_entry_disabled_by",
+        }
+
+    entry_id = entry.get("entry_id")
+    api_states = _fetch_api_entry_states(ha_url, ha_token) if entry_id else None
+    if api_states is not None and entry_id in api_states:
+        return {
+            "state": api_states[entry_id],
+            "reason": "Authoritative Home Assistant config-entry state",
+            "state_source": "config_entries_api",
         }
 
     if not entities:
@@ -179,6 +189,7 @@ def _do_get_config_entry_details(
         "minor_version": entry.get("minor_version"),
         "state": state_info.get("state"),
         "state_reason": state_info.get("reason"),
+        "state_source": state_info.get("state_source", "entity_availability_heuristic"),
         "disabled_by": entry.get("disabled_by"),
         "pref_disable_new_entities": entry.get("pref_disable_new_entities"),
         "pref_disable_polling": entry.get("pref_disable_polling"),
@@ -219,7 +230,7 @@ def _do_get_config_entry_details(
     }
 
     if len(entities) > 10:
-        result["entities"]["note"] = f"Showing 10 of {len(entities)} entities"  # type: ignore[call-overload, index]
+        result["entities"]["note"] = f"Showing 10 of {len(entities)} entities"
 
     if len(devices) > 20:
         result["devices_note"] = f"Showing 20 of {len(devices)} devices"

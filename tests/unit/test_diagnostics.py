@@ -709,11 +709,105 @@ class TestIntegrationHealthEdgeCases:
             result = tool("nonexistent_integration")
             data = json.loads(result)
 
-        assert data["success"] is False
-        assert (
-            "not found" in data["status"].lower() or "no entities" in data.get("error", "").lower()
-        )
+        assert data["success"] is True
         assert data["domain"] == "nonexistent_integration"
+        assert data["readiness"] == "UNVERIFIED"
+        assert data["evidence_class"] == "ENTITY_STATE_ONLY"
+        assert data["stats"]["total_entities"] == 0
+        assert "does not prove" in data["readiness_reason"]
+
+    def test_lifecycle_distinguishes_six_observation_classes(self):
+        from tools.diagnostics import _classify_integration_lifecycle
+
+        assert _classify_integration_lifecycle([], [], 0, 0) == (
+            "ABSENT",
+            "NO_COMPONENT_OR_CONFIG_ENTRY",
+        )
+        assert _classify_integration_lifecycle([], ["mqtt"], 0, 0) == (
+            "INSTALLED_NOT_CONFIGURED",
+            "COMPONENT_PRESENT_NO_CONFIG_ENTRY",
+        )
+        retry = [{"domain": "mqtt", "entry_id": "1", "state": "setup_retry"}]
+        assert _classify_integration_lifecycle(retry, ["mqtt"], 2, 2) == (
+            "CONFIGURED_NOT_LOADED",
+            "CONFIG_ENTRY_NOT_LOADED",
+        )
+        loaded = [{"domain": "mqtt", "entry_id": "1", "state": "loaded"}]
+        assert _classify_integration_lifecycle(loaded, ["mqtt"], 0, 0) == (
+            "LOADED_INERT",
+            "CONFIG_ENTRY_LOADED_NO_ENTITIES",
+        )
+        assert _classify_integration_lifecycle(loaded, ["mqtt"], 1, 1) == (
+            "ACTIVE",
+            "CONFIG_ENTRY_LOADED",
+        )
+        assert _classify_integration_lifecycle(None, [], 0, 0) == (
+            "UNKNOWN",
+            "CONFIG_ENTRY_LIFECYCLE_UNAVAILABLE",
+        )
+
+    def test_integration_health_without_config_path_is_observation_only(self):
+        """A healthy entity sample does not establish loaded integration readiness."""
+        from tools.diagnostics import _do_get_integration_health
+
+        with (
+            patch("tools.diagnostics.make_ha_request") as mock_req,
+            patch("tools.diagnostics.load_registry") as mock_reg,
+        ):
+            mock_req.return_value = {
+                "success": True,
+                "data": [{"entity_id": "mqtt.online", "state": "on"}],
+            }
+            mock_reg.return_value = {"data": {"entities": []}}
+            result = _do_get_integration_health("mqtt", "http://localhost:8123", "fake-token", None)
+
+        assert result["success"] is True
+        assert result["status"] == "Healthy"
+        assert result["readiness"] == "UNVERIFIED"
+        assert result["recent_log_issues_count"] == 0
+
+    def test_integration_health_does_not_scan_logs_before_byte_limit(self, tmp_path):
+        from tools.diagnostics import _do_get_integration_health
+
+        (tmp_path / "home-assistant.log").write_bytes(
+            b"ERROR [mqtt] old message\n" + b"x" * (1024 * 1024) + b"\nWARNING [mqtt] recent\n"
+        )
+        with (
+            patch("tools.diagnostics.make_ha_request") as mock_req,
+            patch("tools.diagnostics.load_registry", return_value={"data": {"entities": []}}),
+        ):
+            mock_req.return_value = {
+                "success": True,
+                "data": [{"entity_id": "mqtt.online", "state": "on"}],
+            }
+            result = _do_get_integration_health(
+                "mqtt", "http://localhost:8123", "fake-token", str(tmp_path)
+            )
+
+        assert result["recent_log_issues_count"] == 1
+
+    def test_integration_health_log_read_error_is_not_lifecycle_failure(self, tmp_path):
+        """Unavailable optional file logs do not erase entity observations."""
+        from tools.diagnostics import _do_get_integration_health
+
+        (tmp_path / "home-assistant.log").write_text("ERROR [mqtt] fake message")
+        with (
+            patch("tools.diagnostics.make_ha_request") as mock_req,
+            patch("tools.diagnostics.load_registry") as mock_reg,
+            patch("builtins.open", side_effect=OSError("permission denied")),
+        ):
+            mock_req.return_value = {
+                "success": True,
+                "data": [{"entity_id": "mqtt.online", "state": "on"}],
+            }
+            mock_reg.return_value = {"data": {"entities": []}}
+            result = _do_get_integration_health(
+                "mqtt", "http://localhost:8123", "fake-token", str(tmp_path)
+            )
+
+        assert result["success"] is True
+        assert result["readiness"] == "UNVERIFIED"
+        assert result["recent_log_issues_count"] == 0
 
 
 class TestDiagnoseSystemHealthApiFailure:
@@ -2025,6 +2119,34 @@ class TestDiagnosePostUpdateIntegrations:
 
         assert result["success"] is True
         assert result["custom_components_total"] == 0
+
+    def test_unknown_lifecycle_is_not_failed(self, mock_mcp, config_path, ha_url, ha_token):
+        entries = {
+            "data": {
+                "entries": [
+                    {
+                        "entry_id": "e1",
+                        "domain": "custom_unknown",
+                        "title": "Unknown",
+                        "state": "unknown",
+                    },
+                    {
+                        "entry_id": "e2",
+                        "domain": "custom_failed",
+                        "title": "Failed",
+                        "state": "setup_retry",
+                    },
+                ]
+            }
+        }
+        with patch("tools.diagnostics.load_registry", return_value=entries):
+            register_diagnostics_tools(mock_mcp, ha_url, ha_token, config_path)
+            result = json.loads(mock_mcp._tools["diagnose_post_update_integrations"]())
+
+        assert result["failed"] == 1
+        assert result["unknown"] == 1
+        assert result["per_integration"]["custom_unknown"]["unknown"] == 1
+        assert "unknown lifecycle" in " ".join(result["recommendations"])
 
     def test_exception_handler(self, mock_mcp, config_path, ha_url, ha_token):
         with patch(
