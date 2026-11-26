@@ -21,8 +21,10 @@ Design Principles
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
+import re
 from collections import defaultdict
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -722,6 +724,150 @@ def _do_get_area_diagnostic(
         return {"success": False, "error": str(exc)}
 
 
+def _read_audit_yaml(path: Path, *, mapping: bool) -> tuple[list[dict[str, Any]], str]:
+    """Read the directly declared script or scene records for a partial audit."""
+    try:
+        with path.open(encoding="utf-8") as file:
+            data = yaml.load(file, Loader=HomeAssistantLoader)  # nosec B506
+    except FileNotFoundError:
+        return [], "NOT_PRESENT"
+    except (OSError, UnicodeError, yaml.YAMLError):
+        return [], "FAILED"
+    if data is None:
+        return [], "SCANNED"
+    if mapping:
+        if not isinstance(data, dict):
+            return [], "FAILED"
+        records = list(data.values())
+    else:
+        if not isinstance(data, list):
+            return [], "FAILED"
+        records = data
+    if not all(isinstance(record, dict) for record in records):
+        return [], "FAILED"
+    return records, "SCANNED"
+
+
+def _read_configuration_root(config_path: str) -> tuple[dict[str, Any] | None, str]:
+    """Read the root configuration document with an explicit coverage state."""
+    path = Path(config_path) / "configuration.yaml"
+    try:
+        with path.open(encoding="utf-8") as file:
+            data = yaml.load(file, Loader=HomeAssistantLoader)  # nosec B506
+    except FileNotFoundError:
+        return None, "NOT_PRESENT"
+    except (OSError, UnicodeError, yaml.YAMLError):
+        return None, "FAILED"
+    if data is None:
+        return {}, "SCANNED"
+    if not isinstance(data, dict):
+        return None, "FAILED"
+    return data, "SCANNED"
+
+
+def _read_include_file(path: Path) -> Any:
+    with path.open(encoding="utf-8") as file:
+        return yaml.load(file, Loader=HomeAssistantLoader)  # nosec B506
+
+
+def _collect_package_records(
+    config_path: str, configuration: dict[str, Any] | None
+) -> tuple[list[dict[str, Any]], str]:
+    """Collect package records from supported configuration include forms."""
+    homeassistant = configuration.get("homeassistant") if isinstance(configuration, dict) else None
+    packages = homeassistant.get("packages") if isinstance(homeassistant, dict) else None
+    if packages is None:
+        return [], "NOT_PRESENT"
+    if isinstance(packages, dict):
+        inline_records = [value for value in packages.values() if isinstance(value, dict)]
+        return inline_records, "SCANNED"
+    if not isinstance(packages, str):
+        return [], "FAILED"
+    match = re.fullmatch(r"!include(_dir_(?:list|named|merge_list|merge_named))?\s+(\S+)", packages)
+    if match is None:
+        return [], "PARTIAL"
+    mode, relative = match.groups()
+    root = Path(config_path).resolve()
+    target = (root / relative).resolve()
+    if root not in target.parents and target != root:
+        return [], "FAILED"
+    records: list[dict[str, Any]] = []
+    failures = 0
+    try:
+        if mode is None:
+            data = _read_include_file(target)
+            if isinstance(data, list):
+                records = [item for item in data if isinstance(item, dict)]
+            elif isinstance(data, dict):
+                records = [data]
+            else:
+                return [], "FAILED"
+        elif target.is_dir():
+            files = sorted(target.glob("*.yaml"))
+            for path in files:
+                try:
+                    data = _read_include_file(path)
+                except (OSError, UnicodeError, yaml.YAMLError):
+                    failures += 1
+                    continue
+                if mode == "!include_dir_list" and isinstance(data, list):
+                    records.extend(item for item in data if isinstance(item, dict))
+                elif mode in {"!include_dir_named", "!include_dir_merge_named"} and isinstance(
+                    data, dict
+                ):
+                    records.extend(item for item in data.values() if isinstance(item, dict))
+                else:
+                    failures += 1
+        else:
+            failures += 1
+    except (OSError, UnicodeError, yaml.YAMLError):
+        return [], "FAILED"
+    if failures and not records:
+        return [], "FAILED"
+    return records, "PARTIAL" if failures else "SCANNED"
+
+
+def _collect_template_records(configuration: dict[str, Any] | None) -> tuple[list[Any], str]:
+    """Collect directly declared template configuration records."""
+    if not isinstance(configuration, dict) or "template" not in configuration:
+        return [], "NOT_PRESENT"
+    value = configuration["template"]
+    if isinstance(value, list):
+        return value, "SCANNED"
+    if isinstance(value, dict):
+        return [value], "SCANNED"
+    return [], "FAILED"
+
+
+def _without_dynamic_strings(data: Any) -> Any:
+    """Return source data with Jinja-bearing strings excluded from static scans."""
+    if isinstance(data, str):
+        return "" if "{{" in data or "{%" in data else data
+    if isinstance(data, list):
+        return [_without_dynamic_strings(item) for item in data]
+    if isinstance(data, dict):
+        return {
+            key: ""
+            if key in {"service", "action"} and isinstance(value, str)
+            else _without_dynamic_strings(value)
+            for key, value in data.items()
+        }
+    return data
+
+
+def _collect_dynamic_references(data: Any, found: set[str]) -> None:
+    """Collect references that require runtime Jinja evaluation."""
+    if isinstance(data, str):
+        if "{{" in data or "{%" in data:
+            _extract_entities_recursive({"entity_id": data}, found)
+    elif isinstance(data, list):
+        for item in data:
+            _collect_dynamic_references(item, found)
+    elif isinstance(data, dict):
+        for value in data.values():
+            _collect_dynamic_references(value, found)
+
+
 def _do_audit_config_orphans(
     config_path: str,
     ha_url: str,
@@ -738,29 +884,24 @@ def _do_audit_config_orphans(
         if auto_warn:
             warnings.append(auto_warn)
 
-        scripts: list[dict[str, Any]] = []
-        scripts_path = os.path.join(config_path, "scripts.yaml")
-        if os.path.exists(scripts_path):
-            with open(scripts_path, encoding="utf-8") as _f:
-                scripts = yaml.load(_f, Loader=HomeAssistantLoader)  # nosec B506 or []
-
-        scenes: list[dict[str, Any]] = []
-        scenes_path = os.path.join(config_path, "scenes.yaml")
-        if os.path.exists(scenes_path):
-            with open(scenes_path, encoding="utf-8") as _f:
-                scenes = yaml.load(_f, Loader=HomeAssistantLoader)  # nosec B506 or []
+        scripts, scripts_coverage = _read_audit_yaml(
+            Path(config_path) / "scripts.yaml", mapping=True
+        )
+        scenes, scenes_coverage = _read_audit_yaml(Path(config_path) / "scenes.yaml", mapping=False)
+        configuration, configuration_coverage = _read_configuration_root(config_path)
+        packages, packages_coverage = _collect_package_records(config_path, configuration)
+        templates, templates_coverage = _collect_template_records(configuration)
 
         dashboards = load_registry("lovelace", config_path).get("data", {}).get("dashboards", {})
 
         referenced: set[str] = set()
-        for item in automations:
-            _extract_entities_recursive(item, referenced)
-        for item in scripts:
-            _extract_entities_recursive(item, referenced)
-        for item in scenes:
-            _extract_entities_recursive(item, referenced)
-        for dash_data in dashboards.values():
-            _extract_entities_recursive(dash_data, referenced)
+        dynamic_references: set[str] = set()
+        all_audit_sources = [automations, scripts, scenes, packages, templates]
+        all_audit_sources.extend(list(dashboards.values()))
+        for source in all_audit_sources:
+            for item in source:
+                _extract_entities_recursive(_without_dynamic_strings(item), referenced)
+                _collect_dynamic_references(item, dynamic_references)
 
         orphan_entities = sorted(entity_ids - referenced)
 
@@ -788,18 +929,14 @@ def _do_audit_config_orphans(
                 states_api_error = states_data.get("error", "Unknown error from /api/states")
 
         all_config_entities: set[str] = set()
-        for item in automations:
-            _extract_entities_recursive(item, all_config_entities)
-        for item in scripts:
-            _extract_entities_recursive(item, all_config_entities)
-        for item in scenes:
-            _extract_entities_recursive(item, all_config_entities)
-        for dash_data in dashboards.values():
-            _extract_entities_recursive(dash_data, all_config_entities)
+        for source in all_audit_sources:
+            for item in source:
+                _extract_entities_recursive(_without_dynamic_strings(item), all_config_entities)
 
         broken_references = sorted(all_config_entities - entity_ids)
 
         unused_blueprints: list[str] = []
+        blueprint_coverage = "NOT_PRESENT"
         try:
             blueprints_dir = Path(config_path) / "blueprints"
             if blueprints_dir.is_dir():
@@ -814,11 +951,7 @@ def _do_audit_config_orphans(
                                     all_blueprints.add((rel / f).as_posix())
 
                 used_blueprints: set[str] = set()
-                for item in automations:
-                    ub = item.get("use_blueprint", {})
-                    if isinstance(ub, dict) and "path" in ub:
-                        used_blueprints.add(ub["path"])
-                for item in scripts:
+                for item in [*automations, *scripts, *packages]:
                     ub = item.get("use_blueprint", {})
                     if isinstance(ub, dict) and "path" in ub:
                         used_blueprints.add(ub["path"])
@@ -826,29 +959,72 @@ def _do_audit_config_orphans(
                 for bp in sorted(all_blueprints):
                     if bp not in used_blueprints:
                         unused_blueprints.append(bp)
+                if used_blueprints:
+                    blueprint_coverage = (
+                        "SCANNED"
+                        if all((blueprints_dir / bp).is_file() for bp in used_blueprints)
+                        else "PARTIAL"
+                    )
         except Exception:
+            blueprint_coverage = "FAILED"
             warnings.append("Could not scan blueprints directory")
 
         # This scanner does not cover packages, template ownership, instantiated
         # blueprints or arbitrary dynamic references. Missing observed references
         # are *candidates*, never proven unused entities or a deletion grant.
         reference_coverage = {
+            "configuration_yaml": configuration_coverage,
             "automations_yaml": "FAILED" if auto_warn else "SCANNED",
-            "scripts_yaml": "SCANNED" if os.path.exists(scripts_path) else "NOT_PRESENT",
-            "scenes_yaml": "SCANNED" if os.path.exists(scenes_path) else "NOT_PRESENT",
-            "packages": "NOT_SCANNED",
-            "templates": "NOT_SCANNED",
-            "blueprint_instances": "NOT_SCANNED",
-            "dynamic_references": "UNRESOLVED",
+            "scripts_yaml": scripts_coverage,
+            "scenes_yaml": scenes_coverage,
+            "packages": packages_coverage,
+            "templates": templates_coverage,
+            "blueprint_instances": blueprint_coverage,
+            "dynamic_references": "UNRESOLVED" if dynamic_references else "NONE",
         }
+        source_statuses = [
+            status for key, status in reference_coverage.items() if key != "dynamic_references"
+        ]
+        source_scan_complete = all(
+            status in {"SCANNED", "NOT_PRESENT"} for status in source_statuses
+        )
         warnings.append(
             "Reference scan is incomplete: candidates are not proven orphans "
             "and MUST NOT authorize deletion or destructive cleanup"
         )
+        observed_at = datetime.now(UTC).isoformat()
+        source_identity = str(Path(config_path).resolve())
+        dynamic_unresolved = sorted(dynamic_references)[:100]
+        findings = [
+            {
+                "finding_id": hashlib.sha256(
+                    f"{finding_class}\0{entity_id}\0{source_identity}".encode()
+                ).hexdigest(),
+                "class": finding_class,
+                "entity_id": entity_id,
+                "observed_at_utc": observed_at,
+            }
+            for finding_class, entity_ids_for_class in (
+                ("REGISTRY_ORPHAN_CANDIDATE", orphan_entities[:100]),
+                ("MISSING_REFERENCE_CANDIDATE", broken_references[:100]),
+                ("DYNAMIC_REFERENCE_UNRESOLVED", dynamic_unresolved),
+            )
+            for entity_id in entity_ids_for_class
+        ]
 
         return {
             "reference_evidence_class": "REFERENCE_CANDIDATE",
+            "source_snapshot": {
+                "config_path": source_identity,
+                "observed_at_utc": observed_at,
+                "generation": "UNKNOWN",
+            },
+            "findings": findings,
+            "dynamic_unresolved_references": dynamic_unresolved,
+            "dynamic_unresolved_count": len(dynamic_references),
+            "no_consumers_proven": False,
             "reference_source_coverage": reference_coverage,
+            "source_scan_complete": source_scan_complete,
             "reference_coverage_complete": False,
             "safe_to_delete": False,
             "unreferenced_candidates": orphan_entities[:100],

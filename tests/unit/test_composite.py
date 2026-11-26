@@ -11,6 +11,7 @@ Tests composite/aggregate functions that combine multiple operations:
 
 import json
 import os
+from pathlib import Path
 from unittest.mock import Mock, patch
 
 import pytest
@@ -1402,9 +1403,123 @@ class TestAuditConfigOrphans:
         assert result["reference_evidence_class"] == "REFERENCE_CANDIDATE"
         assert result["reference_coverage_complete"] is False
         assert result["safe_to_delete"] is False
-        assert result["reference_source_coverage"]["packages"] == "NOT_SCANNED"
-        assert result["reference_source_coverage"]["blueprint_instances"] == "NOT_SCANNED"
+        assert result["reference_source_coverage"]["packages"] == "NOT_PRESENT"
+        assert result["reference_source_coverage"]["blueprint_instances"] == "NOT_PRESENT"
+        assert result["source_scan_complete"] is True
+        assert result["reference_coverage_complete"] is False
         assert "NOT proven orphans" in result["summary"]
+
+    @pytest.mark.asyncio
+    async def test_package_owned_consumer_prevents_false_orphan(self):
+        Path(self.config_path, "automations.yaml").write_text("[]\n", encoding="utf-8")
+        Path(self.config_path, "configuration.yaml").write_text(
+            "homeassistant:\n"
+            "  packages:\n"
+            "    room:\n"
+            "      automation:\n"
+            "        - id: pkg1\n"
+            "          trigger:\n"
+            "            - platform: state\n"
+            "              entity_id: sensor.temperature_living_room\n"
+            "          action: []\n",
+            encoding="utf-8",
+        )
+        registry = {
+            "core.entity_registry": {
+                "data": {"entities": [{"entity_id": "sensor.temperature_living_room"}]}
+            }
+        }
+        with (
+            patch("tools.composite.load_registry") as mock_load,
+            patch("tools.composite.make_ha_request", return_value={"success": True, "data": []}),
+        ):
+            mock_load.side_effect = lambda name, path: registry.get(name, {})
+            result = json.loads(await self.mcp._tools["audit_config_orphans"]())
+
+        assert result["reference_source_coverage"]["packages"] == "SCANNED"
+        assert "sensor.temperature_living_room" not in result["orphan_entities"]
+        assert result["safe_to_delete"] is False
+        assert result["reference_coverage_complete"] is False
+
+    @pytest.mark.asyncio
+    async def test_missing_package_include_downgrades_coverage(self):
+        Path(self.config_path, "automations.yaml").write_text("[]\n", encoding="utf-8")
+        Path(self.config_path, "configuration.yaml").write_text(
+            "homeassistant:\n  packages: '!include missing-package.yaml'\n",
+            encoding="utf-8",
+        )
+        registry = {
+            "core.entity_registry": {
+                "data": {"entities": [{"entity_id": "sensor.temperature_living_room"}]}
+            }
+        }
+        with (
+            patch("tools.composite.load_registry") as mock_load,
+            patch("tools.composite.make_ha_request", return_value={"success": True, "data": []}),
+        ):
+            mock_load.side_effect = lambda name, path: registry.get(name, {})
+            result = json.loads(await self.mcp._tools["audit_config_orphans"]())
+
+        assert result["reference_source_coverage"]["packages"] in {"FAILED", "PARTIAL"}
+        assert result["source_scan_complete"] is False
+        assert result["reference_coverage_complete"] is False
+        assert result["safe_to_delete"] is False
+
+    @pytest.mark.asyncio
+    async def test_dynamic_jinja_is_unresolved_not_missing_reference(self):
+        automations = [
+            {
+                "id": "dynamic",
+                "trigger": {
+                    "platform": "template",
+                    "value_template": "{{ states('sensor.runtime_selected') }}",
+                },
+                "action": {"service": "light.turn_on", "entity_id": "light.living_room"},
+            }
+        ]
+        with open(os.path.join(self.config_path, "automations.yaml"), "w") as f:
+            yaml.dump(automations, f)
+        registry = {
+            "core.entity_registry": {
+                "data": {
+                    "entities": [
+                        {"entity_id": "light.living_room"},
+                        {"entity_id": "sun.sun"},
+                    ]
+                }
+            }
+        }
+        with (
+            patch("tools.composite.load_registry", return_value=registry["core.entity_registry"]),
+            patch("tools.composite.make_ha_request", return_value={"success": True, "data": []}),
+        ):
+            result = json.loads(await self.mcp._tools["audit_config_orphans"]())
+
+        assert result["broken_references"] == []
+        assert result["dynamic_unresolved_references"] == ["sensor.runtime_selected"]
+        assert result["reference_coverage_complete"] is False
+        finding = next(f for f in result["findings"] if f["entity_id"] == "sensor.runtime_selected")
+        assert finding["class"] == "DYNAMIC_REFERENCE_UNRESOLVED"
+        assert len(finding["finding_id"]) == 64
+
+    @pytest.mark.asyncio
+    async def test_source_coverage_requires_parsed_source_shape(self):
+        from pathlib import Path
+
+        root = Path(self.config_path)
+        (root / "scripts.yaml").write_text("- not a script mapping\n", encoding="utf-8")
+        (root / "scenes.yaml").write_text("-[\n", encoding="utf-8")
+        with (
+            patch("tools.composite.load_registry", return_value={}),
+            patch("tools.composite.make_ha_request", return_value={"success": True, "data": []}),
+        ):
+            result = json.loads(await self.mcp._tools["audit_config_orphans"]())
+
+        assert result["success"] is True
+        coverage = result["reference_source_coverage"]
+        assert coverage["scripts_yaml"] == "FAILED"
+        assert coverage["scenes_yaml"] == "FAILED"
+        assert result["safe_to_delete"] is False
 
     @pytest.mark.asyncio
     async def test_broken_references(self):
