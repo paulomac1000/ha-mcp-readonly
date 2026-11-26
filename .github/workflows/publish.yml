@@ -88,7 +88,7 @@ jobs:
         env:
           RELEASE_SHA: ${{ steps.revision.outputs.sha }}
         run: |
-          python -m pip install -c constraints-ci.txt '.[dev]' build==1.6.0 setuptools==84.0.0 wheel==0.48.0
+          python -m pip install -c constraints-ci.txt '.[dev]' build setuptools wheel
           ruff check .
           ruff format --check .
           mypy server.py tools/ context_generator/core.py context_generator/config.py \
