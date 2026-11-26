@@ -78,13 +78,7 @@ jobs:
           python -m venv /tmp/migration-wheel
           /tmp/migration-wheel/bin/python -m pip install -c constraints-ci.txt dist/*.whl
           /tmp/migration-wheel/bin/python -m pip check
-          /tmp/migration-wheel/bin/python - <<'PY'
-          import importlib.metadata
-
-          assert importlib.metadata.version("fastmcp") == "3.4.7"
-          assert importlib.metadata.version("mcp") == "1.29.1"
-          assert importlib.metadata.version("starlette") == "1.6.0"
-          PY
+          /tmp/migration-wheel/bin/python scripts/check_runtime_pins.py
           python -m venv /tmp/migration-official-client
           /tmp/migration-official-client/bin/python -m pip install 'mcp==1.29.1'
           MCP_EXPECTED_VERSION=2.3.0 \
