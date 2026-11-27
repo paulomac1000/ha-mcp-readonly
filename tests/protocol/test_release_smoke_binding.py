@@ -66,7 +66,7 @@ repo=registry.invalid/team/quarantine
     ]
 
 
-def test_official_client_expected_version_uses_canonical_source() -> None:
+def test_official_client_expected_version_uses_canonical_source(tmp_path: Path) -> None:
     root = Path(__file__).resolve().parents[2]
     official = yaml.safe_load((root / ".github/workflows/official-client.yml").read_text())
     steps = official["jobs"]["official-client"]["steps"]
@@ -76,15 +76,36 @@ def test_official_client_expected_version_uses_canonical_source() -> None:
     resolver_index = names.index("Resolve canonical server version")
     resolver = steps[resolver_index]
     assert "from version import __version__" in resolver["run"]
+    assert 'os.environ["GITHUB_ENV"]' in resolver["run"]
     assert 'output.write(f"MCP_EXPECTED_VERSION={__version__}\\n")' in resolver["run"]
-    for verification_name in (
-        "Official-client stdio verification",
-        "Official-client Streamable HTTP verification",
+    github_env = tmp_path / "github-env"
+    result = subprocess.run(
+        ["bash", "-c", resolver["run"]],
+        cwd=root,
+        env={"PATH": "/usr/bin:/bin", "GITHUB_ENV": str(github_env)},
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    expected = next(
+        line.split("=", 1)[1]
+        for line in github_env.read_text().splitlines()
+        if line.startswith("MCP_EXPECTED_VERSION=")
+    )
+    assert expected
+    for verification_name, transport in (
+        ("Official-client stdio verification", "stdio"),
+        ("Official-client Streamable HTTP verification", "http"),
     ):
         assert names.count(verification_name) == 1
         verification_index = names.index(verification_name)
         assert verification_index > resolver_index
         assert "MCP_EXPECTED_VERSION" not in steps[verification_index].get("env", {})
+        assert (
+            f"scripts/verify_official_mcp_client.py {transport}" in steps[verification_index]["run"]
+        )
 
     migration = yaml.safe_load((root / ".github/workflows/migration-evidence.yml").read_text())
     assert "MCP_EXPECTED_VERSION" not in migration.get("env", {})

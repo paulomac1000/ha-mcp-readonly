@@ -1544,6 +1544,40 @@ class TestAuditConfigOrphans:
         assert "sensor.temperature_living_room" not in result["orphan_entities"]
 
     @pytest.mark.asyncio
+    async def test_ignored_directory_files_do_not_hide_orphan_candidates(self):
+        Path(self.config_path, "automations.yaml").write_text("[]\n", encoding="utf-8")
+        Path(self.config_path, "configuration.yaml").write_text(
+            "homeassistant:\n  packages: '!include_dir_named packages'\n",
+            encoding="utf-8",
+        )
+        package_dir = Path(self.config_path, "packages")
+        package_dir.mkdir()
+        ignored = (
+            "automation:\n"
+            "  - id: ignored\n"
+            "    trigger:\n"
+            "      - platform: state\n"
+            "        entity_id: sensor.temperature_living_room\n"
+            "    action: []\n"
+        )
+        Path(package_dir, ".archived.yaml").write_text(ignored, encoding="utf-8")
+        Path(package_dir, "secrets.yaml").write_text(ignored, encoding="utf-8")
+        registry = {
+            "core.entity_registry": {
+                "data": {"entities": [{"entity_id": "sensor.temperature_living_room"}]}
+            }
+        }
+        with (
+            patch("tools.composite.load_registry") as mock_load,
+            patch("tools.composite.make_ha_request", return_value={"success": True, "data": []}),
+        ):
+            mock_load.side_effect = lambda name, path: registry.get(name, {})
+            result = json.loads(await self.mcp._tools["audit_config_orphans"]())
+
+        assert result["reference_source_coverage"]["packages"] == "SCANNED"
+        assert "sensor.temperature_living_room" in result["orphan_entities"]
+
+    @pytest.mark.asyncio
     async def test_missing_package_include_downgrades_coverage(self):
         Path(self.config_path, "automations.yaml").write_text("[]\n", encoding="utf-8")
         Path(self.config_path, "configuration.yaml").write_text(
@@ -1861,6 +1895,34 @@ class TestAuditCoverageHelpers:
             str(tmp_path),
             {"homeassistant": {"packages": "!include_dir_merge_named merge_named_packages"}},
         ) == ([named_package], "SCANNED")
+
+    def test_parent_homeassistant_include_is_resolved(self, tmp_path):
+        from tools.composite import _collect_package_records
+
+        package = {"automation": [{"id": "room", "action": []}]}
+        Path(tmp_path, "homeassistant.yaml").write_text(
+            yaml.dump({"packages": {"room": package}}), encoding="utf-8"
+        )
+        assert _collect_package_records(
+            str(tmp_path), {"homeassistant": "!include homeassistant.yaml"}
+        ) == ([package], "SCANNED")
+
+    def test_directory_includes_ignore_hidden_and_secrets_files(self, tmp_path):
+        from tools.composite import _collect_package_records
+
+        package_dir = Path(tmp_path, "packages")
+        package_dir.mkdir()
+        visible = {"automation": []}
+        Path(package_dir, "visible.yaml").write_text(yaml.dump(visible), encoding="utf-8")
+        ignored = {"automation": [{"id": "ignored", "action": []}]}
+        Path(package_dir, ".archived.yaml").write_text(yaml.dump(ignored), encoding="utf-8")
+        Path(package_dir, "secrets.yaml").write_text(yaml.dump(ignored), encoding="utf-8")
+        hidden_dir = package_dir / ".hidden"
+        hidden_dir.mkdir()
+        Path(hidden_dir, "room.yaml").write_text(yaml.dump(ignored), encoding="utf-8")
+        assert _collect_package_records(
+            str(tmp_path), {"homeassistant": {"packages": "!include_dir_named packages"}}
+        ) == ([visible], "SCANNED")
 
     def test_inline_package_include_value_is_resolved(self, tmp_path):
         from tools.composite import _collect_package_records

@@ -832,12 +832,23 @@ def _collect_package_records(
     config_path: str, configuration: dict[str, Any] | None
 ) -> tuple[list[dict[str, Any]], str]:
     """Collect package records from supported configuration include forms."""
-    homeassistant = configuration.get("homeassistant") if isinstance(configuration, dict) else None
-    packages = homeassistant.get("packages") if isinstance(homeassistant, dict) else None
-    if packages is None:
+    if not isinstance(configuration, dict) or "homeassistant" not in configuration:
         return [], "NOT_PRESENT"
     root = Path(config_path).resolve()
     configuration_path = root / "configuration.yaml"
+    homeassistant = configuration["homeassistant"]
+    if isinstance(homeassistant, str):
+        resolved_homeassistant, complete = _resolve_package_data(
+            homeassistant, root, root, {configuration_path}, 0
+        )
+        if not complete or not isinstance(resolved_homeassistant, dict):
+            return [], "FAILED"
+        homeassistant = resolved_homeassistant
+    if not isinstance(homeassistant, dict):
+        return [], "FAILED"
+    packages = homeassistant.get("packages")
+    if packages is None:
+        return [], "NOT_PRESENT"
     records: list[dict[str, Any]] = []
     failures = 0
     if isinstance(packages, dict):
@@ -883,6 +894,11 @@ def _collect_package_records(
                 key=lambda path: path.relative_to(target).as_posix(),
             )
             for path in files:
+                relative_path = path.relative_to(target)
+                if path.name == "secrets.yaml" or any(
+                    part.startswith(".") for part in relative_path.parts
+                ):
+                    continue
                 resolved_path = path.resolve()
                 if resolved_path != target and target not in resolved_path.parents:
                     failures += 1
