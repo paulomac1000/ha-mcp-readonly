@@ -1,9 +1,14 @@
 """Exercise the release smoke step against synthetic registry identities."""
 
+import os
+import shlex
 import subprocess
+import sys
 from pathlib import Path
 
 import yaml
+
+from version import __version__
 
 
 def test_release_smoke_ignores_changed_quarantine_tag(tmp_path: Path) -> None:
@@ -82,7 +87,7 @@ def test_official_client_expected_version_uses_canonical_source(tmp_path: Path) 
     result = subprocess.run(
         ["bash", "-c", resolver["run"]],
         cwd=root,
-        env={"PATH": "/usr/bin:/bin", "GITHUB_ENV": str(github_env)},
+        env={**os.environ, "GITHUB_ENV": str(github_env)},
         capture_output=True,
         text=True,
         timeout=10,
@@ -94,7 +99,14 @@ def test_official_client_expected_version_uses_canonical_source(tmp_path: Path) 
         for line in github_env.read_text().splitlines()
         if line.startswith("MCP_EXPECTED_VERSION=")
     )
-    assert expected
+    assert expected == __version__
+    fake_verifier = tmp_path / "verify_official_mcp_client.py"
+    fake_verifier.write_text(
+        "import os, sys\n"
+        "assert os.environ.get('MCP_EXPECTED_VERSION') == sys.argv[1]\n"
+        "assert sys.argv[2] == os.environ['EXPECTED_TRANSPORT']\n",
+        encoding="utf-8",
+    )
     for verification_name, transport in (
         ("Official-client stdio verification", "stdio"),
         ("Official-client Streamable HTTP verification", "http"),
@@ -103,9 +115,31 @@ def test_official_client_expected_version_uses_canonical_source(tmp_path: Path) 
         verification_index = names.index(verification_name)
         assert verification_index > resolver_index
         assert "MCP_EXPECTED_VERSION" not in steps[verification_index].get("env", {})
-        assert (
-            f"scripts/verify_official_mcp_client.py {transport}" in steps[verification_index]["run"]
+        command = steps[verification_index]["run"]
+        assert f"scripts/verify_official_mcp_client.py {transport}" in command
+        executable = shlex.quote(sys.executable)
+        command = command.replace("/tmp/official-client/bin/python", executable)
+        command = command.replace(
+            "scripts/verify_official_mcp_client.py", shlex.quote(str(fake_verifier))
         )
+        command = command.replace(
+            f"{shlex.quote(str(fake_verifier))} {transport}",
+            f"{shlex.quote(str(fake_verifier))} {expected} {transport}",
+        )
+        result = subprocess.run(
+            ["bash", "-c", command],
+            cwd=root,
+            env={
+                **os.environ,
+                "MCP_EXPECTED_VERSION": expected,
+                "EXPECTED_TRANSPORT": transport,
+            },
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+        assert result.returncode == 0, result.stderr
 
     migration = yaml.safe_load((root / ".github/workflows/migration-evidence.yml").read_text())
     assert "MCP_EXPECTED_VERSION" not in migration.get("env", {})

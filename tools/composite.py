@@ -787,28 +787,101 @@ def _resolve_package_data(
     seen: set[Path],
     depth: int,
 ) -> tuple[Any, bool]:
-    """Resolve nested !include directives while preserving explicit coverage gaps."""
+    """Resolve Home Assistant include directives while preserving coverage gaps."""
     if depth >= _MAX_PACKAGE_INCLUDE_DEPTH:
         return value, False
     if isinstance(value, str):
-        match = re.fullmatch(r"!include\s+(\S+)", value)
+        match = re.fullmatch(
+            r"!include(_dir_(?:list|named|merge_list|merge_named))?\s+(\S+)", value
+        )
         if match is None:
             return value, not value.startswith("!include")
-        target = _resolve_package_include_path(root, base_dir, match.group(1))
+        mode_suffix, relative = match.groups()
+        mode = f"!include{mode_suffix}" if mode_suffix else "!include"
+        target = _resolve_package_include_path(root, base_dir, relative)
         if target is None or target in seen:
             return value, False
-        try:
-            data = _read_include_file(target)
-        except (OSError, UnicodeError, yaml.YAMLError):
+        next_seen = seen | {target}
+        if mode == "!include":
+            try:
+                data = _read_include_file(target)
+            except (OSError, UnicodeError, yaml.YAMLError):
+                return value, False
+            return _resolve_package_data(data, root, target.parent, next_seen, depth + 1)
+        if not target.is_dir():
             return value, False
-        return _resolve_package_data(data, root, target.parent, seen | {target}, depth + 1)
+
+        complete = True
+        if mode in {"!include_dir_list", "!include_dir_merge_list"}:
+            combined: list[Any] = []
+            for current_root, dirs, files in os.walk(target, followlinks=False):
+                dirs[:] = sorted(name for name in dirs if not name.startswith("."))
+                for name in sorted(files):
+                    if name.startswith(".") or name == "secrets.yaml" or not name.endswith(".yaml"):
+                        continue
+                    path = Path(current_root) / name
+                    resolved_path = path.resolve()
+                    if resolved_path != target and target not in resolved_path.parents:
+                        complete = False
+                        continue
+                    try:
+                        data = _read_include_file(resolved_path)
+                    except (OSError, UnicodeError, yaml.YAMLError):
+                        complete = False
+                        continue
+                    resolved_data, item_complete = _resolve_package_data(
+                        data, root, resolved_path.parent, next_seen | {resolved_path}, depth + 1
+                    )
+                    complete = complete and item_complete
+                    if mode == "!include_dir_list":
+                        combined.append(resolved_data)
+                    elif isinstance(resolved_data, list):
+                        combined.extend(resolved_data)
+                    else:
+                        complete = False
+            return combined, complete
+
+        combined_mapping: dict[Any, Any] = {}
+        for current_root, dirs, files in os.walk(target, followlinks=False):
+            dirs[:] = sorted(name for name in dirs if not name.startswith("."))
+            for name in sorted(files):
+                if name.startswith(".") or name == "secrets.yaml" or not name.endswith(".yaml"):
+                    continue
+                path = Path(current_root) / name
+                resolved_path = path.resolve()
+                if resolved_path != target and target not in resolved_path.parents:
+                    complete = False
+                    continue
+                try:
+                    data = _read_include_file(resolved_path)
+                except (OSError, UnicodeError, yaml.YAMLError):
+                    complete = False
+                    continue
+                resolved_data, item_complete = _resolve_package_data(
+                    data, root, resolved_path.parent, next_seen, depth + 1
+                )
+                complete = complete and item_complete
+                if mode == "!include_dir_named":
+                    key = path.stem
+                    if key in combined_mapping:
+                        complete = False
+                    combined_mapping[key] = resolved_data
+                elif isinstance(resolved_data, dict):
+                    if combined_mapping.keys() & resolved_data.keys():
+                        complete = False
+                    combined_mapping.update(resolved_data)
+                else:
+                    complete = False
+        return combined_mapping, complete
     if isinstance(value, dict):
-        resolved: dict[Any, Any] = {}
+        resolved_mapping: dict[Any, Any] = {}
         complete = True
         for key, item in value.items():
-            resolved[key], item_complete = _resolve_package_data(item, root, base_dir, seen, depth)
+            resolved_mapping[key], item_complete = _resolve_package_data(
+                item, root, base_dir, seen, depth
+            )
             complete = complete and item_complete
-        return resolved, complete
+        return resolved_mapping, complete
     if isinstance(value, list):
         resolved_items: list[Any] = []
         complete = True
@@ -837,101 +910,40 @@ def _collect_package_records(
     root = Path(config_path).resolve()
     configuration_path = root / "configuration.yaml"
     homeassistant = configuration["homeassistant"]
-    if isinstance(homeassistant, str):
-        resolved_homeassistant, complete = _resolve_package_data(
+    parent_included = isinstance(homeassistant, str)
+    packages_complete = True
+    if parent_included:
+        homeassistant, packages_complete = _resolve_package_data(
             homeassistant, root, root, {configuration_path}, 0
         )
-        if not complete or not isinstance(resolved_homeassistant, dict):
-            return [], "FAILED"
-        homeassistant = resolved_homeassistant
     if not isinstance(homeassistant, dict):
         return [], "FAILED"
     packages = homeassistant.get("packages")
     if packages is None:
         return [], "NOT_PRESENT"
-    records: list[dict[str, Any]] = []
-    failures = 0
-    if isinstance(packages, dict):
-        for value in packages.values():
-            resolved, complete = _resolve_package_data(value, root, root, {configuration_path}, 0)
-            if isinstance(resolved, dict):
-                records.append(resolved)
-            else:
-                failures += 1
-            if not complete:
-                failures += 1
-        return _package_scan_status(records, failures)
-    if not isinstance(packages, str):
-        return [], "FAILED"
-    match = re.fullmatch(r"!include(_dir_(?:list|named|merge_list|merge_named))?\s+(\S+)", packages)
-    if match is None:
+    if (
+        isinstance(packages, str)
+        and re.fullmatch(r"!include(_dir_(?:list|named|merge_list|merge_named))?\s+(\S+)", packages)
+        is None
+    ):
         return [], "PARTIAL"
-    mode_suffix, relative = match.groups()
-    mode = f"!include{mode_suffix}" if mode_suffix else "!include"
-    target = _resolve_package_include_path(root, root, relative)
-    if target is None:
+    if not parent_included:
+        packages, packages_complete = _resolve_package_data(
+            packages, root, root, {configuration_path}, 0
+        )
+    if isinstance(packages, list):
+        candidates = packages
+    elif isinstance(packages, dict):
+        candidates = list(packages.values())
+    else:
         return [], "FAILED"
-    try:
-        if mode == "!include":
-            resolved, complete = _resolve_package_data(
-                packages, root, root, {configuration_path}, 0
-            )
-            if isinstance(resolved, list):
-                for item in resolved:
-                    if isinstance(item, dict):
-                        records.append(item)
-                    else:
-                        failures += 1
-            elif isinstance(resolved, dict):
-                records.append(resolved)
-            else:
-                return [], "FAILED"
-            if not complete:
-                failures += 1
-        elif target.is_dir():
-            files = sorted(
-                target.rglob("*.yaml"),
-                key=lambda path: path.relative_to(target).as_posix(),
-            )
-            for path in files:
-                relative_path = path.relative_to(target)
-                if path.name == "secrets.yaml" or any(
-                    part.startswith(".") for part in relative_path.parts
-                ):
-                    continue
-                resolved_path = path.resolve()
-                if resolved_path != target and target not in resolved_path.parents:
-                    failures += 1
-                    continue
-                try:
-                    data = _read_include_file(resolved_path)
-                except (OSError, UnicodeError, yaml.YAMLError):
-                    failures += 1
-                    continue
-                candidates: list[Any]
-                if mode in {"!include_dir_list", "!include_dir_named"} and isinstance(data, dict):
-                    candidates = [data]
-                elif mode == "!include_dir_merge_list" and isinstance(data, list):
-                    candidates = data
-                elif mode == "!include_dir_merge_named" and isinstance(data, dict):
-                    candidates = list(data.values())
-                else:
-                    failures += 1
-                    continue
-                for candidate in candidates:
-                    resolved, complete = _resolve_package_data(
-                        candidate, root, resolved_path.parent, {resolved_path}, 0
-                    )
-                    if isinstance(resolved, dict):
-                        records.append(resolved)
-                    else:
-                        failures += 1
-                    if not complete:
-                        failures += 1
+    records: list[dict[str, Any]] = []
+    failures = 0 if packages_complete else 1
+    for candidate in candidates:
+        if isinstance(candidate, dict):
+            records.append(candidate)
         else:
             failures += 1
-    except (OSError, UnicodeError, yaml.YAMLError):
-        return [], "FAILED"
     return _package_scan_status(records, failures)
 
 
