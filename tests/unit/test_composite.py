@@ -17,6 +17,8 @@ from unittest.mock import Mock, patch
 import pytest
 import yaml
 
+from tools.yaml_utils import HomeAssistantLoader, HomeAssistantTag
+
 # Mock the tools registry loading
 MOCK_REGISTRY_DATA = {
     "core.entity_registry": {
@@ -1445,7 +1447,7 @@ class TestAuditConfigOrphans:
     async def test_nested_named_package_reference_prevents_false_orphan(self):
         Path(self.config_path, "automations.yaml").write_text("[]\n", encoding="utf-8")
         Path(self.config_path, "configuration.yaml").write_text(
-            "homeassistant:\n  packages: '!include_dir_named packages'\n",
+            "homeassistant:\n  packages: !include_dir_named packages\n",
             encoding="utf-8",
         )
         package_dir = Path(self.config_path, "packages", "room")
@@ -1479,7 +1481,7 @@ class TestAuditConfigOrphans:
     async def test_package_value_include_reference_prevents_false_orphan(self):
         Path(self.config_path, "automations.yaml").write_text("[]\n", encoding="utf-8")
         Path(self.config_path, "configuration.yaml").write_text(
-            "homeassistant:\n  packages:\n    room: '!include packages/room.yaml'\n",
+            "homeassistant:\n  packages:\n    room: !include packages/room.yaml\n",
             encoding="utf-8",
         )
         package_dir = Path(self.config_path, "packages")
@@ -1515,7 +1517,7 @@ class TestAuditConfigOrphans:
             "homeassistant:\n"
             "  packages:\n"
             "    room:\n"
-            "      automation: '!include packages/room-automations.yaml'\n",
+            "      automation: !include packages/room-automations.yaml\n",
             encoding="utf-8",
         )
         package_dir = Path(self.config_path, "packages")
@@ -1547,13 +1549,13 @@ class TestAuditConfigOrphans:
     async def test_nested_directory_package_include_reference_prevents_false_orphan(self):
         Path(self.config_path, "automations.yaml").write_text("[]\n", encoding="utf-8")
         Path(self.config_path, "configuration.yaml").write_text(
-            "homeassistant:\n  packages:\n    room: '!include packages/room.yaml'\n",
+            "homeassistant:\n  packages:\n    room: !include packages/room.yaml\n",
             encoding="utf-8",
         )
         package_dir = Path(self.config_path, "packages")
         package_dir.mkdir()
         Path(package_dir, "room.yaml").write_text(
-            "automation: '!include_dir_merge_list automation_parts'\n",
+            "automation: !include_dir_merge_list automation_parts\n",
             encoding="utf-8",
         )
         parts_dir = package_dir / "automation_parts"
@@ -1585,7 +1587,7 @@ class TestAuditConfigOrphans:
     async def test_ignored_directory_files_do_not_hide_orphan_candidates(self):
         Path(self.config_path, "automations.yaml").write_text("[]\n", encoding="utf-8")
         Path(self.config_path, "configuration.yaml").write_text(
-            "homeassistant:\n  packages: '!include_dir_named packages'\n",
+            "homeassistant:\n  packages: !include_dir_named packages\n",
             encoding="utf-8",
         )
         package_dir = Path(self.config_path, "packages")
@@ -1619,7 +1621,7 @@ class TestAuditConfigOrphans:
     async def test_missing_package_include_downgrades_coverage(self):
         Path(self.config_path, "automations.yaml").write_text("[]\n", encoding="utf-8")
         Path(self.config_path, "configuration.yaml").write_text(
-            "homeassistant:\n  packages: '!include missing-package.yaml'\n",
+            "homeassistant:\n  packages: !include missing-package.yaml\n",
             encoding="utf-8",
         )
         registry = {
@@ -1898,7 +1900,8 @@ class TestAuditCoverageHelpers:
         Path(tmp_path, "one.yaml").write_text("- id: one\n", encoding="utf-8")
         assert (
             _collect_package_records(
-                str(tmp_path), {"homeassistant": {"packages": "!include one.yaml"}}
+                str(tmp_path),
+                {"homeassistant": {"packages": HomeAssistantTag("include", "one.yaml")}},
             )[1]
             == "SCANNED"
         )
@@ -1906,19 +1909,30 @@ class TestAuditCoverageHelpers:
         pkg_dir.mkdir()
         Path(pkg_dir, "list.yaml").write_text("id: list\n", encoding="utf-8")
         assert _collect_package_records(
-            str(tmp_path), {"homeassistant": {"packages": "!include_dir_list packages"}}
+            str(tmp_path),
+            {"homeassistant": {"packages": HomeAssistantTag("include_dir_list", "packages")}},
         ) == ([{"id": "list"}], "SCANNED")
         named_dir = Path(tmp_path, "named_packages")
         named_dir.mkdir()
         Path(named_dir, "named.yaml").write_text("automation:\n  - id: named\n", encoding="utf-8")
         assert _collect_package_records(
-            str(tmp_path), {"homeassistant": {"packages": "!include_dir_named named_packages"}}
+            str(tmp_path),
+            {
+                "homeassistant": {
+                    "packages": HomeAssistantTag("include_dir_named", "named_packages")
+                }
+            },
         ) == ([{"automation": [{"id": "named"}]}], "SCANNED")
         merge_dir = Path(tmp_path, "merge_packages")
         merge_dir.mkdir()
         Path(merge_dir, "list.yaml").write_text("- id: merged\n", encoding="utf-8")
         assert _collect_package_records(
-            str(tmp_path), {"homeassistant": {"packages": "!include_dir_merge_list merge_packages"}}
+            str(tmp_path),
+            {
+                "homeassistant": {
+                    "packages": HomeAssistantTag("include_dir_merge_list", "merge_packages")
+                }
+            },
         ) == ([{"id": "merged"}], "SCANNED")
 
     def test_package_named_and_merge_named_recurse_with_distinct_mapping_shapes(self, tmp_path):
@@ -1929,7 +1943,12 @@ class TestAuditCoverageHelpers:
         named_package = {"automation": [{"id": "named"}]}
         Path(named_dir, "room.yaml").write_text(yaml.dump(named_package), encoding="utf-8")
         assert _collect_package_records(
-            str(tmp_path), {"homeassistant": {"packages": "!include_dir_named named_packages"}}
+            str(tmp_path),
+            {
+                "homeassistant": {
+                    "packages": HomeAssistantTag("include_dir_named", "named_packages")
+                }
+            },
         ) == ([named_package], "SCANNED")
 
         merge_dir = Path(tmp_path, "merge_named_packages") / "room"
@@ -1939,7 +1958,11 @@ class TestAuditCoverageHelpers:
         )
         assert _collect_package_records(
             str(tmp_path),
-            {"homeassistant": {"packages": "!include_dir_merge_named merge_named_packages"}},
+            {
+                "homeassistant": {
+                    "packages": HomeAssistantTag("include_dir_merge_named", "merge_named_packages")
+                }
+            },
         ) == ([named_package], "SCANNED")
 
     def test_parent_homeassistant_include_is_resolved(self, tmp_path):
@@ -1950,7 +1973,7 @@ class TestAuditCoverageHelpers:
             yaml.dump({"packages": {"room": package}}), encoding="utf-8"
         )
         assert _collect_package_records(
-            str(tmp_path), {"homeassistant": "!include homeassistant.yaml"}
+            str(tmp_path), {"homeassistant": HomeAssistantTag("include", "homeassistant.yaml")}
         ) == ([package], "SCANNED")
 
     def test_parent_homeassistant_include_with_directory_packages_is_resolved(self, tmp_path):
@@ -1961,10 +1984,10 @@ class TestAuditCoverageHelpers:
         package_dir.mkdir()
         Path(package_dir, "room.yaml").write_text(yaml.dump(package), encoding="utf-8")
         Path(tmp_path, "homeassistant.yaml").write_text(
-            "packages: '!include_dir_named packages'\n", encoding="utf-8"
+            "packages: !include_dir_named packages\n", encoding="utf-8"
         )
         assert _collect_package_records(
-            str(tmp_path), {"homeassistant": "!include homeassistant.yaml"}
+            str(tmp_path), {"homeassistant": HomeAssistantTag("include", "homeassistant.yaml")}
         ) == ([package], "SCANNED")
 
     def test_parent_homeassistant_include_uses_parent_directory_for_packages(self, tmp_path):
@@ -1976,21 +1999,22 @@ class TestAuditCoverageHelpers:
         package_dir.mkdir(parents=True)
         Path(package_dir, "room.yaml").write_text(yaml.dump(package), encoding="utf-8")
         Path(parent_dir, "homeassistant.yaml").write_text(
-            "packages: '!include_dir_named packages'\n", encoding="utf-8"
+            "packages: !include_dir_named packages\n", encoding="utf-8"
         )
         assert _collect_package_records(
-            str(tmp_path), {"homeassistant": "!include config/homeassistant.yaml"}
+            str(tmp_path),
+            {"homeassistant": HomeAssistantTag("include", "config/homeassistant.yaml")},
         ) == ([package], "SCANNED")
 
     def test_parent_homeassistant_include_retains_valid_sibling_on_partial(self, tmp_path):
         from tools.composite import _collect_package_records
 
         Path(tmp_path, "homeassistant.yaml").write_text(
-            "packages:\n  good:\n    automation: []\n  missing: '!include missing.yaml'\n",
+            "packages:\n  good:\n    automation: []\n  missing: !include missing.yaml\n",
             encoding="utf-8",
         )
         assert _collect_package_records(
-            str(tmp_path), {"homeassistant": "!include homeassistant.yaml"}
+            str(tmp_path), {"homeassistant": HomeAssistantTag("include", "homeassistant.yaml")}
         ) == ([{"automation": []}], "PARTIAL")
 
     def test_nested_directory_include_inside_package_is_resolved(self, tmp_path):
@@ -1999,7 +2023,7 @@ class TestAuditCoverageHelpers:
         package_dir = Path(tmp_path, "packages")
         package_dir.mkdir()
         Path(package_dir, "room.yaml").write_text(
-            "automation: '!include_dir_merge_list automation_parts'\n",
+            "automation: !include_dir_merge_list automation_parts\n",
             encoding="utf-8",
         )
         parts_dir = package_dir / "automation_parts"
@@ -2007,7 +2031,12 @@ class TestAuditCoverageHelpers:
         automations = [{"id": "room", "action": []}]
         Path(parts_dir, "room.yaml").write_text(yaml.dump(automations), encoding="utf-8")
         assert _collect_package_records(
-            str(tmp_path), {"homeassistant": {"packages": {"room": "!include packages/room.yaml"}}}
+            str(tmp_path),
+            {
+                "homeassistant": {
+                    "packages": {"room": HomeAssistantTag("include", "packages/room.yaml")}
+                }
+            },
         ) == ([{"automation": automations}], "SCANNED")
 
     def test_directory_includes_ignore_hidden_and_secrets_files(self, tmp_path):
@@ -2024,7 +2053,8 @@ class TestAuditCoverageHelpers:
         hidden_dir.mkdir()
         Path(hidden_dir, "room.yaml").write_text(yaml.dump(ignored), encoding="utf-8")
         assert _collect_package_records(
-            str(tmp_path), {"homeassistant": {"packages": "!include_dir_named packages"}}
+            str(tmp_path),
+            {"homeassistant": {"packages": HomeAssistantTag("include_dir_named", "packages")}},
         ) == ([visible], "SCANNED")
 
     def test_inline_package_include_value_is_resolved(self, tmp_path):
@@ -2033,7 +2063,8 @@ class TestAuditCoverageHelpers:
         package = {"automation": [{"id": "room", "action": []}]}
         Path(tmp_path, "room.yaml").write_text(yaml.dump(package), encoding="utf-8")
         assert _collect_package_records(
-            str(tmp_path), {"homeassistant": {"packages": {"room": "!include room.yaml"}}}
+            str(tmp_path),
+            {"homeassistant": {"packages": {"room": HomeAssistantTag("include", "room.yaml")}}},
         ) == ([package], "SCANNED")
 
     def test_nested_package_include_is_resolved(self, tmp_path):
@@ -2041,7 +2072,7 @@ class TestAuditCoverageHelpers:
 
         automations = [{"id": "room", "action": []}]
         Path(tmp_path, "room-automations.yaml").write_text(yaml.dump(automations), encoding="utf-8")
-        package = {"automation": "!include room-automations.yaml", "sensor": []}
+        package = {"automation": HomeAssistantTag("include", "room-automations.yaml"), "sensor": []}
         assert _collect_package_records(
             str(tmp_path), {"homeassistant": {"packages": {"room": package}}}
         ) == ([{"automation": automations, "sensor": []}], "SCANNED")
@@ -2054,21 +2085,122 @@ class TestAuditCoverageHelpers:
         automations = [{"id": "room", "action": []}]
         Path(package_dir, "automations.yaml").write_text(yaml.dump(automations), encoding="utf-8")
         Path(package_dir, "room.yaml").write_text(
-            "automation: '!include automations.yaml'\n", encoding="utf-8"
+            "automation: !include automations.yaml\n", encoding="utf-8"
         )
         assert _collect_package_records(
-            str(tmp_path), {"homeassistant": {"packages": {"room": "!include packages/room.yaml"}}}
+            str(tmp_path),
+            {
+                "homeassistant": {
+                    "packages": {"room": HomeAssistantTag("include", "packages/room.yaml")}
+                }
+            },
         ) == ([{"automation": automations}], "SCANNED")
 
     def test_unresolved_nested_package_include_marks_partial(self, tmp_path):
         from tools.composite import _collect_package_records
 
-        package = {"automation": "!include missing-automations.yaml", "sensor": []}
+        package = {
+            "automation": HomeAssistantTag("include", "missing-automations.yaml"),
+            "sensor": [],
+        }
         records, status = _collect_package_records(
             str(tmp_path), {"homeassistant": {"packages": {"room": package}}}
         )
         assert records == [package]
         assert status == "PARTIAL"
+
+    def test_literal_include_text_is_not_resolved(self, tmp_path):
+        from tools.composite import _collect_package_records
+
+        package = {"automation": "!include fixture.yaml"}
+        Path(tmp_path, "fixture.yaml").write_text("- id: resolved\n", encoding="utf-8")
+        configuration = yaml.load(
+            "homeassistant:\n  packages:\n    room:\n      automation: '!include fixture.yaml'\n",
+            Loader=HomeAssistantLoader,
+        )
+        assert _collect_package_records(str(tmp_path), configuration) == ([package], "SCANNED")
+
+    def test_tagged_include_path_with_spaces_is_resolved(self, tmp_path):
+        from tools.composite import _collect_package_records
+
+        package = {"automation": [{"id": "room", "action": []}]}
+        Path(tmp_path, "fixture with space.yaml").write_text(yaml.dump(package), encoding="utf-8")
+        configuration = yaml.load(
+            'homeassistant:\n  packages:\n    room: !include "fixture with space.yaml"\n',
+            Loader=HomeAssistantLoader,
+        )
+        assert _collect_package_records(str(tmp_path), configuration) == ([package], "SCANNED")
+
+    def test_directory_enumeration_error_marks_partial(self, tmp_path):
+        from tools.composite import _collect_package_records
+
+        package_dir = Path(tmp_path, "packages")
+        package_dir.mkdir()
+        good = {"automation": []}
+        Path(package_dir, "good.yaml").write_text(yaml.dump(good), encoding="utf-8")
+        Path(package_dir, "blocked").mkdir()
+        original_scandir = os.scandir
+
+        def scandir(path):
+            if Path(path).name == "blocked":
+                raise PermissionError("blocked")
+            return original_scandir(path)
+
+        with patch("tools.composite.os.scandir", side_effect=scandir):
+            records, status = _collect_package_records(
+                str(tmp_path),
+                {"homeassistant": {"packages": HomeAssistantTag("include_dir_named", "packages")}},
+            )
+        assert records == [good]
+        assert status == "PARTIAL"
+
+    def test_cyclic_yaml_collection_preserves_valid_siblings(self, tmp_path):
+        from tools.composite import _collect_package_records
+
+        Path(tmp_path, "room.yaml").write_text(
+            "automation:\n  - id: good\n    action: []\nloop: &loop [*loop]\n",
+            encoding="utf-8",
+        )
+        configuration = yaml.load(
+            "homeassistant:\n  packages:\n    room: !include room.yaml\n",
+            Loader=HomeAssistantLoader,
+        )
+        records, status = _collect_package_records(str(tmp_path), configuration)
+        assert records == [{"automation": [{"id": "good", "action": []}]}]
+        assert status == "PARTIAL"
+
+    def test_in_root_symlink_uses_including_path_for_child_includes(self, tmp_path):
+        from tools.composite import _collect_package_records
+
+        package_dir = Path(tmp_path, "packages")
+        package_dir.mkdir()
+        shared_dir = Path(tmp_path, "shared")
+        shared_dir.mkdir()
+        Path(shared_dir, "room.yaml").write_text(
+            "automation: !include .automations.yaml\n", encoding="utf-8"
+        )
+        Path(package_dir, "room.yaml").symlink_to(shared_dir / "room.yaml")
+        expected = [{"id": "from-packages", "action": []}]
+        Path(package_dir, ".automations.yaml").write_text(yaml.dump(expected), encoding="utf-8")
+        Path(shared_dir, ".automations.yaml").write_text(
+            yaml.dump([{"id": "from-shared", "action": []}]), encoding="utf-8"
+        )
+        direct = yaml.load(
+            "homeassistant:\n  packages:\n    room: !include packages/room.yaml\n",
+            Loader=HomeAssistantLoader,
+        )
+        directory = yaml.load(
+            "homeassistant:\n  packages: !include_dir_named packages\n",
+            Loader=HomeAssistantLoader,
+        )
+        assert _collect_package_records(str(tmp_path), direct) == (
+            [{"automation": expected}],
+            "SCANNED",
+        )
+        assert _collect_package_records(str(tmp_path), directory) == (
+            [{"automation": expected}],
+            "SCANNED",
+        )
 
     def test_package_invalid_and_missing_sources(self, tmp_path):
         from tools.composite import _collect_package_records
@@ -2085,13 +2217,15 @@ class TestAuditCoverageHelpers:
         )
         assert (
             _collect_package_records(
-                str(tmp_path), {"homeassistant": {"packages": "!include missing.yaml"}}
+                str(tmp_path),
+                {"homeassistant": {"packages": HomeAssistantTag("include", "missing.yaml")}},
             )[1]
             == "FAILED"
         )
         assert (
             _collect_package_records(
-                str(tmp_path), {"homeassistant": {"packages": "!include ../../etc/passwd"}}
+                str(tmp_path),
+                {"homeassistant": {"packages": HomeAssistantTag("include", "../../etc/passwd")}},
             )[1]
             == "FAILED"
         )

@@ -24,7 +24,6 @@ from __future__ import annotations
 import hashlib
 import logging
 import os
-import re
 from collections import defaultdict
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -42,7 +41,7 @@ from tools.utils import (
     make_ha_request,
     resolve_area_id,
 )
-from tools.yaml_utils import HomeAssistantLoader
+from tools.yaml_utils import HomeAssistantLoader, HomeAssistantTag
 
 _logger = logging.getLogger(__name__)
 
@@ -773,11 +772,17 @@ def _read_include_file(path: Path) -> Any:
 _MAX_PACKAGE_INCLUDE_DEPTH = 32
 
 
-def _resolve_package_include_path(root: Path, base_dir: Path, relative: str) -> Path | None:
-    target = (base_dir / relative).resolve()
-    if target != root and root not in target.parents:
+def _resolve_package_include_path(
+    root: Path, base_dir: Path, relative: str
+) -> tuple[Path, Path] | None:
+    lexical = base_dir / relative
+    resolved = lexical.resolve()
+    if resolved != root and root not in resolved.parents:
         return None
-    return target
+    return lexical, resolved
+
+
+_CYCLIC_COLLECTION = object()
 
 
 def _resolve_package_data(
@@ -786,20 +791,28 @@ def _resolve_package_data(
     base_dir: Path,
     seen: set[Path],
     depth: int,
+    active_collections: frozenset[int] = frozenset(),
 ) -> tuple[Any, bool]:
     """Resolve Home Assistant include directives while preserving coverage gaps."""
     if depth >= _MAX_PACKAGE_INCLUDE_DEPTH:
         return value, False
-    if isinstance(value, str):
-        match = re.fullmatch(
-            r"!include(_dir_(?:list|named|merge_list|merge_named))?\s+(\S+)", value
-        )
-        if match is None:
-            return value, not value.startswith("!include")
-        mode_suffix, relative = match.groups()
-        mode = f"!include{mode_suffix}" if mode_suffix else "!include"
-        target = _resolve_package_include_path(root, base_dir, relative)
-        if target is None or target in seen:
+    if isinstance(value, HomeAssistantTag):
+        if value.tag == "include":
+            mode = "!include"
+        elif value.tag in {
+            "include_dir_list",
+            "include_dir_named",
+            "include_dir_merge_list",
+            "include_dir_merge_named",
+        }:
+            mode = f"!{value.tag}"
+        else:
+            return value, True
+        paths = _resolve_package_include_path(root, base_dir, value.value)
+        if paths is None:
+            return value, False
+        lexical, target = paths
+        if target in seen:
             return value, False
         next_seen = seen | {target}
         if mode == "!include":
@@ -807,21 +820,30 @@ def _resolve_package_data(
                 data = _read_include_file(target)
             except (OSError, UnicodeError, yaml.YAMLError):
                 return value, False
-            return _resolve_package_data(data, root, target.parent, next_seen, depth + 1)
+            return _resolve_package_data(
+                data, root, lexical.parent, next_seen, depth + 1, active_collections
+            )
         if not target.is_dir():
             return value, False
 
         complete = True
+
+        def mark_incomplete(_error: OSError) -> None:
+            nonlocal complete
+            complete = False
+
         if mode in {"!include_dir_list", "!include_dir_merge_list"}:
             combined: list[Any] = []
-            for current_root, dirs, files in os.walk(target, followlinks=False):
+            for current_root, dirs, files in os.walk(
+                lexical, followlinks=False, onerror=mark_incomplete
+            ):
                 dirs[:] = sorted(name for name in dirs if not name.startswith("."))
                 for name in sorted(files):
                     if name.startswith(".") or name == "secrets.yaml" or not name.endswith(".yaml"):
                         continue
                     path = Path(current_root) / name
                     resolved_path = path.resolve()
-                    if resolved_path != target and target not in resolved_path.parents:
+                    if resolved_path != root and root not in resolved_path.parents:
                         complete = False
                         continue
                     try:
@@ -830,10 +852,17 @@ def _resolve_package_data(
                         complete = False
                         continue
                     resolved_data, item_complete = _resolve_package_data(
-                        data, root, resolved_path.parent, next_seen | {resolved_path}, depth + 1
+                        data,
+                        root,
+                        path.parent,
+                        next_seen | {resolved_path},
+                        depth + 1,
+                        active_collections,
                     )
                     complete = complete and item_complete
-                    if mode == "!include_dir_list":
+                    if resolved_data is _CYCLIC_COLLECTION:
+                        complete = False
+                    elif mode == "!include_dir_list":
                         combined.append(resolved_data)
                     elif isinstance(resolved_data, list):
                         combined.extend(resolved_data)
@@ -842,14 +871,16 @@ def _resolve_package_data(
             return combined, complete
 
         combined_mapping: dict[Any, Any] = {}
-        for current_root, dirs, files in os.walk(target, followlinks=False):
+        for current_root, dirs, files in os.walk(
+            lexical, followlinks=False, onerror=mark_incomplete
+        ):
             dirs[:] = sorted(name for name in dirs if not name.startswith("."))
             for name in sorted(files):
                 if name.startswith(".") or name == "secrets.yaml" or not name.endswith(".yaml"):
                     continue
                 path = Path(current_root) / name
                 resolved_path = path.resolve()
-                if resolved_path != target and target not in resolved_path.parents:
+                if resolved_path != root and root not in resolved_path.parents:
                     complete = False
                     continue
                 try:
@@ -858,10 +889,17 @@ def _resolve_package_data(
                     complete = False
                     continue
                 resolved_data, item_complete = _resolve_package_data(
-                    data, root, resolved_path.parent, next_seen, depth + 1
+                    data,
+                    root,
+                    path.parent,
+                    next_seen | {resolved_path},
+                    depth + 1,
+                    active_collections,
                 )
                 complete = complete and item_complete
-                if mode == "!include_dir_named":
+                if resolved_data is _CYCLIC_COLLECTION:
+                    complete = False
+                elif mode == "!include_dir_named":
                     key = path.stem
                     if key in combined_mapping:
                         complete = False
@@ -873,22 +911,34 @@ def _resolve_package_data(
                 else:
                     complete = False
         return combined_mapping, complete
-    if isinstance(value, dict):
-        resolved_mapping: dict[Any, Any] = {}
-        complete = True
-        for key, item in value.items():
-            resolved_mapping[key], item_complete = _resolve_package_data(
-                item, root, base_dir, seen, depth
-            )
-            complete = complete and item_complete
-        return resolved_mapping, complete
-    if isinstance(value, list):
+    if isinstance(value, str):
+        return value, True
+    if isinstance(value, (dict, list)):
+        identity = id(value)
+        if identity in active_collections:
+            return _CYCLIC_COLLECTION, False
+        next_active = active_collections | {identity}
+        if isinstance(value, dict):
+            resolved_mapping: dict[Any, Any] = {}
+            complete = True
+            for key, item in value.items():
+                resolved_item, item_complete = _resolve_package_data(
+                    item, root, base_dir, seen, depth, next_active
+                )
+                complete = complete and item_complete
+                if resolved_item is not _CYCLIC_COLLECTION:
+                    resolved_mapping[key] = resolved_item
+            return resolved_mapping, complete
         resolved_items: list[Any] = []
         complete = True
         for item in value:
-            resolved_item, item_complete = _resolve_package_data(item, root, base_dir, seen, depth)
-            resolved_items.append(resolved_item)
+            resolved_item, item_complete = _resolve_package_data(
+                item, root, base_dir, seen, depth, next_active
+            )
             complete = complete and item_complete
+            if resolved_item is _CYCLIC_COLLECTION:
+                return _CYCLIC_COLLECTION, False
+            resolved_items.append(resolved_item)
         return resolved_items, complete
     return value, True
 
@@ -910,7 +960,7 @@ def _collect_package_records(
     root = Path(config_path).resolve()
     configuration_path = root / "configuration.yaml"
     homeassistant = configuration["homeassistant"]
-    parent_included = isinstance(homeassistant, str)
+    parent_included = isinstance(homeassistant, HomeAssistantTag) and homeassistant.tag == "include"
     packages_complete = True
     if parent_included:
         homeassistant, packages_complete = _resolve_package_data(
@@ -923,11 +973,7 @@ def _collect_package_records(
     packages = homeassistant.get("packages")
     if packages is None:
         return [], "NOT_PRESENT"
-    if (
-        isinstance(packages, str)
-        and re.fullmatch(r"!include(_dir_(?:list|named|merge_list|merge_named))?\s+(\S+)", packages)
-        is None
-    ):
+    if isinstance(packages, str) and not isinstance(packages, HomeAssistantTag):
         return [], "PARTIAL"
     if not parent_included:
         packages, packages_complete = _resolve_package_data(
