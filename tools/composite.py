@@ -916,6 +916,8 @@ def _collect_package_records(
         homeassistant, packages_complete = _resolve_package_data(
             homeassistant, root, root, {configuration_path}, 0
         )
+    if homeassistant is None:
+        return [], "NOT_PRESENT"
     if not isinstance(homeassistant, dict):
         return [], "FAILED"
     packages = homeassistant.get("packages")

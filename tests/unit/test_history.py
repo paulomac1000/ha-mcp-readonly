@@ -551,6 +551,21 @@ class TestExactUtcTimeline:
         assert "end_time=2026-01-01T02:00:00+00:00" in called_url
 
     @pytest.mark.asyncio
+    async def test_start_only_exact_window_defaults_end_to_now(self, mock_mcp, ha_url, ha_token):
+        register_history_tools(mock_mcp, ha_url, ha_token)
+        with patch("tools.history.make_ha_request") as mock_request:
+            mock_request.return_value = {"success": True, "data": self._history()}
+            result = await mock_mcp._tools["get_recent_state_changes"](
+                entity_ids="switch.one",
+                start_utc="2026-01-01T00:00:00+00:00",
+            )
+        data = json.loads(result)
+        assert data["success"] is True
+        called_url = mock_request.call_args[0][2]
+        assert "end_time=" in called_url
+        assert "end_time=2026-01-01T02%3A00%3A00%2B00%3A00" not in called_url
+
+    @pytest.mark.asyncio
     async def test_naive_exact_boundary_fails_before_api(self, mock_mcp, ha_url, ha_token):
         register_history_tools(mock_mcp, ha_url, ha_token)
         with patch("tools.history.make_ha_request") as mock_request:

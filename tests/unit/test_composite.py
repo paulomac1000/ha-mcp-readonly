@@ -1867,6 +1867,14 @@ class TestAuditCoverageHelpers:
         Path(tmp_path, "configuration.yaml").write_text("[]\n", encoding="utf-8")
         assert _read_configuration_root(str(tmp_path)) == (None, "FAILED")
 
+    def test_empty_homeassistant_section_has_no_packages(self, tmp_path):
+        from tools.composite import _collect_package_records
+
+        assert _collect_package_records(str(tmp_path), {"homeassistant": None}) == (
+            [],
+            "NOT_PRESENT",
+        )
+
     def test_package_inline_and_template_records(self, tmp_path):
         from tools.composite import _collect_package_records, _collect_template_records
 
