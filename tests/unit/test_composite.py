@@ -1476,6 +1476,74 @@ class TestAuditConfigOrphans:
         assert result["safe_to_delete"] is False
 
     @pytest.mark.asyncio
+    async def test_package_value_include_reference_prevents_false_orphan(self):
+        Path(self.config_path, "automations.yaml").write_text("[]\n", encoding="utf-8")
+        Path(self.config_path, "configuration.yaml").write_text(
+            "homeassistant:\n  packages:\n    room: '!include packages/room.yaml'\n",
+            encoding="utf-8",
+        )
+        package_dir = Path(self.config_path, "packages")
+        package_dir.mkdir()
+        Path(package_dir, "room.yaml").write_text(
+            "automation:\n"
+            "  - id: pkg1\n"
+            "    trigger:\n"
+            "      - platform: state\n"
+            "        entity_id: sensor.temperature_living_room\n"
+            "    action: []\n",
+            encoding="utf-8",
+        )
+        registry = {
+            "core.entity_registry": {
+                "data": {"entities": [{"entity_id": "sensor.temperature_living_room"}]}
+            }
+        }
+        with (
+            patch("tools.composite.load_registry") as mock_load,
+            patch("tools.composite.make_ha_request", return_value={"success": True, "data": []}),
+        ):
+            mock_load.side_effect = lambda name, path: registry.get(name, {})
+            result = json.loads(await self.mcp._tools["audit_config_orphans"]())
+
+        assert result["reference_source_coverage"]["packages"] == "SCANNED"
+        assert "sensor.temperature_living_room" not in result["orphan_entities"]
+
+    @pytest.mark.asyncio
+    async def test_nested_package_include_reference_prevents_false_orphan(self):
+        Path(self.config_path, "automations.yaml").write_text("[]\n", encoding="utf-8")
+        Path(self.config_path, "configuration.yaml").write_text(
+            "homeassistant:\n"
+            "  packages:\n"
+            "    room:\n"
+            "      automation: '!include packages/room-automations.yaml'\n",
+            encoding="utf-8",
+        )
+        package_dir = Path(self.config_path, "packages")
+        package_dir.mkdir()
+        Path(package_dir, "room-automations.yaml").write_text(
+            "- id: pkg1\n"
+            "  trigger:\n"
+            "    - platform: state\n"
+            "      entity_id: sensor.temperature_living_room\n"
+            "  action: []\n",
+            encoding="utf-8",
+        )
+        registry = {
+            "core.entity_registry": {
+                "data": {"entities": [{"entity_id": "sensor.temperature_living_room"}]}
+            }
+        }
+        with (
+            patch("tools.composite.load_registry") as mock_load,
+            patch("tools.composite.make_ha_request", return_value={"success": True, "data": []}),
+        ):
+            mock_load.side_effect = lambda name, path: registry.get(name, {})
+            result = json.loads(await self.mcp._tools["audit_config_orphans"]())
+
+        assert result["reference_source_coverage"]["packages"] == "SCANNED"
+        assert "sensor.temperature_living_room" not in result["orphan_entities"]
+
+    @pytest.mark.asyncio
     async def test_missing_package_include_downgrades_coverage(self):
         Path(self.config_path, "automations.yaml").write_text("[]\n", encoding="utf-8")
         Path(self.config_path, "configuration.yaml").write_text(
@@ -1793,6 +1861,49 @@ class TestAuditCoverageHelpers:
             str(tmp_path),
             {"homeassistant": {"packages": "!include_dir_merge_named merge_named_packages"}},
         ) == ([named_package], "SCANNED")
+
+    def test_inline_package_include_value_is_resolved(self, tmp_path):
+        from tools.composite import _collect_package_records
+
+        package = {"automation": [{"id": "room", "action": []}]}
+        Path(tmp_path, "room.yaml").write_text(yaml.dump(package), encoding="utf-8")
+        assert _collect_package_records(
+            str(tmp_path), {"homeassistant": {"packages": {"room": "!include room.yaml"}}}
+        ) == ([package], "SCANNED")
+
+    def test_nested_package_include_is_resolved(self, tmp_path):
+        from tools.composite import _collect_package_records
+
+        automations = [{"id": "room", "action": []}]
+        Path(tmp_path, "room-automations.yaml").write_text(yaml.dump(automations), encoding="utf-8")
+        package = {"automation": "!include room-automations.yaml", "sensor": []}
+        assert _collect_package_records(
+            str(tmp_path), {"homeassistant": {"packages": {"room": package}}}
+        ) == ([{"automation": automations, "sensor": []}], "SCANNED")
+
+    def test_nested_package_include_uses_including_file_directory(self, tmp_path):
+        from tools.composite import _collect_package_records
+
+        package_dir = Path(tmp_path, "packages")
+        package_dir.mkdir()
+        automations = [{"id": "room", "action": []}]
+        Path(package_dir, "automations.yaml").write_text(yaml.dump(automations), encoding="utf-8")
+        Path(package_dir, "room.yaml").write_text(
+            "automation: '!include automations.yaml'\n", encoding="utf-8"
+        )
+        assert _collect_package_records(
+            str(tmp_path), {"homeassistant": {"packages": {"room": "!include packages/room.yaml"}}}
+        ) == ([{"automation": automations}], "SCANNED")
+
+    def test_unresolved_nested_package_include_marks_partial(self, tmp_path):
+        from tools.composite import _collect_package_records
+
+        package = {"automation": "!include missing-automations.yaml", "sensor": []}
+        records, status = _collect_package_records(
+            str(tmp_path), {"homeassistant": {"packages": {"room": package}}}
+        )
+        assert records == [package]
+        assert status == "PARTIAL"
 
     def test_package_invalid_and_missing_sources(self, tmp_path):
         from tools.composite import _collect_package_records

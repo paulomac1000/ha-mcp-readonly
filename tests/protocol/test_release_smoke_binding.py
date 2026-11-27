@@ -71,18 +71,20 @@ def test_official_client_expected_version_uses_canonical_source() -> None:
     official = yaml.safe_load((root / ".github/workflows/official-client.yml").read_text())
     steps = official["jobs"]["official-client"]["steps"]
     assert "MCP_EXPECTED_VERSION" not in official.get("env", {})
-    resolver = next(
-        step for step in steps if step.get("name") == "Resolve canonical server version"
-    )
+    names = [step.get("name") for step in steps]
+    assert names.count("Resolve canonical server version") == 1
+    resolver_index = names.index("Resolve canonical server version")
+    resolver = steps[resolver_index]
     assert "from version import __version__" in resolver["run"]
     assert 'output.write(f"MCP_EXPECTED_VERSION={__version__}\\n")' in resolver["run"]
-    verification_names = {
+    for verification_name in (
         "Official-client stdio verification",
         "Official-client Streamable HTTP verification",
-    }
-    for step in steps:
-        if step.get("name") in verification_names:
-            assert "MCP_EXPECTED_VERSION" not in step.get("env", {})
+    ):
+        assert names.count(verification_name) == 1
+        verification_index = names.index(verification_name)
+        assert verification_index > resolver_index
+        assert "MCP_EXPECTED_VERSION" not in steps[verification_index].get("env", {})
 
     migration = yaml.safe_load((root / ".github/workflows/migration-evidence.yml").read_text())
     assert "MCP_EXPECTED_VERSION" not in migration.get("env", {})
