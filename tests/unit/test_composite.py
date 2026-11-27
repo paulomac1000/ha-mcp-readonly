@@ -1545,6 +1545,75 @@ class TestAuditConfigOrphans:
         assert result["reference_source_coverage"]["packages"] == "SCANNED"
         assert "sensor.temperature_living_room" not in result["orphan_entities"]
 
+    def test_invalid_include_path_does_not_abort_audit(self):
+        from tools.composite import _do_audit_config_orphans
+
+        Path(self.config_path, "automations.yaml").write_text("[]\n", encoding="utf-8")
+        Path(self.config_path, "configuration.yaml").write_text(
+            "homeassistant:\n"
+            "  packages:\n"
+            "    good:\n"
+            "      automation:\n"
+            "        - id: pkg1\n"
+            "          trigger:\n"
+            "            - platform: state\n"
+            "              entity_id: sensor.temperature_living_room\n"
+            "          action: []\n"
+            '    bad: !include "bad\\0.yaml"\n',
+            encoding="utf-8",
+        )
+        registry = {
+            "core.entity_registry": {
+                "data": {"entities": [{"entity_id": "sensor.temperature_living_room"}]}
+            }
+        }
+        with (
+            patch("tools.composite.load_registry") as mock_load,
+            patch("tools.composite.make_ha_request", return_value={"success": True, "data": []}),
+        ):
+            mock_load.side_effect = lambda name, path: registry.get(name, {})
+            result = _do_audit_config_orphans(self.config_path, "", "")
+
+        assert "error" not in result
+        assert result["reference_source_coverage"]["packages"] == "PARTIAL"
+        assert "sensor.temperature_living_room" not in result["orphan_entities"]
+
+    def test_unresolved_include_is_not_reported_as_entity(self):
+        from tools.composite import _do_audit_config_orphans
+
+        Path(self.config_path, "automations.yaml").write_text("[]\n", encoding="utf-8")
+        Path(self.config_path, "configuration.yaml").write_text(
+            "homeassistant:\n"
+            "  packages:\n"
+            "    room:\n"
+            "      automation:\n"
+            "        - id: pkg1\n"
+            "          trigger:\n"
+            "            - platform: state\n"
+            "              entity_id: sensor.temperature_living_room\n"
+            "          action: []\n"
+            "      extra_trigger:\n"
+            "        platform: state\n"
+            "        entity_id: !include sensor.missing.yaml\n",
+            encoding="utf-8",
+        )
+        registry = {
+            "core.entity_registry": {
+                "data": {"entities": [{"entity_id": "sensor.temperature_living_room"}]}
+            }
+        }
+        with (
+            patch("tools.composite.load_registry") as mock_load,
+            patch("tools.composite.make_ha_request", return_value={"success": True, "data": []}),
+        ):
+            mock_load.side_effect = lambda name, path: registry.get(name, {})
+            result = _do_audit_config_orphans(self.config_path, "", "")
+
+        assert "error" not in result
+        assert result["reference_source_coverage"]["packages"] == "PARTIAL"
+        assert "sensor.missing" not in result["broken_references"]
+        assert "sensor.temperature_living_room" not in result["orphan_entities"]
+
     @pytest.mark.asyncio
     async def test_nested_directory_package_include_reference_prevents_false_orphan(self):
         Path(self.config_path, "automations.yaml").write_text("[]\n", encoding="utf-8")
@@ -2183,6 +2252,35 @@ class TestAuditCoverageHelpers:
         records, status = _collect_package_records(str(tmp_path), configuration)
         assert records == [{"automation": [], "loop": [{"entity_id": "light.office"}]}]
         assert status == "PARTIAL"
+
+    def test_all_cyclic_mapping_resolves_to_cyclic_marker(self, tmp_path):
+        from tools.composite import _CYCLIC_COLLECTION, _resolve_package_data
+
+        cyclic_mapping = {}
+        cyclic_mapping["loop"] = cyclic_mapping
+        resolved, complete = _resolve_package_data(
+            cyclic_mapping, Path(tmp_path), Path(tmp_path), set(), 0
+        )
+        assert resolved is _CYCLIC_COLLECTION
+        assert complete is False
+
+    def test_genuinely_empty_mapping_remains_valid(self, tmp_path):
+        from tools.composite import _resolve_package_data
+
+        resolved, complete = _resolve_package_data({}, Path(tmp_path), Path(tmp_path), set(), 0)
+        assert resolved == {}
+        assert complete is True
+
+    def test_sole_all_cyclic_mapping_package_fails_coverage(self, tmp_path):
+        from tools.composite import _collect_package_records
+
+        cyclic_mapping = {}
+        cyclic_mapping["loop"] = cyclic_mapping
+        records, status = _collect_package_records(
+            str(tmp_path), {"homeassistant": {"packages": {"room": cyclic_mapping}}}
+        )
+        assert records == []
+        assert status == "FAILED"
 
     def test_path_resolution_error_retains_valid_sibling(self, tmp_path):
         from tools.composite import _collect_package_records

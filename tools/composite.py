@@ -775,7 +775,8 @@ _MAX_PACKAGE_INCLUDE_DEPTH = 32
 def _resolve_path(path: Path) -> Path | None:
     try:
         return path.resolve()
-    except (OSError, RuntimeError):
+    except (OSError, RuntimeError, ValueError):
+        # ValueError: pathlib raises it for embedded NUL bytes in include paths.
         return None
 
 
@@ -932,13 +933,18 @@ def _resolve_package_data(
         if isinstance(value, dict):
             resolved_mapping: dict[Any, Any] = {}
             complete = True
+            cyclic = False
             for key, item in value.items():
                 resolved_item, item_complete = _resolve_package_data(
                     item, root, base_dir, seen, depth, next_active
                 )
                 complete = complete and item_complete
-                if resolved_item is not _CYCLIC_COLLECTION:
-                    resolved_mapping[key] = resolved_item
+                if resolved_item is _CYCLIC_COLLECTION:
+                    cyclic = True
+                    continue
+                resolved_mapping[key] = resolved_item
+            if cyclic and not resolved_mapping:
+                return _CYCLIC_COLLECTION, False
             return resolved_mapping, complete
         resolved_items: list[Any] = []
         complete = True
@@ -1023,7 +1029,9 @@ def _collect_template_records(configuration: dict[str, Any] | None) -> tuple[lis
 
 
 def _without_dynamic_strings(data: Any) -> Any:
-    """Return source data with Jinja-bearing strings excluded from static scans."""
+    """Return source data with Jinja strings and unresolved tags excluded from static scans."""
+    if isinstance(data, HomeAssistantTag):
+        return ""
     if isinstance(data, str):
         return "" if "{{" in data or "{%" in data else data
     if isinstance(data, list):
