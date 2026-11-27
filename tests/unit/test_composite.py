@@ -1730,6 +1730,12 @@ class TestAuditCoverageHelpers:
         assert _collect_package_records(
             str(tmp_path), {"homeassistant": {"packages": "!include_dir_named packages"}}
         )[1] in {"SCANNED", "PARTIAL"}
+        merge_dir = Path(tmp_path, "merge_packages")
+        merge_dir.mkdir()
+        Path(merge_dir, "list.yaml").write_text("- id: merged\n", encoding="utf-8")
+        assert _collect_package_records(
+            str(tmp_path), {"homeassistant": {"packages": "!include_dir_merge_list merge_packages"}}
+        ) == ([{"id": "merged"}], "SCANNED")
 
     def test_package_invalid_and_missing_sources(self, tmp_path):
         from tools.composite import _collect_package_records

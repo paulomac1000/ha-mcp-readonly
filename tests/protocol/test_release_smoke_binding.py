@@ -64,3 +64,18 @@ repo=registry.invalid/team/quarantine
         f"amd64_digest=sha256:{2:064d}",
         f"arm64_digest=sha256:{3:064d}",
     ]
+
+
+def test_official_client_expected_version_uses_canonical_source() -> None:
+    root = Path(__file__).resolve().parents[2]
+    for relative in (
+        ".github/workflows/official-client.yml",
+        ".github/workflows/migration-evidence.yml",
+    ):
+        workflow = yaml.safe_load((root / relative).read_text())
+        assert "MCP_EXPECTED_VERSION" not in workflow.get("env", {})
+        commands = "\n".join(
+            step.get("run", "") for step in workflow["jobs"].values() for step in step["steps"]
+        )
+        assert "from version import __version__" in commands
+        assert 'MCP_EXPECTED_VERSION="$expected_version"' in commands

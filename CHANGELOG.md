@@ -16,17 +16,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
-## [2.4.0] - 2026-11-26
+## [2.4.0] - 2026-11-27
 
 ### Added
-- Log analysis results carry source-bound evidence: bounded source windows, startup/boot and rotation identity, trusted UTC observations, and a stable evidence digest. Incomplete or unavailable source evidence is reported explicitly instead of being treated as a healthy result.
-- History results retain `unknown` and `unavailable` states and expose recorder coverage limits, including unavailable or partial recorder windows, so consumers can distinguish observed state changes from missing history.
-- The orphan-reference audit scans package includes, template configuration and blueprint instances, reports per-source coverage, and returns advisory candidates without automated cleanup authority. Missing package or blueprint evidence can no longer be interpreted as proof that an entity is unused.
-- A shared runtime-pin check validates the installed FastMCP, MCP and Starlette versions against `constraints-ci.txt` in release and interoperability workflows. A release-smoke protocol test binds those workflow claims to the assessed source revision.
+- Log analysis results carry source-bound evidence: bounded source windows, startup/boot and rotation identity, trusted UTC observations, and a stable evidence digest. `analyze_log_errors` also accepts optional source-local `since_source_time`/`until_source_time` bounds, a trusted `source_timezone` or fixed offset, and an `owner_component` scope; exact UTC evidence is emitted only when the caller supplies a trusted offset.
+- History results retain `unknown` and `unavailable` states and expose recorder coverage limits, including unavailable or partial recorder windows, so consumers can distinguish observed state changes from missing history. `get_recent_state_changes` accepts optional timezone-aware `start_utc`/`end_utc` bounds for an exact UTC window.
+- The orphan-reference audit scans package includes, template configuration and referenced blueprint paths, reports per-source coverage, and returns advisory candidates without automated cleanup authority. Missing package or blueprint evidence can no longer be interpreted as proof that an entity is unused; blueprint instances are not expanded.
+- A shared runtime-pin check validates the installed FastMCP, MCP and Starlette versions against `constraints-ci.txt` in release and interoperability workflows. Official-client and migration workflows derive the expected server version from canonical `version.py`. A release-smoke protocol test binds those workflow claims to the assessed source revision.
+
+### Changed
+- `get_integration_health` now returns a successful `readiness: UNVERIFIED` response when no matching state entities are observed instead of failing as "Not Found / No Entities". Config-entry lifecycle remains a separate `UNKNOWN` result when authoritative lifecycle evidence is unavailable.
+- `get_entity_state_history_summary` caps `states_breakdown` at 32 labels, prioritizes `unknown` and `unavailable`, and reports the omitted-label count so high-cardinality numeric sensors cannot produce an unbounded response.
+- Release and interoperability workflows no longer hardcode the server version; they read `version.py` from the assessed checkout.
 
 ### Fixed
 - Supervisor log searches and diagnostics preserve non-ASCII text in UTF-8 responses without a declared charset. The missing previous-boot diagnostic names the actual `/api/hassio/core/logs/boots/-1` endpoint.
-- Config-entry details and integration health prefer the authoritative Home Assistant config-entry API. When lifecycle evidence is unavailable, readiness remains `UNKNOWN`; post-update diagnostics count unknown lifecycle states instead of promoting missing evidence to healthy.
+- Config-entry details and integration health prefer the authoritative Home Assistant config-entry API. Post-update diagnostics count unknown lifecycle states instead of promoting missing evidence to healthy.
 - Log error summaries no longer report false-green results when source identity, boot/rotation generation or time-window evidence is incomplete. Cache identity and summaries are bound to the actual bounded source content.
 - Package include directives now normalize `!include`, `!include_dir_list`, `!include_dir_named`, `!include_dir_merge_list` and `!include_dir_merge_named` correctly, so directory-based package references are scanned rather than silently skipped.
 

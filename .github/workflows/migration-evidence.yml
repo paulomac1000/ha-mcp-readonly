@@ -81,7 +81,8 @@ jobs:
           /tmp/migration-wheel/bin/python scripts/check_runtime_pins.py
           python -m venv /tmp/migration-official-client
           /tmp/migration-official-client/bin/python -m pip install 'mcp==1.29.1'
-          MCP_EXPECTED_VERSION=2.3.0 \
+          expected_version="$(python -c 'from version import __version__; print(__version__)')"
+          MCP_EXPECTED_VERSION="$expected_version" \
             /tmp/migration-official-client/bin/python scripts/verify_official_mcp_client.py stdio \
               --command /tmp/migration-wheel/bin/ha-mcp-readonly --config-path /tmp
 

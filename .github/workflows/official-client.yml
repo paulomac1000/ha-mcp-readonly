@@ -13,7 +13,6 @@ concurrency:
 
 env:
   PIP_DISABLE_PIP_VERSION_CHECK: "1"
-  MCP_EXPECTED_VERSION: "2.3.0"
   ASSESSED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
 
 jobs:
@@ -60,8 +59,10 @@ jobs:
         env:
           PYTHONPATH: ${{ github.workspace }}
         run: |
-          /tmp/official-client/bin/python scripts/verify_official_mcp_client.py stdio \
-            --command /tmp/ha-server/bin/ha-mcp-readonly --config-path /tmp
+          expected_version="$(python -c 'from version import __version__; print(__version__)')"
+          MCP_EXPECTED_VERSION="$expected_version" \
+            /tmp/official-client/bin/python scripts/verify_official_mcp_client.py stdio \
+              --command /tmp/ha-server/bin/ha-mcp-readonly --config-path /tmp
       - name: Build exact container from constrained runtime
         run: docker build -f Dockerfile.release -t ha-mcp-readonly:official-${ASSESSED_SHA} .
       - name: Start hardened Streamable HTTP container

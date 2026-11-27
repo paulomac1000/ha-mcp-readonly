@@ -811,7 +811,9 @@ def _collect_package_records(
                 except (OSError, UnicodeError, yaml.YAMLError):
                     failures += 1
                     continue
-                if mode == "!include_dir_list" and isinstance(data, list):
+                if mode in {"!include_dir_list", "!include_dir_merge_list"} and isinstance(
+                    data, list
+                ):
                     records.extend(item for item in data if isinstance(item, dict))
                 elif mode in {"!include_dir_named", "!include_dir_merge_named"} and isinstance(
                     data, dict
