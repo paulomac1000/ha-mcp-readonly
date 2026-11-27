@@ -68,14 +68,26 @@ repo=registry.invalid/team/quarantine
 
 def test_official_client_expected_version_uses_canonical_source() -> None:
     root = Path(__file__).resolve().parents[2]
-    for relative in (
-        ".github/workflows/official-client.yml",
-        ".github/workflows/migration-evidence.yml",
-    ):
-        workflow = yaml.safe_load((root / relative).read_text())
-        assert "MCP_EXPECTED_VERSION" not in workflow.get("env", {})
-        commands = "\n".join(
-            step.get("run", "") for step in workflow["jobs"].values() for step in step["steps"]
-        )
-        assert "from version import __version__" in commands
-        assert 'MCP_EXPECTED_VERSION="$expected_version"' in commands
+    official = yaml.safe_load((root / ".github/workflows/official-client.yml").read_text())
+    steps = official["jobs"]["official-client"]["steps"]
+    assert "MCP_EXPECTED_VERSION" not in official.get("env", {})
+    resolver = next(
+        step for step in steps if step.get("name") == "Resolve canonical server version"
+    )
+    assert "from version import __version__" in resolver["run"]
+    assert 'output.write(f"MCP_EXPECTED_VERSION={__version__}\\n")' in resolver["run"]
+    verification_names = {
+        "Official-client stdio verification",
+        "Official-client Streamable HTTP verification",
+    }
+    for step in steps:
+        if step.get("name") in verification_names:
+            assert "MCP_EXPECTED_VERSION" not in step.get("env", {})
+
+    migration = yaml.safe_load((root / ".github/workflows/migration-evidence.yml").read_text())
+    assert "MCP_EXPECTED_VERSION" not in migration.get("env", {})
+    commands = "\n".join(
+        step.get("run", "") for step in migration["jobs"].values() for step in step["steps"]
+    )
+    assert "from version import __version__" in commands
+    assert 'MCP_EXPECTED_VERSION="$expected_version"' in commands

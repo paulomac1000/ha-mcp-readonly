@@ -29,6 +29,16 @@ jobs:
         with:
           python-version: "3.13"
           cache: pip
+      - name: Resolve canonical server version
+        shell: bash
+        run: |
+          python - <<'PY'
+          import os
+          from version import __version__
+
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as output:
+              output.write(f"MCP_EXPECTED_VERSION={__version__}\n")
+          PY
       - name: Generate ephemeral verification credentials
         shell: bash
         run: |
@@ -59,10 +69,8 @@ jobs:
         env:
           PYTHONPATH: ${{ github.workspace }}
         run: |
-          expected_version="$(python -c 'from version import __version__; print(__version__)')"
-          MCP_EXPECTED_VERSION="$expected_version" \
-            /tmp/official-client/bin/python scripts/verify_official_mcp_client.py stdio \
-              --command /tmp/ha-server/bin/ha-mcp-readonly --config-path /tmp
+          /tmp/official-client/bin/python scripts/verify_official_mcp_client.py stdio \
+            --command /tmp/ha-server/bin/ha-mcp-readonly --config-path /tmp
       - name: Build exact container from constrained runtime
         run: docker build -f Dockerfile.release -t ha-mcp-readonly:official-${ASSESSED_SHA} .
       - name: Start hardened Streamable HTTP container
