@@ -206,7 +206,10 @@ class TestGetEntityStateHistorySummary:
         assert data["states_breakdown"]["off"]["total_duration_min"] == 3.0
         assert data["states_breakdown"]["on"]["total_duration_min"] == 2.0
         assert data["recorder_coverage"]["duplicate_rows"] == 1
-        assert data["recorder_coverage"]["observed_start_utc"].startswith(now.date().isoformat())
+        assert (
+            data["recorder_coverage"]["observed_start_utc"]
+            == (now - timedelta(minutes=5)).isoformat()
+        )
 
     @pytest.mark.asyncio
     async def test_missing_state_is_not_observed_unknown(self):
