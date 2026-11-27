@@ -2169,6 +2169,70 @@ class TestAuditCoverageHelpers:
         assert records == [{"automation": [{"id": "good", "action": []}]}]
         assert status == "PARTIAL"
 
+    def test_mixed_cyclic_list_retains_valid_entries(self, tmp_path):
+        from tools.composite import _collect_package_records
+
+        Path(tmp_path, "room.yaml").write_text(
+            "automation: []\nloop: &loop [*loop, {entity_id: light.office}]\n",
+            encoding="utf-8",
+        )
+        configuration = yaml.load(
+            "homeassistant:\n  packages:\n    room: !include room.yaml\n",
+            Loader=HomeAssistantLoader,
+        )
+        records, status = _collect_package_records(str(tmp_path), configuration)
+        assert records == [{"automation": [], "loop": [{"entity_id": "light.office"}]}]
+        assert status == "PARTIAL"
+
+    def test_path_resolution_error_retains_valid_sibling(self, tmp_path):
+        from tools.composite import _collect_package_records
+
+        good = {"automation": []}
+        configuration = {
+            "homeassistant": {
+                "packages": {
+                    "good": good,
+                    "blocked": HomeAssistantTag("include", "blocked.yaml"),
+                }
+            }
+        }
+        original_resolve = Path.resolve
+
+        def resolve(path, *args, **kwargs):
+            if path.name == "blocked.yaml":
+                raise PermissionError("blocked")
+            return original_resolve(path, *args, **kwargs)
+
+        with patch("tools.composite.Path.resolve", resolve):
+            records, status = _collect_package_records(str(tmp_path), configuration)
+        assert records == [good]
+        assert status == "PARTIAL"
+
+    def test_directory_path_resolution_error_marks_partial(self, tmp_path):
+        from tools.composite import _collect_package_records
+
+        package_dir = Path(tmp_path, "packages")
+        package_dir.mkdir()
+        good = {"automation": []}
+        Path(package_dir, "good.yaml").write_text(yaml.dump(good), encoding="utf-8")
+        Path(package_dir, "blocked.yaml").write_text(
+            yaml.dump({"automation": []}), encoding="utf-8"
+        )
+        original_resolve = Path.resolve
+
+        def resolve(path, *args, **kwargs):
+            if path.name == "blocked.yaml":
+                raise PermissionError("blocked")
+            return original_resolve(path, *args, **kwargs)
+
+        with patch("tools.composite.Path.resolve", resolve):
+            records, status = _collect_package_records(
+                str(tmp_path),
+                {"homeassistant": {"packages": HomeAssistantTag("include_dir_named", "packages")}},
+            )
+        assert records == [good]
+        assert status == "PARTIAL"
+
     def test_in_root_symlink_uses_including_path_for_child_includes(self, tmp_path):
         from tools.composite import _collect_package_records
 

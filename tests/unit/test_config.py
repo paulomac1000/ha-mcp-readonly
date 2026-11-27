@@ -52,6 +52,16 @@ class TestGetMainConfiguration:
         assert "homeassistant:" in result
         assert "name: Home" in result
 
+    def test_tagged_scalar_serializes_as_plain_yaml(self, mock_mcp, tmp_path):
+        (tmp_path / "configuration.yaml").write_text(
+            "automation: !include automations.yaml\n", encoding="utf-8"
+        )
+        register_config_tools(mock_mcp, str(tmp_path))
+        result = json.loads(mock_mcp._tools["get_main_configuration"]())
+        assert result["success"] is True
+        assert "!!python/object" not in result["data"]
+        assert "!include automations.yaml" in result["data"]
+
     def test_sensitive_data_redacted(self, mock_mcp, tmp_path):
         """Passwords and tokens must be redacted."""
         (tmp_path / "configuration.yaml").write_text(

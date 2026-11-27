@@ -772,12 +772,19 @@ def _read_include_file(path: Path) -> Any:
 _MAX_PACKAGE_INCLUDE_DEPTH = 32
 
 
+def _resolve_path(path: Path) -> Path | None:
+    try:
+        return path.resolve()
+    except (OSError, RuntimeError):
+        return None
+
+
 def _resolve_package_include_path(
     root: Path, base_dir: Path, relative: str
 ) -> tuple[Path, Path] | None:
     lexical = base_dir / relative
-    resolved = lexical.resolve()
-    if resolved != root and root not in resolved.parents:
+    resolved = _resolve_path(lexical)
+    if resolved is None or (resolved != root and root not in resolved.parents):
         return None
     return lexical, resolved
 
@@ -842,8 +849,10 @@ def _resolve_package_data(
                     if name.startswith(".") or name == "secrets.yaml" or not name.endswith(".yaml"):
                         continue
                     path = Path(current_root) / name
-                    resolved_path = path.resolve()
-                    if resolved_path != root and root not in resolved_path.parents:
+                    resolved_path = _resolve_path(path)
+                    if resolved_path is None or (
+                        resolved_path != root and root not in resolved_path.parents
+                    ):
                         complete = False
                         continue
                     try:
@@ -879,8 +888,10 @@ def _resolve_package_data(
                 if name.startswith(".") or name == "secrets.yaml" or not name.endswith(".yaml"):
                     continue
                 path = Path(current_root) / name
-                resolved_path = path.resolve()
-                if resolved_path != root and root not in resolved_path.parents:
+                resolved_path = _resolve_path(path)
+                if resolved_path is None or (
+                    resolved_path != root and root not in resolved_path.parents
+                ):
                     complete = False
                     continue
                 try:
@@ -931,14 +942,18 @@ def _resolve_package_data(
             return resolved_mapping, complete
         resolved_items: list[Any] = []
         complete = True
+        cyclic = False
         for item in value:
             resolved_item, item_complete = _resolve_package_data(
                 item, root, base_dir, seen, depth, next_active
             )
             complete = complete and item_complete
             if resolved_item is _CYCLIC_COLLECTION:
-                return _CYCLIC_COLLECTION, False
+                cyclic = True
+                continue
             resolved_items.append(resolved_item)
+        if cyclic and not resolved_items:
+            return _CYCLIC_COLLECTION, False
         return resolved_items, complete
     return value, True
 
