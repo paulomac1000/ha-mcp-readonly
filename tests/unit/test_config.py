@@ -6,6 +6,7 @@ import json
 from unittest.mock import patch
 
 import pytest
+import yaml
 
 from tools.config import register_config_tools
 
@@ -59,8 +60,7 @@ class TestGetMainConfiguration:
         register_config_tools(mock_mcp, str(tmp_path))
         result = json.loads(mock_mcp._tools["get_main_configuration"]())
         assert result["success"] is True
-        assert "!!python/object" not in result["data"]
-        assert "!include automations.yaml" in result["data"]
+        assert yaml.safe_load(result["data"]) == {"automation": "!include automations.yaml"}
 
     def test_sensitive_data_redacted(self, mock_mcp, tmp_path):
         """Passwords and tokens must be redacted."""

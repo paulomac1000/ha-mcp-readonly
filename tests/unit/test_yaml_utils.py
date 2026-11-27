@@ -68,7 +68,7 @@ class TestHomeAssistantLoader:
         result = yaml.load("trigger: !input motion_sensor\n", Loader=HomeAssistantLoader)
         dumped = yaml.dump(result)
         assert "!!python/object" not in dumped
-        assert yaml.load(dumped, Loader=HomeAssistantLoader) == {"trigger": "!input motion_sensor"}
+        assert yaml.safe_load(dumped) == {"trigger": "!input motion_sensor"}
 
     def test_ha_loader_handles_include_dir_list(self):
         """Test that !include_dir_list tags are handled."""
