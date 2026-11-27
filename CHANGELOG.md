@@ -16,8 +16,32 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [2.4.0] - 2026-11-27
+
+### Added
+- Log analysis results carry source-bound evidence: bounded source windows, startup/boot and rotation identity, trusted UTC observations, and a stable evidence digest. `analyze_log_errors` also accepts optional source-local `since_source_time`/`until_source_time` bounds, a trusted `source_timezone` or fixed offset, and an `owner_component` scope; exact UTC evidence is emitted only when the caller supplies a trusted offset.
+- History results retain `unknown` and `unavailable` states and expose recorder coverage limits, including unavailable or partial recorder windows, so consumers can distinguish observed state changes from missing history. `get_recent_state_changes` accepts optional timezone-aware ISO `start_utc`/`end_utc` bounds for an exact UTC window; when `end_utc` is omitted, the window ends at the current time.
+- The orphan-reference audit scans package includes, template configuration and referenced blueprint paths, reports per-source coverage, and returns advisory candidates without automated cleanup authority. Missing package or blueprint evidence can no longer be interpreted as proof that an entity is unused; blueprint instances are not expanded.
+- A shared runtime-pin check validates the installed FastMCP, MCP and Starlette versions against `constraints-ci.txt` in release and interoperability workflows. Official-client and migration workflows derive the expected server version from canonical `version.py`. A release-smoke protocol test binds those workflow claims to the assessed source revision.
+
+### Changed
+- `get_integration_health` now returns a successful `readiness: UNVERIFIED` response when no matching state entities are observed instead of failing as "Not Found / No Entities". Config-entry lifecycle remains a separate `UNKNOWN` result when authoritative lifecycle evidence is unavailable.
+- `get_entity_state_history_summary` caps `states_breakdown` at 32 labels, prioritizes `unknown` and `unavailable`, and reports the omitted-label count so high-cardinality numeric sensors cannot produce an unbounded response.
+- Release and interoperability workflows no longer hardcode the server version; they read `version.py` from the assessed checkout.
+
 ### Fixed
 - Supervisor log searches and diagnostics preserve non-ASCII text in UTF-8 responses without a declared charset. The missing previous-boot diagnostic names the actual `/api/hassio/core/logs/boots/-1` endpoint.
+- Config-entry details and integration health prefer the authoritative Home Assistant config-entry API. Post-update diagnostics count unknown lifecycle states instead of promoting missing evidence to healthy.
+- Log error summaries no longer report false-green results when source identity, boot/rotation generation or time-window evidence is incomplete. Cache identity and summaries are bound to the actual bounded source content.
+- Package includes now resolve a parent `homeassistant: !include homeassistant.yaml`, per-package `room: !include room.yaml` values, nested direct includes such as `automation: !include room-automations.yml`, and directory directives inside package bodies. Paths are relative to the including file and constrained to the configuration root. Directory directives recurse through visible `.yaml` files while matching Home Assistant's exclusions for hidden files, hidden subdirectories and `secrets.yaml`; they preserve the distinct `list`, `named`, `merge_list` and `merge_named` mapping semantics. Real YAML tags are distinguished from literal text, collection cycles are omitted without aborting valid siblings, enumeration errors downgrade coverage, and unresolved or unsupported includes mark coverage `PARTIAL`/`FAILED` instead of `SCANNED`. Empty include arguments are rejected, empty files follow Home Assistant loader semantics, and parent includes resolve only the packages subtree for package coverage.
+- Exact-window history queries URL-encode `end_time`, preventing Home Assistant 400 responses caused by raw timezone offsets in the query string.
+
+### Dependencies
+- Updated the constrained Python stack to FastMCP 3.4.11, MCP 1.30.0, Pydantic 2.14.3, Starlette 1.10.0 and Uvicorn 0.54.0, with matching `pyproject.toml`, `requirements.txt`, build-system and development pins. Clean constrained installation, dependency checks, unit/protocol tests and wheel construction use the same source of truth.
+- Updated pinned GitHub Actions across CI, migration evidence, official-client, Semgrep and protected publication workflows while preserving exact-digest quarantine and promotion boundaries.
+
+### Corrections
+Correction: 1.1.5 contained a duplicate `Added` heading; its two blocks are consolidated without changing the recorded release behavior.
 
 ## [2.3.0] - 2026-09-11
 
@@ -538,6 +562,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - `tests/unit/test_lovelace.py` — 27 tests covering all new endpoints, edge cases
   (empty registries, corrupt files, strategy dashboards, badges, multi-criteria
   search), and backward compatibility.
+- Tests for `automation_validate_triggers` — validates trigger IDs against their
+  handlers in choose/if/parallel blocks, detects orphaned triggers, duplicate IDs,
+  and missing handler references.
+- Tests for `diagnose_person_tracking` — person state, tracker freshness analysis,
+  automation references.
+- Tests for `get_area_automation_summary` — area intelligence with device mappings,
+  entity breakdown, and automation linking.
+- Tests for `server.py` REST API endpoints: tool calling, context generation,
+  download, status, OpenAPI schema, error paths.
+- Tests for `context_generator` analyzers (`RegistryCollector`, `AutomationAnalyzer`,
+  `LogAnalyzer`, `DashboardAnalyzer`, `TemplateEntityCollector`, `HistoryAnalyzer`)
+  and formatter (`ReportGenerator`).
+- Edge case tests: registry loading errors, YAML fallback tags, corrupt scene/script
+  files, storage history stats, empty registries, search filters.
 
 ### Fixed
 - `get_lovelace_dashboards()` — corrected registry filename from `lovelace.dashboards`
@@ -555,22 +593,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   `tools/scripts.py` reached 100%; `tools/storage.py` 73% → 96%;
   `tools/dev_tools.py` 67% → 83%; `server.py` 66% → 80%;
   `tools/diagnostics.py` 50% → 75%; `context_generator` 3-13% → 28-55%.
-
-### Added
-- Tests for `automation_validate_triggers` — validates trigger IDs against their
-  handlers in choose/if/parallel blocks, detects orphaned triggers, duplicate IDs,
-  and missing handler references.
-- Tests for `diagnose_person_tracking` — person state, tracker freshness analysis,
-  automation references.
-- Tests for `get_area_automation_summary` — area intelligence with device mappings,
-  entity breakdown, and automation linking.
-- Tests for `server.py` REST API endpoints: tool calling, context generation,
-  download, status, OpenAPI schema, error paths.
-- Tests for `context_generator` analyzers (`RegistryCollector`, `AutomationAnalyzer`,
-  `LogAnalyzer`, `DashboardAnalyzer`, `TemplateEntityCollector`, `HistoryAnalyzer`)
-  and formatter (`ReportGenerator`).
-- Edge case tests: registry loading errors, YAML fallback tags, corrupt scene/script
-  files, storage history stats, empty registries, search filters.
 
 ## [1.1.3] - 2026-05-06
 

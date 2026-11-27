@@ -24,7 +24,6 @@ from __future__ import annotations
 import hashlib
 import logging
 import os
-import re
 from collections import defaultdict
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -42,7 +41,7 @@ from tools.utils import (
     make_ha_request,
     resolve_area_id,
 )
-from tools.yaml_utils import HomeAssistantLoader
+from tools.yaml_utils import HomeAssistantLoader, HomeAssistantTag
 
 _logger = logging.getLogger(__name__)
 
@@ -770,62 +769,283 @@ def _read_include_file(path: Path) -> Any:
         return yaml.load(file, Loader=HomeAssistantLoader)  # nosec B506
 
 
+_MAX_PACKAGE_INCLUDE_DEPTH = 32
+
+
+def _resolve_path(path: Path) -> Path | None:
+    try:
+        return path.resolve()
+    except (OSError, RuntimeError, ValueError):
+        # ValueError: pathlib raises it for embedded NUL bytes in include paths.
+        return None
+
+
+def _resolve_package_include_path(
+    root: Path, base_dir: Path, relative: str
+) -> tuple[Path, Path] | None:
+    if not relative:
+        return None
+    lexical = base_dir / relative
+    resolved = _resolve_path(lexical)
+    if resolved is None or (resolved != root and root not in resolved.parents):
+        return None
+    return lexical, resolved
+
+
+_CYCLIC_COLLECTION = object()
+
+
+def _resolve_package_data(
+    value: Any,
+    root: Path,
+    base_dir: Path,
+    seen: set[Path],
+    depth: int,
+    active_collections: frozenset[int] = frozenset(),
+) -> tuple[Any, bool]:
+    """Resolve Home Assistant include directives while preserving coverage gaps."""
+    if depth >= _MAX_PACKAGE_INCLUDE_DEPTH:
+        if isinstance(value, (dict, list)):
+            return _CYCLIC_COLLECTION, False
+        return value, False
+    if isinstance(value, HomeAssistantTag):
+        if value.tag == "include":
+            mode = "!include"
+        elif value.tag in {
+            "include_dir_list",
+            "include_dir_named",
+            "include_dir_merge_list",
+            "include_dir_merge_named",
+        }:
+            mode = f"!{value.tag}"
+        else:
+            return value, True
+        paths = _resolve_package_include_path(root, base_dir, value.value)
+        if paths is None:
+            return value, False
+        lexical, target = paths
+        if target in seen:
+            return value, False
+        next_seen = seen | {target}
+        if mode == "!include":
+            try:
+                data = _read_include_file(target)
+            except (OSError, UnicodeError, yaml.YAMLError):
+                return value, False
+            if data is None:
+                data = {}
+            return _resolve_package_data(
+                data, root, lexical.parent, next_seen, depth + 1, active_collections
+            )
+        try:
+            target_is_dir = target.is_dir()
+        except OSError:
+            return value, False
+        if not target_is_dir:
+            return value, False
+
+        complete = True
+
+        def mark_incomplete(_error: OSError) -> None:
+            nonlocal complete
+            complete = False
+
+        if mode in {"!include_dir_list", "!include_dir_merge_list"}:
+            combined: list[Any] = []
+            for current_root, dirs, files in os.walk(
+                lexical, followlinks=False, onerror=mark_incomplete
+            ):
+                dirs[:] = sorted(name for name in dirs if not name.startswith("."))
+                for name in sorted(files):
+                    if name.startswith(".") or name == "secrets.yaml" or not name.endswith(".yaml"):
+                        continue
+                    path = Path(current_root) / name
+                    resolved_path = _resolve_path(path)
+                    if resolved_path is None or (
+                        resolved_path != root and root not in resolved_path.parents
+                    ):
+                        complete = False
+                        continue
+                    try:
+                        data = _read_include_file(resolved_path)
+                    except (OSError, UnicodeError, yaml.YAMLError):
+                        complete = False
+                        continue
+                    resolved_data, item_complete = _resolve_package_data(
+                        data,
+                        root,
+                        path.parent,
+                        next_seen | {resolved_path},
+                        depth + 1,
+                        active_collections,
+                    )
+                    complete = complete and item_complete
+                    if resolved_data is _CYCLIC_COLLECTION:
+                        complete = False
+                    elif resolved_data is None:
+                        continue
+                    elif mode == "!include_dir_list":
+                        combined.append(resolved_data)
+                    elif isinstance(resolved_data, list):
+                        combined.extend(resolved_data)
+                    else:
+                        complete = False
+            return combined, complete
+
+        combined_mapping: dict[Any, Any] = {}
+        for current_root, dirs, files in os.walk(
+            lexical, followlinks=False, onerror=mark_incomplete
+        ):
+            dirs[:] = sorted(name for name in dirs if not name.startswith("."))
+            for name in sorted(files):
+                if name.startswith(".") or name == "secrets.yaml" or not name.endswith(".yaml"):
+                    continue
+                path = Path(current_root) / name
+                resolved_path = _resolve_path(path)
+                if resolved_path is None or (
+                    resolved_path != root and root not in resolved_path.parents
+                ):
+                    complete = False
+                    continue
+                try:
+                    data = _read_include_file(resolved_path)
+                except (OSError, UnicodeError, yaml.YAMLError):
+                    complete = False
+                    continue
+                resolved_data, item_complete = _resolve_package_data(
+                    data,
+                    root,
+                    path.parent,
+                    next_seen | {resolved_path},
+                    depth + 1,
+                    active_collections,
+                )
+                complete = complete and item_complete
+                if resolved_data is _CYCLIC_COLLECTION:
+                    complete = False
+                elif resolved_data is None:
+                    if mode == "!include_dir_named":
+                        key = path.stem
+                        if key in combined_mapping:
+                            complete = False
+                        combined_mapping[key] = {}
+                    continue
+                elif mode == "!include_dir_named":
+                    key = path.stem
+                    if key in combined_mapping:
+                        complete = False
+                    combined_mapping[key] = resolved_data
+                elif isinstance(resolved_data, dict):
+                    if combined_mapping.keys() & resolved_data.keys():
+                        complete = False
+                    combined_mapping.update(resolved_data)
+                else:
+                    complete = False
+        return combined_mapping, complete
+    if isinstance(value, str):
+        return value, True
+    if isinstance(value, (dict, list)):
+        identity = id(value)
+        if identity in active_collections:
+            return _CYCLIC_COLLECTION, False
+        next_active = active_collections | {identity}
+        if isinstance(value, dict):
+            resolved_mapping: dict[Any, Any] = {}
+            complete = True
+            cyclic = False
+            for key, item in value.items():
+                resolved_item, item_complete = _resolve_package_data(
+                    item, root, base_dir, seen, depth, next_active
+                )
+                complete = complete and item_complete
+                if resolved_item is _CYCLIC_COLLECTION:
+                    cyclic = True
+                    continue
+                resolved_mapping[key] = resolved_item
+            if cyclic and not resolved_mapping:
+                return _CYCLIC_COLLECTION, False
+            return resolved_mapping, complete
+        resolved_items: list[Any] = []
+        complete = True
+        cyclic = False
+        for item in value:
+            resolved_item, item_complete = _resolve_package_data(
+                item, root, base_dir, seen, depth, next_active
+            )
+            complete = complete and item_complete
+            if resolved_item is _CYCLIC_COLLECTION:
+                cyclic = True
+                continue
+            resolved_items.append(resolved_item)
+        if cyclic and not resolved_items:
+            return _CYCLIC_COLLECTION, False
+        return resolved_items, complete
+    return value, True
+
+
+def _package_scan_status(
+    records: list[dict[str, Any]], failures: int
+) -> tuple[list[dict[str, Any]], str]:
+    if failures and not records:
+        return [], "FAILED"
+    return records, "PARTIAL" if failures else "SCANNED"
+
+
 def _collect_package_records(
     config_path: str, configuration: dict[str, Any] | None
 ) -> tuple[list[dict[str, Any]], str]:
     """Collect package records from supported configuration include forms."""
-    homeassistant = configuration.get("homeassistant") if isinstance(configuration, dict) else None
-    packages = homeassistant.get("packages") if isinstance(homeassistant, dict) else None
+    if not isinstance(configuration, dict) or "homeassistant" not in configuration:
+        return [], "NOT_PRESENT"
+    root = Path(config_path).resolve()
+    configuration_path = root / "configuration.yaml"
+    homeassistant = configuration["homeassistant"]
+    base_dir = root
+    seen = {configuration_path}
+    depth = 0
+    while isinstance(homeassistant, HomeAssistantTag) and homeassistant.tag == "include":
+        if depth >= _MAX_PACKAGE_INCLUDE_DEPTH:
+            return [], "FAILED"
+        paths = _resolve_package_include_path(root, base_dir, homeassistant.value)
+        if paths is None:
+            return [], "FAILED"
+        lexical, target = paths
+        if target in seen:
+            return [], "FAILED"
+        try:
+            loaded = _read_include_file(target)
+        except (OSError, UnicodeError, yaml.YAMLError):
+            return [], "FAILED"
+        if loaded is None:
+            loaded = {}
+        homeassistant = loaded
+        base_dir = lexical.parent
+        seen = seen | {target}
+        depth += 1
+    if homeassistant is None:
+        return [], "NOT_PRESENT"
+    if not isinstance(homeassistant, dict):
+        return [], "FAILED"
+    packages = homeassistant.get("packages")
     if packages is None:
         return [], "NOT_PRESENT"
-    if isinstance(packages, dict):
-        inline_records = [value for value in packages.values() if isinstance(value, dict)]
-        return inline_records, "SCANNED"
-    if not isinstance(packages, str):
-        return [], "FAILED"
-    match = re.fullmatch(r"!include(_dir_(?:list|named|merge_list|merge_named))?\s+(\S+)", packages)
-    if match is None:
+    if isinstance(packages, str) and not isinstance(packages, HomeAssistantTag):
         return [], "PARTIAL"
-    mode_suffix, relative = match.groups()
-    mode = f"!include{mode_suffix}" if mode_suffix else "!include"
-    root = Path(config_path).resolve()
-    target = (root / relative).resolve()
-    if root not in target.parents and target != root:
+    packages, packages_complete = _resolve_package_data(packages, root, base_dir, seen, 0)
+    if isinstance(packages, list):
+        candidates = packages
+    elif isinstance(packages, dict):
+        candidates = list(packages.values())
+    else:
         return [], "FAILED"
     records: list[dict[str, Any]] = []
-    failures = 0
-    try:
-        if mode == "!include":
-            data = _read_include_file(target)
-            if isinstance(data, list):
-                records = [item for item in data if isinstance(item, dict)]
-            elif isinstance(data, dict):
-                records = [data]
-            else:
-                return [], "FAILED"
-        elif target.is_dir():
-            files = sorted(target.glob("*.yaml"))
-            for path in files:
-                try:
-                    data = _read_include_file(path)
-                except (OSError, UnicodeError, yaml.YAMLError):
-                    failures += 1
-                    continue
-                if mode == "!include_dir_list" and isinstance(data, list):
-                    records.extend(item for item in data if isinstance(item, dict))
-                elif mode in {"!include_dir_named", "!include_dir_merge_named"} and isinstance(
-                    data, dict
-                ):
-                    records.extend(item for item in data.values() if isinstance(item, dict))
-                else:
-                    failures += 1
+    failures = 0 if packages_complete else 1
+    for candidate in candidates:
+        if isinstance(candidate, dict):
+            records.append(candidate)
         else:
             failures += 1
-    except (OSError, UnicodeError, yaml.YAMLError):
-        return [], "FAILED"
-    if failures and not records:
-        return [], "FAILED"
-    return records, "PARTIAL" if failures else "SCANNED"
+    return _package_scan_status(records, failures)
 
 
 def _collect_template_records(configuration: dict[str, Any] | None) -> tuple[list[Any], str]:
@@ -841,7 +1061,9 @@ def _collect_template_records(configuration: dict[str, Any] | None) -> tuple[lis
 
 
 def _without_dynamic_strings(data: Any) -> Any:
-    """Return source data with Jinja-bearing strings excluded from static scans."""
+    """Return source data with Jinja strings and unresolved tags excluded from static scans."""
+    if isinstance(data, HomeAssistantTag):
+        return ""
     if isinstance(data, str):
         return "" if "{{" in data or "{%" in data else data
     if isinstance(data, list):

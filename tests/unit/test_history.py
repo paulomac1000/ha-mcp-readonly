@@ -3,6 +3,7 @@ Tests for tools/history.py
 """
 
 import json
+import urllib.parse
 from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
@@ -206,7 +207,10 @@ class TestGetEntityStateHistorySummary:
         assert data["states_breakdown"]["off"]["total_duration_min"] == 3.0
         assert data["states_breakdown"]["on"]["total_duration_min"] == 2.0
         assert data["recorder_coverage"]["duplicate_rows"] == 1
-        assert data["recorder_coverage"]["observed_start_utc"].startswith(now.date().isoformat())
+        assert (
+            data["recorder_coverage"]["observed_start_utc"]
+            == (now - timedelta(minutes=5)).isoformat()
+        )
 
     @pytest.mark.asyncio
     async def test_missing_state_is_not_observed_unknown(self):
@@ -545,7 +549,26 @@ class TestExactUtcTimeline:
         assert data["evidence_digest"].startswith("sha256:")
         called_url = mock_request.call_args[0][2]
         assert "filter_entity_id=switch.one" in called_url
-        assert "end_time=2026-01-01T02:00:00+00:00" in called_url
+        assert "end_time=2026-01-01T02%3A00%3A00%2B00%3A00" in called_url
+
+    @pytest.mark.asyncio
+    async def test_start_only_exact_window_defaults_end_to_now(self, mock_mcp, ha_url, ha_token):
+        register_history_tools(mock_mcp, ha_url, ha_token)
+        before = datetime.now(UTC)
+        with patch("tools.history.make_ha_request") as mock_request:
+            mock_request.return_value = {"success": True, "data": self._history()}
+            result = await mock_mcp._tools["get_recent_state_changes"](
+                entity_ids="switch.one",
+                start_utc="2026-01-01T00:00:00+00:00",
+            )
+        after = datetime.now(UTC)
+        data = json.loads(result)
+        assert data["success"] is True
+        called_url = mock_request.call_args[0][2]
+        query = urllib.parse.urlsplit(called_url).query
+        params = urllib.parse.parse_qs(query, keep_blank_values=True)
+        end_time = datetime.fromisoformat(params["end_time"][0])
+        assert before <= end_time <= after
 
     @pytest.mark.asyncio
     async def test_naive_exact_boundary_fails_before_api(self, mock_mcp, ha_url, ha_token):

@@ -1382,7 +1382,7 @@ def _do_get_log_timeline(
         }
 
     # Source timestamps are naive wall-clock values. Do not relabel them UTC.
-    cutoff_time = datetime.now() - timedelta(hours=hours_int)
+    cutoff_time = datetime.now(UTC).astimezone().replace(tzinfo=None) - timedelta(hours=hours_int)
     timeline = []
 
     for line in log_lines:

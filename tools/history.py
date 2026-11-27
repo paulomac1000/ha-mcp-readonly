@@ -12,6 +12,7 @@ import logging
 from collections import Counter, defaultdict
 from datetime import UTC, datetime, timedelta
 from typing import Any
+from urllib.parse import urlencode
 
 from tools.utils import _build_history_url, _error_response, _success_response, make_ha_request
 
@@ -327,7 +328,7 @@ def _do_get_recent_state_changes(
         period_minutes = minutes
 
     url = _build_history_url(start_time, entity_id=entity_ids, minimal=False)
-    url += f"&end_time={end_time.isoformat()}"
+    url += f"&{urlencode({'end_time': end_time.isoformat()})}"
     result = make_ha_request(ha_url, ha_token, url)
 
     if not result["success"]:

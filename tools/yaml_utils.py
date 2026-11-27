@@ -17,22 +17,36 @@ logger = logging.getLogger(__name__)
 # =============================================================================
 
 
+class HomeAssistantTag(str):
+    """String-compatible scalar tag that preserves its YAML provenance."""
+
+    tag: str
+    value: str
+
+    def __new__(cls, tag: str, value: str) -> "HomeAssistantTag":
+        instance = super().__new__(cls, f"!{tag} {value}")
+        instance.tag = tag
+        instance.value = value
+        return instance
+
+
 class HomeAssistantLoader(yaml.SafeLoader):  # type: ignore[misc]
     """
     Custom YAML loader that handles Home Assistant specific tags.
 
-    Tags are returned as strings in the format "!tag value" to allow
-    reading configuration without resolving includes/secrets.
+    Scalar tags are returned as string-compatible ``HomeAssistantTag``
+    values so consumers can distinguish real tags from literal text.
+    Includes and secrets remain unresolved.
     """
 
     pass
 
 
 def _ha_tag_constructor(loader: yaml.Loader, tag_suffix: str, node: yaml.Node) -> str:
-    """Generic constructor for HA tags - returns them as strings."""
+    """Generic constructor for HA tags."""
     if isinstance(node, yaml.ScalarNode):
         value = loader.construct_scalar(node)
-        return f"!{tag_suffix} {value}"
+        return HomeAssistantTag(tag_suffix, value)
     elif isinstance(node, yaml.SequenceNode):
         value = loader.construct_sequence(node)
         return f"!{tag_suffix} {value}"
@@ -59,6 +73,14 @@ for tag in _HA_TAGS:
     HomeAssistantLoader.add_constructor(
         f"!{tag}", lambda loader, node, t=tag: _ha_tag_constructor(loader, t, node)
     )
+
+
+def _represent_home_assistant_tag(dumper: yaml.Dumper, value: HomeAssistantTag) -> yaml.ScalarNode:
+    return dumper.represent_scalar("tag:yaml.org,2002:str", str(value))
+
+
+yaml.Dumper.add_representer(HomeAssistantTag, _represent_home_assistant_tag)
+yaml.SafeDumper.add_representer(HomeAssistantTag, _represent_home_assistant_tag)
 
 
 # =============================================================================

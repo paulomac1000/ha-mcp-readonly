@@ -13,7 +13,6 @@ concurrency:
 
 env:
   PIP_DISABLE_PIP_VERSION_CHECK: "1"
-  MCP_EXPECTED_VERSION: "2.3.0"
   ASSESSED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
 
 jobs:
@@ -30,6 +29,16 @@ jobs:
         with:
           python-version: "3.13"
           cache: pip
+      - name: Resolve canonical server version
+        shell: bash
+        run: |
+          python - <<'PY'
+          import os
+          from version import __version__
+
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as output:
+              output.write(f"MCP_EXPECTED_VERSION={__version__}\n")
+          PY
       - name: Generate ephemeral verification credentials
         shell: bash
         run: |
