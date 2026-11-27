@@ -1442,6 +1442,40 @@ class TestAuditConfigOrphans:
         assert result["reference_coverage_complete"] is False
 
     @pytest.mark.asyncio
+    async def test_nested_named_package_reference_prevents_false_orphan(self):
+        Path(self.config_path, "automations.yaml").write_text("[]\n", encoding="utf-8")
+        Path(self.config_path, "configuration.yaml").write_text(
+            "homeassistant:\n  packages: '!include_dir_named packages'\n",
+            encoding="utf-8",
+        )
+        package_dir = Path(self.config_path, "packages", "room")
+        package_dir.mkdir(parents=True)
+        Path(package_dir, "room.yaml").write_text(
+            "automation:\n"
+            "  - id: pkg1\n"
+            "    trigger:\n"
+            "      - platform: state\n"
+            "        entity_id: sensor.temperature_living_room\n"
+            "    action: []\n",
+            encoding="utf-8",
+        )
+        registry = {
+            "core.entity_registry": {
+                "data": {"entities": [{"entity_id": "sensor.temperature_living_room"}]}
+            }
+        }
+        with (
+            patch("tools.composite.load_registry") as mock_load,
+            patch("tools.composite.make_ha_request", return_value={"success": True, "data": []}),
+        ):
+            mock_load.side_effect = lambda name, path: registry.get(name, {})
+            result = json.loads(await self.mcp._tools["audit_config_orphans"]())
+
+        assert result["reference_source_coverage"]["packages"] == "SCANNED"
+        assert "sensor.temperature_living_room" not in result["orphan_entities"]
+        assert result["safe_to_delete"] is False
+
+    @pytest.mark.asyncio
     async def test_missing_package_include_downgrades_coverage(self):
         Path(self.config_path, "automations.yaml").write_text("[]\n", encoding="utf-8")
         Path(self.config_path, "configuration.yaml").write_text(
@@ -1722,20 +1756,43 @@ class TestAuditCoverageHelpers:
         )
         pkg_dir = Path(tmp_path, "packages")
         pkg_dir.mkdir()
-        Path(pkg_dir, "list.yaml").write_text("- id: list\n", encoding="utf-8")
+        Path(pkg_dir, "list.yaml").write_text("id: list\n", encoding="utf-8")
         assert _collect_package_records(
             str(tmp_path), {"homeassistant": {"packages": "!include_dir_list packages"}}
-        )[0] == [{"id": "list"}]
-        Path(pkg_dir, "named.yaml").write_text("named:\n  id: named\n", encoding="utf-8")
+        ) == ([{"id": "list"}], "SCANNED")
+        named_dir = Path(tmp_path, "named_packages")
+        named_dir.mkdir()
+        Path(named_dir, "named.yaml").write_text("automation:\n  - id: named\n", encoding="utf-8")
         assert _collect_package_records(
-            str(tmp_path), {"homeassistant": {"packages": "!include_dir_named packages"}}
-        )[1] in {"SCANNED", "PARTIAL"}
+            str(tmp_path), {"homeassistant": {"packages": "!include_dir_named named_packages"}}
+        ) == ([{"automation": [{"id": "named"}]}], "SCANNED")
         merge_dir = Path(tmp_path, "merge_packages")
         merge_dir.mkdir()
         Path(merge_dir, "list.yaml").write_text("- id: merged\n", encoding="utf-8")
         assert _collect_package_records(
             str(tmp_path), {"homeassistant": {"packages": "!include_dir_merge_list merge_packages"}}
         ) == ([{"id": "merged"}], "SCANNED")
+
+    def test_package_named_and_merge_named_recurse_with_distinct_mapping_shapes(self, tmp_path):
+        from tools.composite import _collect_package_records
+
+        named_dir = Path(tmp_path, "named_packages") / "room"
+        named_dir.mkdir(parents=True)
+        named_package = {"automation": [{"id": "named"}]}
+        Path(named_dir, "room.yaml").write_text(yaml.dump(named_package), encoding="utf-8")
+        assert _collect_package_records(
+            str(tmp_path), {"homeassistant": {"packages": "!include_dir_named named_packages"}}
+        ) == ([named_package], "SCANNED")
+
+        merge_dir = Path(tmp_path, "merge_named_packages") / "room"
+        merge_dir.mkdir(parents=True)
+        Path(merge_dir, "room.yaml").write_text(
+            yaml.dump({"room": named_package}), encoding="utf-8"
+        )
+        assert _collect_package_records(
+            str(tmp_path),
+            {"homeassistant": {"packages": "!include_dir_merge_named merge_named_packages"}},
+        ) == ([named_package], "SCANNED")
 
     def test_package_invalid_and_missing_sources(self, tmp_path):
         from tools.composite import _collect_package_records

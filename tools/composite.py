@@ -804,20 +804,27 @@ def _collect_package_records(
             else:
                 return [], "FAILED"
         elif target.is_dir():
-            files = sorted(target.glob("*.yaml"))
+            files = sorted(
+                target.rglob("*.yaml"),
+                key=lambda path: path.relative_to(target).as_posix(),
+            )
             for path in files:
+                resolved = path.resolve()
+                if resolved != target and target not in resolved.parents:
+                    failures += 1
+                    continue
                 try:
-                    data = _read_include_file(path)
+                    data = _read_include_file(resolved)
                 except (OSError, UnicodeError, yaml.YAMLError):
                     failures += 1
                     continue
-                if mode in {"!include_dir_list", "!include_dir_merge_list"} and isinstance(
-                    data, list
-                ):
+                if mode == "!include_dir_list" and isinstance(data, dict):
+                    records.append(data)
+                elif mode == "!include_dir_merge_list" and isinstance(data, list):
                     records.extend(item for item in data if isinstance(item, dict))
-                elif mode in {"!include_dir_named", "!include_dir_merge_named"} and isinstance(
-                    data, dict
-                ):
+                elif mode == "!include_dir_named" and isinstance(data, dict):
+                    records.append(data)
+                elif mode == "!include_dir_merge_named" and isinstance(data, dict):
                     records.extend(item for item in data.values() if isinstance(item, dict))
                 else:
                     failures += 1
