@@ -64,6 +64,12 @@ class TestHomeAssistantLoader:
         assert type(result["tagged"]) is not type(result["literal"])
         assert result["spaced"] == "!include fixture with space.yaml"
 
+    def test_tagged_scalar_dump_remains_plain_yaml(self):
+        result = yaml.load("trigger: !input motion_sensor\n", Loader=HomeAssistantLoader)
+        dumped = yaml.dump(result)
+        assert "!!python/object" not in dumped
+        assert yaml.load(dumped, Loader=HomeAssistantLoader) == {"trigger": "!input motion_sensor"}
+
     def test_ha_loader_handles_include_dir_list(self):
         """Test that !include_dir_list tags are handled."""
         yaml_content = """

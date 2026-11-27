@@ -75,6 +75,14 @@ for tag in _HA_TAGS:
     )
 
 
+def _represent_home_assistant_tag(dumper: yaml.Dumper, value: HomeAssistantTag) -> yaml.ScalarNode:
+    return dumper.represent_scalar("tag:yaml.org,2002:str", str(value))
+
+
+yaml.Dumper.add_representer(HomeAssistantTag, _represent_home_assistant_tag)
+yaml.SafeDumper.add_representer(HomeAssistantTag, _represent_home_assistant_tag)
+
+
 # =============================================================================
 # UTILITY FUNCTIONS
 # =============================================================================
