@@ -783,6 +783,8 @@ def _resolve_path(path: Path) -> Path | None:
 def _resolve_package_include_path(
     root: Path, base_dir: Path, relative: str
 ) -> tuple[Path, Path] | None:
+    if not relative:
+        return None
     lexical = base_dir / relative
     resolved = _resolve_path(lexical)
     if resolved is None or (resolved != root and root not in resolved.parents):
@@ -803,6 +805,8 @@ def _resolve_package_data(
 ) -> tuple[Any, bool]:
     """Resolve Home Assistant include directives while preserving coverage gaps."""
     if depth >= _MAX_PACKAGE_INCLUDE_DEPTH:
+        if isinstance(value, (dict, list)):
+            return _CYCLIC_COLLECTION, False
         return value, False
     if isinstance(value, HomeAssistantTag):
         if value.tag == "include":
@@ -828,10 +832,16 @@ def _resolve_package_data(
                 data = _read_include_file(target)
             except (OSError, UnicodeError, yaml.YAMLError):
                 return value, False
+            if data is None:
+                data = {}
             return _resolve_package_data(
                 data, root, lexical.parent, next_seen, depth + 1, active_collections
             )
-        if not target.is_dir():
+        try:
+            target_is_dir = target.is_dir()
+        except OSError:
+            return value, False
+        if not target_is_dir:
             return value, False
 
         complete = True
@@ -872,6 +882,8 @@ def _resolve_package_data(
                     complete = complete and item_complete
                     if resolved_data is _CYCLIC_COLLECTION:
                         complete = False
+                    elif resolved_data is None:
+                        continue
                     elif mode == "!include_dir_list":
                         combined.append(resolved_data)
                     elif isinstance(resolved_data, list):
@@ -911,6 +923,13 @@ def _resolve_package_data(
                 complete = complete and item_complete
                 if resolved_data is _CYCLIC_COLLECTION:
                     complete = False
+                elif resolved_data is None:
+                    if mode == "!include_dir_named":
+                        key = path.stem
+                        if key in combined_mapping:
+                            complete = False
+                        combined_mapping[key] = {}
+                    continue
                 elif mode == "!include_dir_named":
                     key = path.stem
                     if key in combined_mapping:
@@ -981,12 +1000,28 @@ def _collect_package_records(
     root = Path(config_path).resolve()
     configuration_path = root / "configuration.yaml"
     homeassistant = configuration["homeassistant"]
-    parent_included = isinstance(homeassistant, HomeAssistantTag) and homeassistant.tag == "include"
-    packages_complete = True
-    if parent_included:
-        homeassistant, packages_complete = _resolve_package_data(
-            homeassistant, root, root, {configuration_path}, 0
-        )
+    base_dir = root
+    seen = {configuration_path}
+    depth = 0
+    while isinstance(homeassistant, HomeAssistantTag) and homeassistant.tag == "include":
+        if depth >= _MAX_PACKAGE_INCLUDE_DEPTH:
+            return [], "FAILED"
+        paths = _resolve_package_include_path(root, base_dir, homeassistant.value)
+        if paths is None:
+            return [], "FAILED"
+        lexical, target = paths
+        if target in seen:
+            return [], "FAILED"
+        try:
+            loaded = _read_include_file(target)
+        except (OSError, UnicodeError, yaml.YAMLError):
+            return [], "FAILED"
+        if loaded is None:
+            loaded = {}
+        homeassistant = loaded
+        base_dir = lexical.parent
+        seen = seen | {target}
+        depth += 1
     if homeassistant is None:
         return [], "NOT_PRESENT"
     if not isinstance(homeassistant, dict):
@@ -996,10 +1031,7 @@ def _collect_package_records(
         return [], "NOT_PRESENT"
     if isinstance(packages, str) and not isinstance(packages, HomeAssistantTag):
         return [], "PARTIAL"
-    if not parent_included:
-        packages, packages_complete = _resolve_package_data(
-            packages, root, root, {configuration_path}, 0
-        )
+    packages, packages_complete = _resolve_package_data(packages, root, base_dir, seen, 0)
     if isinstance(packages, list):
         candidates = packages
     elif isinstance(packages, dict):

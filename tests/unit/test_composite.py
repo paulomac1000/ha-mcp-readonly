@@ -2086,6 +2086,115 @@ class TestAuditCoverageHelpers:
             str(tmp_path), {"homeassistant": HomeAssistantTag("include", "homeassistant.yaml")}
         ) == ([{"automation": []}], "PARTIAL")
 
+    def test_parent_include_resolves_only_packages_subtree(self, tmp_path):
+        from tools.composite import _collect_package_records
+
+        package = {"automation": [{"id": "room", "action": []}]}
+        package_dir = tmp_path / "packages"
+        package_dir.mkdir()
+        Path(package_dir, "room.yaml").write_text(yaml.dump(package), encoding="utf-8")
+        Path(tmp_path, "homeassistant.yaml").write_text(
+            "packages: !include_dir_named packages\ncustomize: !include missing.yaml\n",
+            encoding="utf-8",
+        )
+        configuration = {"homeassistant": HomeAssistantTag("include", "homeassistant.yaml")}
+        assert _collect_package_records(str(tmp_path), configuration) == ([package], "SCANNED")
+        assert _collect_package_records(
+            str(tmp_path), {"homeassistant": HomeAssistantTag("include", "missing.yaml")}
+        ) == ([], "FAILED")
+        Path(tmp_path, "invalid.yaml").write_text("- item\n", encoding="utf-8")
+        assert _collect_package_records(
+            str(tmp_path), {"homeassistant": HomeAssistantTag("include", "invalid.yaml")}
+        ) == ([], "FAILED")
+
+    def test_empty_include_argument_does_not_scan_including_directory(self, tmp_path):
+        from tools.composite import _collect_package_records
+
+        scanned = {"automation": []}
+        Path(tmp_path, "room.yaml").write_text(yaml.dump(scanned), encoding="utf-8")
+        for tag in (
+            HomeAssistantTag("include", ""),
+            HomeAssistantTag("include_dir_list", ""),
+            HomeAssistantTag("include_dir_named", ""),
+            HomeAssistantTag("include_dir_merge_list", ""),
+            HomeAssistantTag("include_dir_merge_named", ""),
+        ):
+            assert _collect_package_records(
+                str(tmp_path), {"homeassistant": {"packages": tag}}
+            ) == ([], "FAILED")
+
+    def test_empty_included_files_match_annotatedyaml_semantics(self, tmp_path):
+        from tools.composite import _collect_package_records
+
+        Path(tmp_path, "empty.yaml").write_text("# empty\n", encoding="utf-8")
+        assert _collect_package_records(
+            str(tmp_path),
+            {"homeassistant": {"packages": {"room": HomeAssistantTag("include", "empty.yaml")}}},
+        ) == ([{}], "SCANNED")
+
+        named_dir = tmp_path / "named"
+        named_dir.mkdir()
+        Path(named_dir, "empty.yaml").write_text("# empty\n", encoding="utf-8")
+        good = {"automation": []}
+        Path(named_dir, "good.yaml").write_text(yaml.dump(good), encoding="utf-8")
+        assert _collect_package_records(
+            str(tmp_path),
+            {"homeassistant": {"packages": HomeAssistantTag("include_dir_named", "named")}},
+        ) == ([{}, good], "SCANNED")
+
+        merge_named_dir = tmp_path / "merge_named"
+        merge_named_dir.mkdir()
+        Path(merge_named_dir, "empty.yaml").write_text("# empty\n", encoding="utf-8")
+        Path(merge_named_dir, "good.yaml").write_text(yaml.dump({"room": good}), encoding="utf-8")
+        assert _collect_package_records(
+            str(tmp_path),
+            {
+                "homeassistant": {
+                    "packages": HomeAssistantTag("include_dir_merge_named", "merge_named")
+                }
+            },
+        ) == ([good], "SCANNED")
+
+        list_record = {"id": "list", "action": []}
+        for mode, directory, content in (
+            ("include_dir_list", "list", list_record),
+            ("include_dir_merge_list", "merge_list", [list_record]),
+        ):
+            list_dir = tmp_path / directory
+            list_dir.mkdir()
+            Path(list_dir, "empty.yaml").write_text("# empty\n", encoding="utf-8")
+            Path(list_dir, "list.yaml").write_text(yaml.dump(content), encoding="utf-8")
+            assert _collect_package_records(
+                str(tmp_path),
+                {"homeassistant": {"packages": HomeAssistantTag(mode, directory)}},
+            ) == ([list_record], "SCANNED")
+
+    def test_directory_type_check_error_retains_valid_sibling(self, tmp_path):
+        from tools.composite import _collect_package_records
+
+        good = {"automation": []}
+        blocked_dir = tmp_path / "blocked"
+        blocked_dir.mkdir()
+        original_is_dir = Path.is_dir
+
+        def is_dir(path):
+            if path == blocked_dir:
+                raise PermissionError("blocked")
+            return original_is_dir(path)
+
+        configuration = {
+            "homeassistant": {
+                "packages": {
+                    "good": good,
+                    "blocked": HomeAssistantTag("include_dir_named", "blocked"),
+                }
+            }
+        }
+        with patch("tools.composite.Path.is_dir", is_dir):
+            records, status = _collect_package_records(str(tmp_path), configuration)
+        assert records == [good]
+        assert status == "PARTIAL"
+
     def test_nested_directory_include_inside_package_is_resolved(self, tmp_path):
         from tools.composite import _collect_package_records
 
@@ -2263,6 +2372,52 @@ class TestAuditCoverageHelpers:
         )
         assert resolved is _CYCLIC_COLLECTION
         assert complete is False
+
+    def test_depth_limit_omits_unexamined_collections(self, tmp_path):
+        from tools.composite import (
+            _CYCLIC_COLLECTION,
+            _MAX_PACKAGE_INCLUDE_DEPTH,
+            _resolve_package_data,
+        )
+
+        for value in ({}, []):
+            resolved, complete = _resolve_package_data(
+                value,
+                Path(tmp_path),
+                Path(tmp_path),
+                set(),
+                _MAX_PACKAGE_INCLUDE_DEPTH,
+            )
+            assert resolved is _CYCLIC_COLLECTION
+            assert complete is False
+
+    def test_depth_limit_retains_valid_sibling_without_cycle_leak(self, tmp_path):
+        from tools.composite import (
+            _MAX_PACKAGE_INCLUDE_DEPTH,
+            _collect_package_records,
+            _without_dynamic_strings,
+        )
+
+        for index in range(_MAX_PACKAGE_INCLUDE_DEPTH):
+            content = (
+                f"next: !include chain_{index + 1}.yaml\n"
+                if index + 1 < _MAX_PACKAGE_INCLUDE_DEPTH
+                else "loop: &loop [*loop]\n"
+            )
+            Path(tmp_path, f"chain_{index}.yaml").write_text(content, encoding="utf-8")
+        good = {"automation": []}
+        configuration = {
+            "homeassistant": {
+                "packages": {
+                    "good": good,
+                    "room": HomeAssistantTag("include", "chain_0.yaml"),
+                }
+            }
+        }
+        records, status = _collect_package_records(str(tmp_path), configuration)
+        assert records == [good]
+        assert status == "PARTIAL"
+        assert _without_dynamic_strings(records) == [good]
 
     def test_genuinely_empty_mapping_remains_valid(self, tmp_path):
         from tools.composite import _resolve_package_data
