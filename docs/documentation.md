@@ -114,6 +114,10 @@ Generic `list_directory`, `read_file`, and `search_files` operations:
 
 Dedicated registry readers are separate adapters. They may parse selected Home Assistant storage records but must expose only reviewed fields.
 
+## Execution trace evidence
+
+`get_automation_execution_evidence` reads retained execution traces for one automation or script through the official authenticated Home Assistant WebSocket API (`config/get`, `trace/list`, `trace/get`). An administrator long-lived access token is required; lower authority fails closed with `TRACE_UNAUTHORIZED`. The response is a small redacted projection per retained run — state, timestamps, context IDs, trigger, and bounded changed-variable, action, and error summaries — plus the covered UTC window, instance version, retention/completeness, and a stable evidence digest. The raw trace, automation/script configuration, and private variables are never returned. A missing trace is reported as `TRACE_NOT_RETAINED` or `TRACE_UNAVAILABLE`; absence of retained trace rows is never presented as proof that an event did or did not happen. Inputs are bounded: `hours` 1-168 (default 24) and `limit` 1-20 (default 5).
+
 ## Context artifacts
 
 Context generation is single-worker, owner-bound, process-isolated, and bounded by a deadline. Requested output paths must remain below `CONTEXT_OUTPUT_ROOT` and use `.md` or `.json`. Generation writes to a temporary file in the destination directory and publishes by atomic replacement. A timed-out worker is terminated before a new task can start.

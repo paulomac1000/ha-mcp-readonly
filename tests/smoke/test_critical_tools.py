@@ -817,3 +817,48 @@ class TestCriticalConfigEntryStates:
         assert isinstance(result, dict), "result should be a dict"
         assert isinstance(result["entries"], list), "entries should be a list"
         assert all(entry.get("state") == "loaded" for entry in result["entries"])
+
+
+class TestCriticalTraceEvidence:
+    """Execution trace evidence comes from the authenticated WebSocket API (issue #53)."""
+
+    def test_get_automation_execution_evidence_envelope(self):
+        """The tool returns a bounded projection or a classified missing-trace error."""
+        automations = _call_tool("list_automations")
+        assert automations["success"] is True
+        result = automations.get("result", {})
+        items = result.get("automations") or result.get("items") or []
+        if not items:
+            pytest.skip("No automations exist to probe trace evidence")
+
+        item_id = items[0].get("id")
+        if not item_id:
+            pytest.skip("list_automations did not expose automation ids")
+
+        data = _call_tool_safe(
+            "get_automation_execution_evidence", domain="automation", item_id=item_id
+        )
+        assert data[0] is not None, f"tool call failed: {data[1]}"
+        body = data[0].get("result", data[0])
+        if body.get("success") is True:
+            evidence = body["evidence"]
+            assert isinstance(evidence, list) and evidence
+            run = evidence[0]
+            assert run["domain"] == "automation"
+            assert run["item_id"] == item_id
+            assert "config" not in run and "trace" not in run
+            assert body["source"]["kind"] == "HA_WEBSOCKET_TRACE_API"
+            assert body["evidence_digest"].startswith("sha256:")
+        else:
+            code = body.get("error", {}).get("code")
+            assert code in {"TRACE_NOT_RETAINED", "TRACE_UNAVAILABLE", "TRACE_UNAUTHORIZED"}
+
+    def test_get_automation_execution_evidence_validates_domain(self):
+        """An unsupported domain fails closed with INVALID_ARGUMENTS."""
+        data = _call_tool_safe(
+            "get_automation_execution_evidence", domain="scene", item_id="anything"
+        )
+        assert data[0] is not None, f"tool call failed: {data[1]}"
+        body = data[0].get("result", data[0])
+        assert body["success"] is False
+        assert body["error"]["code"] == "INVALID_ARGUMENTS"

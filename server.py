@@ -261,6 +261,7 @@ def create_mcp_server() -> FastMCP:
     from tools.scripts import register_script_tools
     from tools.states import register_state_tools
     from tools.storage import register_storage_tools
+    from tools.traces import register_traces_tools
 
     register_state_tools(operations, HA_URL, HA_TOKEN, HA_CONFIG_PATH)
     register_automation_tools(operations, HA_CONFIG_PATH, HA_URL, HA_TOKEN)
@@ -287,6 +288,7 @@ def create_mcp_server() -> FastMCP:
     register_batch_operations_tools(operations, HA_CONFIG_PATH, HA_URL, HA_TOKEN)
     register_categories_tools(operations, HA_CONFIG_PATH)
     register_helpers_health_tools(operations, HA_URL, HA_TOKEN)
+    register_traces_tools(operations, HA_URL, HA_TOKEN)
     register_capability_tools(operations)
 
     registered = registry.names()

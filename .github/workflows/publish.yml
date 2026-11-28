@@ -156,7 +156,7 @@ jobs:
             docker run --pull=never --rm --platform "linux/$arch" --entrypoint=id "$image_id" -u | grep -qx '10001'
             docker run --pull=never --rm --platform "linux/$arch" --entrypoint=python \
               -e MCP_TRANSPORT=stdio -e MCP_DEV_TOOLS_ENABLED=0 \
-              "$image_id" -c 'import server; assert server.get_tool_count() == 145'
+              "$image_id" -c 'import server; assert server.get_tool_count() == 146'
             name="ha-mcp-quarantine-$arch"
             docker run --pull=never -dit --rm --platform "linux/$arch" --name "$name" "$image_id"
             test "$(docker inspect --format '{{.Image}}' "$name")" = "$config_digest"

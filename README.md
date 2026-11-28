@@ -126,14 +126,14 @@ curl http://localhost:9091/ready
 # REST/context routes on 9093 exist only when REST_API_ENABLED=1 and require a bearer token.
 ```
 
-## Available Tools (158 with dev tools, 145 without)
+## Available Tools (159 with dev tools, 146 without)
 
 Tools are organized by category (75 shown in table below). All are **read-only** — no state changes, no service calls, no modifications.
 
 | Category | Key tools |
 |----------|-----------|
 | **States** | `get_entity_state`, `get_states_grouped`, `search_entities`, `get_domains_summary`, `get_system_overview` |
-| **Automations** | `list_automations`, `get_automation_code`, `get_automation_file_location`, `diagnose_automation`, `search_automations_by_entity`, `get_automation_conflicts`, `get_automation_entity_id` |
+| **Automations** | `list_automations`, `get_automation_code`, `get_automation_file_location`, `diagnose_automation`, `search_automations_by_entity`, `get_automation_conflicts`, `get_automation_entity_id`, `get_automation_execution_evidence` |
 | **Scripts & Scenes** | `list_scripts`, `get_script_code`, `list_scenes`, `get_scene_code` |
 | **Blueprints** | `list_blueprints`, `get_blueprint_code`, `get_blueprint_instances`, `get_blueprint_usage_summary`, `resolve_blueprint_automation` |
 | **Devices & Areas** | `get_device_details`, `search_devices`, `get_devices_by_area`, `get_area_devices_summary` |
@@ -207,7 +207,7 @@ Set `MCP_TRANSPORT=http`, `MCP_AUTH_TOKEN`, and a controlled bind address. The e
 }
 ```
 
-The default catalog contains 145 read-only tools. Developer-only tools remain disabled unless `MCP_DEV_TOOLS_ENABLED=1` is set.
+The default catalog contains 146 read-only tools. Developer-only tools remain disabled unless `MCP_DEV_TOOLS_ENABLED=1` is set.
 
 ## Context Generator
 
