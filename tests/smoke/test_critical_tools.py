@@ -786,25 +786,34 @@ class TestCriticalConfigEntryStates:
         data = _call_tool("search_config_entries")
 
         assert data["success"] is True
-        assert data["total_entries"] > 0
-        if data.get("state_source") == "api":
-            assert all(entry.get("state") for entry in data.get("entries", []))
+        result = data["result"]
+        assert isinstance(result, dict), "result should be a dict"
+        assert result["total_entries"] > 0
+        assert isinstance(result["entries"], list), "entries should be a list"
+        if result.get("state_source") == "api":
+            assert all(entry.get("state") for entry in result["entries"])
             valid_states = {
                 "loaded",
                 "not_loaded",
                 "setup_retry",
                 "setup_in_progress",
                 "setup_error",
+                "migration_error",
+                "unload_in_progress",
+                "failed_unload",
                 "failed",
                 "migrated",
             }
-            assert all(entry.get("state") in valid_states for entry in data.get("entries", []))
+            assert all(entry.get("state") in valid_states for entry in result["entries"])
         else:
-            assert all("state" not in entry for entry in data.get("entries", []))
+            assert all("state" not in entry for entry in result["entries"])
 
     def test_search_config_entries_state_filter(self):
         """Filtering by a real state returns only entries in that state."""
         data = _call_tool("search_config_entries", state="loaded")
 
         assert data["success"] is True
-        assert all(entry.get("state") == "loaded" for entry in data.get("entries", []))
+        result = data["result"]
+        assert isinstance(result, dict), "result should be a dict"
+        assert isinstance(result["entries"], list), "entries should be a list"
+        assert all(entry.get("state") == "loaded" for entry in result["entries"])
