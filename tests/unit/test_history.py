@@ -695,6 +695,32 @@ class TestExactUtcTimeline:
         assert result["error"]["code"] == "STALE"
 
     @pytest.mark.asyncio
+    async def test_event_budget_rejects_oversized_source_before_normalization(
+        self, mock_mcp, ha_url, ha_token
+    ):
+        register_history_tools(mock_mcp, ha_url, ha_token)
+        rows = [
+            {
+                "entity_id": "light.office",
+                "state": "on",
+                "last_changed": "2026-01-01T00:30:00+00:00",
+            }
+            for _ in range(5001)
+        ]
+        with patch("tools.history.make_ha_request") as mock_request:
+            mock_request.return_value = {"success": True, "data": [rows]}
+            result = json.loads(
+                await mock_mcp._tools["get_recent_state_changes"](
+                    entity_ids="light.office",
+                    start_utc="2026-01-01T00:00:00+00:00",
+                    end_utc="2026-01-01T02:00:00+00:00",
+                )
+            )
+
+        assert result["success"] is False
+        assert "5000-event" in result["error"]
+
+    @pytest.mark.asyncio
     async def test_backend_bounds_fail_before_request(self, mock_mcp, ha_url, ha_token):
         register_history_tools(mock_mcp, ha_url, ha_token)
         with patch("tools.history.make_ha_request") as mock_request:

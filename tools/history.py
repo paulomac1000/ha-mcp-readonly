@@ -37,6 +37,8 @@ MAX_RECENT_MINUTES: int = 60
 MAX_RETURNED_CHANGES: int = 50
 MAX_CURSOR_ENTITIES: int = 25
 MAX_EXACT_WINDOW_MINUTES: int = 1440
+MAX_HISTORY_EVENTS: int = 5000
+MAX_HISTORY_PAGE_BYTES: int = 2097152
 MAX_BREAKDOWN_STATES: int = 32
 RAPID_CYCLING_SECONDS: int = 60
 RAPID_CYCLING_COUNT: int = 3
@@ -424,6 +426,11 @@ def _do_get_recent_state_changes(
     history_data = result["data"]
     if not isinstance(history_data, list):
         return _error_response("Malformed Home Assistant history response")
+    source_row_count = sum(len(rows) for rows in history_data if isinstance(rows, list))
+    if source_row_count > MAX_HISTORY_EVENTS:
+        return _error_response(
+            f"History response exceeds the {MAX_HISTORY_EVENTS}-event processing bound"
+        )
 
     changes_list: list[dict[str, Any]] = []
     entity_counts: Counter[str] = Counter()
@@ -512,6 +519,10 @@ def _do_get_recent_state_changes(
     evidence_digest = hashlib.sha256(evidence.encode("utf-8")).hexdigest()
     evidence_generation = int(evidence_digest[:16], 16)
     request_entities = selected_entities or tuple(sorted(observed_entities))
+    if len(request_entities) > MAX_CURSOR_ENTITIES:
+        return _error_response(
+            f"Resolved history selection exceeds the {MAX_CURSOR_ENTITIES}-entity backend bound"
+        )
     request = HistoryCursorRequest(
         entity_ids=request_entities,
         domains=domain_list,
@@ -532,6 +543,13 @@ def _do_get_recent_state_changes(
             return _error_response({"code": exc.code, "message": str(exc), "retryable": False})
 
     page = changes_list[cursor_offset : cursor_offset + limit]
+    while (
+        page
+        and len(json.dumps(page, separators=(",", ":")).encode("utf-8")) > MAX_HISTORY_PAGE_BYTES
+    ):
+        page.pop()
+    if not page and cursor_offset < len(changes_list):
+        return _error_response("A single history row exceeds the response byte budget")
     next_offset = cursor_offset + len(page)
     truncated = next_offset < len(changes_list)
     next_cursor = (
@@ -571,8 +589,9 @@ def _do_get_recent_state_changes(
             "bounds": {
                 "max_entities": MAX_CURSOR_ENTITIES,
                 "max_window_minutes": MAX_EXACT_WINDOW_MINUTES,
-                "max_events": 5000,
-                "max_response_bytes": 2097152,
+                "max_events": MAX_HISTORY_EVENTS,
+                "max_page_bytes": MAX_HISTORY_PAGE_BYTES,
+                "backend_event_limit": "POST_FETCH_FAIL_CLOSED",
             },
             "pagination_semantics": "CLIENT_SIDE_SLICE_OF_BOUND_QUERY",
         },
