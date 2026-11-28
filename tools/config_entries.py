@@ -220,7 +220,7 @@ def _do_search_config_entries(
         if with_entities:
             entity_count = sum(1 for e in all_entities if e.get("config_entry_id") == entry_id)
 
-        lifecycle = classify_entry_lifecycle(entry, api_states, entity_count or 0)
+        lifecycle = classify_entry_lifecycle(entry, api_states, entity_count)
 
         result_entry = {
             "entry_id": entry_id,

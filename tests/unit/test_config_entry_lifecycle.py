@@ -154,6 +154,17 @@ class TestClassifyEntryLifecycle:
         assert lifecycle.disabled_by is None
         assert lifecycle.reason
 
+    def test_loaded_entry_with_unknown_entity_count_is_unknown(self):
+        """A skipped registry lookup must not be treated as zero entities."""
+        entry = {"entry_id": "entry_mqtt"}
+        states = {"entry_mqtt": "loaded"}
+
+        lifecycle = classify_entry_lifecycle(entry, states, entity_count=None)
+
+        assert lifecycle.state == UNKNOWN
+        assert lifecycle.api_state == "loaded"
+        assert "not observed" in lifecycle.reason
+
     def test_loaded_entry_with_entities_is_active(self):
         """A loaded entry providing entities is active."""
         entry = {"entry_id": "entry_mqtt"}

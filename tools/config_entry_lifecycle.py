@@ -101,14 +101,15 @@ def fetch_entry_states(
 def classify_entry_lifecycle(
     entry: dict[str, Any],
     api_states: dict[str, str] | None,
-    entity_count: int,
+    entity_count: int | None,
 ) -> ConfigEntryLifecycle:
     """Classify the lifecycle of a single config entry from its API state.
 
     Args:
         entry: Config entry record with entry_id and an optional disabled_by value.
         api_states: Mapping of entry_id to API state, or None when the API is unavailable.
-        entity_count: Number of entities provided by the entry.
+        entity_count: Number of entities provided by the entry, or None when
+            the caller intentionally skipped registry lookup.
 
     Returns:
         A frozen ConfigEntryLifecycle describing the entry's lifecycle.
@@ -150,6 +151,13 @@ def classify_entry_lifecycle(
         )
 
     if api_state == LOADED_API_STATE:
+        if entity_count is None:
+            return ConfigEntryLifecycle(
+                state=UNKNOWN,
+                reason="Entry is loaded but its entity count was not observed",
+                api_state=api_state,
+                disabled_by=None,
+            )
         if entity_count == 0:
             return ConfigEntryLifecycle(
                 state=LOADED_INERT,
