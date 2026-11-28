@@ -1162,7 +1162,10 @@ class TestSharedEvidenceContract:
             assert evidence["generation_status"] == "DERIVED"
             assert evidence["startup_marker_count"] == 1
             assert evidence["cutoff_reason"] == "NONE"
-            assert evidence["coverage_status"] == "SOURCE_SNAPSHOT_ONLY"
+            expected_coverage = (
+                "SOURCE_SNAPSHOT_ONLY" if evidence is blocks[0] else "WINDOW_UNVERIFIED"
+            )
+            assert evidence["coverage_status"] == expected_coverage
             assert evidence["parsing"]["undated_lines"] == 0
             assert evidence["parsing"]["unparsed_lines"] == 0
         assert len({evidence["excerpt_sha256"] for evidence in blocks}) == 1

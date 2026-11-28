@@ -15,7 +15,7 @@ import re
 import threading
 import time
 from collections import Counter, defaultdict
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -323,9 +323,7 @@ def _do_get_log_insights(
         rotated=False,
         window=None,
     )
-    since_naive = (clock.source_local_now_naive() - timedelta(hours=effective_hours)).strftime(
-        "%Y-%m-%d %H:%M:%S"
-    )
+    since_naive = clock.rolling_cutoff_naive(effective_hours).strftime("%Y-%m-%d %H:%M:%S")
     session.window = (since_naive, None)
     excerpt_digest = session.excerpt_sha256
     target_digest = hashlib.sha256((config_path + "\0" + ha_url).encode("utf-8")).hexdigest()
@@ -1239,9 +1237,7 @@ def _do_get_log_timeline(
         rotated=log_source != "current",
         window=None,
     )
-    since_naive = (clock.source_local_now_naive() - timedelta(hours=hours_int)).strftime(
-        "%Y-%m-%d %H:%M:%S"
-    )
+    since_naive = clock.rolling_cutoff_naive(hours_int).strftime("%Y-%m-%d %H:%M:%S")
     session.window = (since_naive, None)
     target_digest = hashlib.sha256((config_path + "\0" + ha_url).encode("utf-8")).hexdigest()
     cache_key = repr(
