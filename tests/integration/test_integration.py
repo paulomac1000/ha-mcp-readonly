@@ -34,6 +34,7 @@ from tools.integrations import register_integration_tools
 from tools.logs import register_log_tools
 from tools.states import register_state_tools
 from tools.storage import register_storage_tools
+from tools.traces import register_traces_tools
 from tools.utils import load_registry, make_ha_request
 
 # Get configuration from environment
@@ -112,6 +113,7 @@ def real_mcp() -> MockMCP:
     register_history_tools(mcp, HA_URL, HA_TOKEN)
     register_area_tools(mcp, HA_CONFIG_PATH, HA_URL, HA_TOKEN)
     register_integration_tools(mcp, HA_CONFIG_PATH, HA_URL, HA_TOKEN)
+    register_traces_tools(mcp, HA_URL, HA_TOKEN)
 
     return mcp
 
