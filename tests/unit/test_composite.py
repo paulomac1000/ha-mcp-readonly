@@ -2739,6 +2739,20 @@ class TestAuditCoverageHelpers:
         first = _source_generation_digest(str(tmp_path), sources)
         assert first == _source_generation_digest(str(tmp_path), sources)
 
+    def test_source_generation_digest_bounds_shared_alias_expansion(self, tmp_path):
+        from tools.composite import _source_generation_digest
+
+        shared: dict[str, object] = {"value": "leaf"}
+        for _ in range(24):
+            shared = {"left": shared, "right": shared}
+        sources = {"configuration": shared}
+
+        first = _source_generation_digest(str(tmp_path), sources)
+        second = _source_generation_digest(str(tmp_path), sources)
+
+        assert first == second
+        assert len(first) == 64
+
     @pytest.mark.asyncio
     async def test_blueprint_coverage_scanned_and_partial(
         self, mock_mcp, config_path, ha_url, ha_token

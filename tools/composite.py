@@ -1103,14 +1103,58 @@ def _canonical_digest_value_active(data: Any, active: set[int]) -> Any:
     return data
 
 
+def _hash_canonical_value(
+    data: Any,
+    active: set[int],
+    memo: dict[int, str],
+) -> str:
+    """Hash one YAML node with bounded cycle and shared-alias expansion."""
+    if isinstance(data, dict):
+        node_id = id(data)
+        if node_id in active:
+            return hashlib.sha256(b'{"__cycle__":true}').hexdigest()
+        if node_id in memo:
+            return memo[node_id]
+        active.add(node_id)
+        digest = hashlib.sha256()
+        try:
+            for key, value in sorted(data.items(), key=lambda item: str(item[0])):
+                key_bytes = str(key).encode("utf-8")
+                digest.update(len(key_bytes).to_bytes(8, "big"))
+                digest.update(key_bytes)
+                value_digest = _hash_canonical_value(value, active, memo)
+                digest.update(bytes.fromhex(value_digest))
+        finally:
+            active.discard(node_id)
+        memo[node_id] = digest.hexdigest()
+        return memo[node_id]
+    if isinstance(data, list):
+        node_id = id(data)
+        if node_id in active:
+            return hashlib.sha256(b'{"__cycle__":true}').hexdigest()
+        if node_id in memo:
+            return memo[node_id]
+        active.add(node_id)
+        digest = hashlib.sha256()
+        try:
+            for value in data:
+                digest.update(bytes.fromhex(_hash_canonical_value(value, active, memo)))
+        finally:
+            active.discard(node_id)
+        memo[node_id] = digest.hexdigest()
+        return memo[node_id]
+    encoded = json.dumps(data, sort_keys=True, ensure_ascii=False, default=str).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
 def _source_generation_digest(config_path: str, sources: dict[str, Any]) -> str:
-    """Digest the scanned configuration sources into one generation value."""
-    payload = {
-        "config_path": str(Path(config_path).resolve()),
-        "sources": _canonical_digest_value(sources),
-    }
-    encoded = json.dumps(payload, sort_keys=True, ensure_ascii=False, default=str)
-    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+    """Digest scanned sources without expanding shared YAML aliases."""
+    digest = hashlib.sha256()
+    root = str(Path(config_path).resolve()).encode("utf-8")
+    digest.update(len(root).to_bytes(8, "big"))
+    digest.update(root)
+    digest.update(bytes.fromhex(_hash_canonical_value(sources, set(), {})))
+    return digest.hexdigest()
 
 
 def _without_dynamic_strings(data: Any) -> Any:
