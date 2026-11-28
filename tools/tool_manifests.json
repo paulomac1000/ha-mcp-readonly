@@ -9162,5 +9162,63 @@
       },
       "cost": "cheap"
     }
+  },
+  "get_automation_execution_evidence": {
+    "schema_version": 1,
+    "id": "get_automation_execution_evidence",
+    "name": "get_automation_execution_evidence",
+    "description": "Read-only Home Assistant capability 'get_automation_execution_evidence'.",
+    "operation_kind": "read",
+    "risk": "low",
+    "determinism": "environment-dependent",
+    "latency": "bounded-long",
+    "impact": "none",
+    "active_state": "active",
+    "retryable": false,
+    "idempotent": false,
+    "reversible": false,
+    "requires_confirmation": false,
+    "idempotency_key_required": false,
+    "authorization_scopes": [
+      "ha.read"
+    ],
+    "concurrency": {
+      "scope": "capability",
+      "limit": 8
+    },
+    "max_response_bytes": 2097152,
+    "protocol_revisions": [
+      "2025-11-25"
+    ],
+    "extensions": {
+      "tool_version": "2.4.0",
+      "timeout_ms": 30000,
+      "data_classification": "internal",
+      "target_binding": {
+        "kind": "deployment-resource",
+        "target": "home_assistant",
+        "revalidation": "per-invocation"
+      },
+      "idempotency_mechanism": "not-claimed-for-read-operation",
+      "retry_conditions": {
+        "eligible_errors": [],
+        "attempts": 1,
+        "backoff": "none",
+        "reconciliation": "not-applicable"
+      },
+      "outcome_semantics": {
+        "ambiguous": "fail-closed-no-retry",
+        "unknown": "fail-closed-no-retry"
+      },
+      "sdk_profile": {
+        "implementation": "fastmcp",
+        "version_range": ">=3.4.6,<3.5",
+        "transports": [
+          "stdio",
+          "streamable-http"
+        ]
+      },
+      "cost": "cheap"
+    }
   }
 }
