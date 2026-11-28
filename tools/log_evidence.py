@@ -152,6 +152,12 @@ class TrustedClock:
         zone = self.zone if self.zone is not None else self.now_utc.astimezone().tzinfo
         return self.now_utc.astimezone(zone).replace(tzinfo=None)
 
+    def rolling_cutoff_naive(self, hours: int) -> datetime:
+        """Return an elapsed-hours cutoff in source-local wall-clock time."""
+        cutoff_utc = self.now_utc - timedelta(hours=hours)
+        zone = self.zone if self.zone is not None else self.now_utc.astimezone().tzinfo
+        return cutoff_utc.astimezone(zone).replace(tzinfo=None)
+
     def local_offset_label(self, source_time: str | None) -> str | None:
         """Return the source-local +HH:MM offset for a naive timestamp."""
         if self.zone is None or source_time is None:
@@ -377,14 +383,14 @@ class EvidenceSession:
         if self.window is None or self.observed_in_window == 0:
             return False
         since, until = self.window
-        if until is None:
-            return True
         if (
             since is not None
             and self.observed_earliest is not None
             and self.observed_earliest > since
         ):
             return False
+        if until is None:
+            return True
         return not (
             until is not None and self.observed_latest is not None and self.observed_latest < until
         )
@@ -492,21 +498,19 @@ def hours_requested_utc_window(
     requested_hours: int, effective_hours: int, clock: TrustedClock
 ) -> dict[str, Any]:
     """Build the hours-based requested UTC window receipt with clamp provenance."""
-    now_naive = clock.source_local_now_naive()
-    since_naive = now_naive - timedelta(hours=effective_hours)
+    until_utc = clock.now_utc
+    since_utc = until_utc - timedelta(hours=effective_hours)
     receipt: dict[str, Any] = {
         "requested_hours": requested_hours,
         "effective_hours": effective_hours,
         "clamped": requested_hours != effective_hours,
     }
     if clock.zone is not None:
-        since_utc = clock.to_utc_from_naive(since_naive)
-        until_utc = clock.to_utc_from_naive(now_naive)
         receipt.update(
             {
                 "status": "VERIFIED",
-                "since_utc": since_utc.isoformat() if since_utc else None,
-                "until_utc": until_utc.isoformat() if until_utc else None,
+                "since_utc": since_utc.isoformat(),
+                "until_utc": until_utc.isoformat(),
             }
         )
     else:
