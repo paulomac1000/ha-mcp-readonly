@@ -127,7 +127,9 @@ class TestGetConfigEntryDetails:
 
         data = json.loads(result)
         assert data["success"] is True
-        assert data["state"] == "failed"
+        assert data["state"] == "unknown"
+        assert data["lifecycle"] == "UNKNOWN"
+        assert data["state_source"] == "unavailable"
 
     @pytest.mark.asyncio
     async def test_api_entry_state_overrides_entity_availability_heuristic(self):
@@ -198,7 +200,10 @@ class TestGetConfigEntryDetails:
             mock_devices.return_value = []
 
             mock_request = stack.enter_context(patch("tools.config_entries.make_ha_request"))
-            mock_request.return_value = {"success": True, "data": self.sample_states}
+            mock_request.return_value = {
+                "success": True,
+                "data": [{"entry_id": "gree_disabled_entry_123", "state": "not_loaded"}],
+            }
 
             register_config_entry_tools(self.mock_mcp, self.config_path, self.ha_url, self.ha_token)
             result = self.mock_mcp._tools["get_config_entry_details"]("gree_disabled_entry_123")
@@ -208,6 +213,7 @@ class TestGetConfigEntryDetails:
         assert data["success"] is True
         assert data["disabled_by"] == "user"
         assert data["state"] == "not_loaded"
+        assert data["lifecycle"] == "CONFIGURED_NOT_LOADED"
 
 
 # ─────────────────────────────────────────────────────────────
