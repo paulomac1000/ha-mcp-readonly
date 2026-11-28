@@ -3,7 +3,8 @@ Tests for tools/logs.py
 """
 
 import json
-from datetime import datetime
+import time as time_module
+from datetime import UTC, datetime, timedelta, tzinfo
 from pathlib import Path
 from unittest.mock import patch
 
@@ -11,6 +12,17 @@ import pytest
 
 import tools.logs as logs_module
 from tools.logs import register_log_tools
+
+
+def _frozen_datetime(frozen: datetime):
+    """Freeze the shared evidence clock so replay semantics are deterministic."""
+
+    class FrozenDatetime(datetime):
+        @classmethod
+        def now(cls, tz: tzinfo | None = None) -> datetime:
+            return frozen if tz is None else frozen.astimezone(tz)
+
+    return patch("tools.log_evidence.datetime", FrozenDatetime)
 
 
 @pytest.fixture
@@ -479,7 +491,7 @@ class TestLogTimeline:
 
 class TestCaching:
     def test_cache_works(self, mock_mcp, config_path, sample_log_lines):
-        """Test that caching works and returns same result."""
+        """Cached replay keeps evidence identity and summary stable."""
         log_path = Path(config_path) / "home-assistant.log"
         log_path.write_text("".join(sample_log_lines), encoding="utf-8")
 
@@ -487,13 +499,18 @@ class TestCaching:
 
         tool = mock_mcp._tools["get_log_insights"]
 
-        # First call
-        result1 = tool(hours=1, severity="warning")
+        with _frozen_datetime(datetime.now(UTC)):
+            # First call
+            result1 = json.loads(tool(hours=1, severity="warning"))
 
-        # Second call (should be cached)
-        result2 = tool(hours=1, severity="warning")
+            # Second call (should be cached)
+            result2 = json.loads(tool(hours=1, severity="warning"))
 
-        assert result1 == result2
+        assert result2["replay_status"] == "UNCHANGED"
+        assert (
+            result2["log_evidence"]["evidence_digest"] == result1["log_evidence"]["evidence_digest"]
+        )
+        assert result1["summary"] == result2["summary"]
 
 
 class TestReadLogFileTruncation:
@@ -1084,3 +1101,505 @@ class TestEvidenceReplayAndCrossTool:
         assert analyzed["cutoff_reason"] == "NONE"
         assert timeline["cutoff_reason"] == "NONE"
         assert insights["_meta"]["cutoff_reason"] == "NONE"
+
+
+# ========================================
+# SHARED LOG EVIDENCE CONTRACT (issue #49)
+# ========================================
+
+
+def _write_evidence_fixture(log_path: Path) -> None:
+    """Frozen fixture: one boot marker, 2 ERROR, 3 WARNING, 5 dated INFO lines.
+
+    Timestamps sit a few minutes in the past so the lines fall inside every
+    tool's requested window regardless of wall-clock drift during the run.
+    """
+    base = datetime.now().replace(microsecond=0) - timedelta(minutes=10)
+    records = [
+        f"{base:%Y-%m-%d %H:%M:%S} INFO (MainThread) [homeassistant.bootstrap] Starting Home Assistant\n"
+    ]
+    stamps = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+    for offset, message in zip(
+        stamps,
+        [
+            "ERROR [integration.alpha] sensor.alpha dropped connection 1",
+            "ERROR [integration.alpha] sensor.alpha dropped connection 2",
+            "WARNING [integration.beta] reconnect attempt 1",
+            "WARNING [integration.beta] reconnect attempt 2",
+            "WARNING [integration.beta] reconnect attempt 3",
+            "INFO [automation.noise] Running automation actions 1",
+            "INFO [automation.noise] Running automation actions 2",
+            "INFO [homeassistant.core] steady state",
+            "INFO [homeassistant.core] steady state",
+            "INFO [integration.alpha] polling sensor.alpha",
+        ],
+    ):
+        stamp = base + timedelta(minutes=offset)
+        records.append(f"{stamp:%Y-%m-%d %H:%M:%S} {message}\n")
+    log_path.write_text("".join(records), encoding="utf-8")
+
+
+class TestSharedEvidenceContract:
+    """All three analysis tools expose one comparable evidence block."""
+
+    def test_three_tools_expose_comparable_evidence_on_frozen_fixture(self, mock_mcp, config_path):
+        _write_evidence_fixture(Path(config_path) / "home-assistant.log")
+        register_log_tools(mock_mcp, config_path)
+        analyzed = json.loads(mock_mcp._tools["analyze_log_errors"]())
+        insights = json.loads(mock_mcp._tools["get_log_insights"](hours=24, severity="warning"))
+        timeline = json.loads(mock_mcp._tools["get_log_timeline"](hours="24"))
+
+        blocks = [
+            analyzed["log_evidence"],
+            insights["log_evidence"],
+            timeline["log_evidence"],
+        ]
+        for evidence in blocks:
+            assert evidence["contract_version"] == 2
+            assert evidence["raw_level_counts"] == {"ERROR": 2, "WARNING": 3}
+            assert evidence["backend"] == "log_file"
+            assert evidence["log_source"] == "home-assistant.log"
+            assert evidence["generation_status"] == "DERIVED"
+            assert evidence["startup_marker_count"] == 1
+            assert evidence["cutoff_reason"] == "NONE"
+            expected_coverage = (
+                "SOURCE_SNAPSHOT_ONLY" if evidence is blocks[0] else "WINDOW_UNVERIFIED"
+            )
+            assert evidence["coverage_status"] == expected_coverage
+            assert evidence["parsing"]["undated_lines"] == 0
+            assert evidence["parsing"]["unparsed_lines"] == 0
+        assert len({evidence["excerpt_sha256"] for evidence in blocks}) == 1
+        assert len({evidence["boot_generation"] for evidence in blocks}) == 1
+        assert len({evidence["observed_at_utc"] for evidence in blocks}) >= 1
+        assert blocks[1]["pattern_counts"] == blocks[0]["pattern_counts"]
+        assert blocks[2]["pattern_counts"] == blocks[0]["pattern_counts"]
+        top = blocks[0]["pattern_counts"][0]
+        assert top["count"] == 3
+        assert top["severity"] == "WARNING"
+        assert top["generation_scope"] == "SINGLE"
+        assert blocks[0]["observed_source_window"] == blocks[1]["observed_source_window"]
+        assert blocks[1]["observed_source_window"] == blocks[2]["observed_source_window"]
+
+    def test_unchanged_replay_preserves_identity_for_each_tool(self, mock_mcp, config_path):
+        _write_evidence_fixture(Path(config_path) / "home-assistant.log")
+        register_log_tools(mock_mcp, config_path)
+        calls = (
+            mock_mcp._tools["analyze_log_errors"],
+            lambda **kw: mock_mcp._tools["get_log_insights"](hours=24, severity="warning"),
+            lambda **kw: mock_mcp._tools["get_log_timeline"](hours="24"),
+        )
+        with _frozen_datetime(datetime.now(UTC)):
+            for call in calls:
+                first = json.loads(call())
+                second = json.loads(call())
+                assert first["replay_status"] == "OBSERVED"
+                assert second["replay_status"] == "UNCHANGED"
+                assert (
+                    second["log_evidence"]["evidence_digest"]
+                    == first["log_evidence"]["evidence_digest"]
+                )
+                assert (
+                    second["log_evidence"]["observed_at_utc"]
+                    == first["log_evidence"]["observed_at_utc"]
+                )
+
+    def test_ttl_expiry_reobserves_with_stable_digest(self, mock_mcp, config_path):
+        _write_evidence_fixture(Path(config_path) / "home-assistant.log")
+        register_log_tools(mock_mcp, config_path)
+        with _frozen_datetime(datetime.now(UTC)):
+            first = json.loads(mock_mcp._tools["get_log_timeline"](hours="24"))
+
+            with patch("tools.logs.time") as fake_time:
+                fake_time.time.return_value = time_module.time() + logs_module._CACHE_TTL + 5
+                later = json.loads(mock_mcp._tools["get_log_timeline"](hours="24"))
+
+        assert later["replay_status"] == "OBSERVED"
+        assert later["log_evidence"]["evidence_digest"] == first["log_evidence"]["evidence_digest"]
+        assert later["log_evidence"]["observed_at_utc"] >= first["log_evidence"]["observed_at_utc"]
+
+    def test_changed_requested_hours_gets_fresh_insights_receipt(self, mock_mcp, config_path):
+        _write_evidence_fixture(Path(config_path) / "home-assistant.log")
+        register_log_tools(mock_mcp, config_path)
+        with _frozen_datetime(datetime.now(UTC)):
+            first = json.loads(mock_mcp._tools["get_log_insights"](hours=25, severity="warning"))
+            second = json.loads(mock_mcp._tools["get_log_insights"](hours=48, severity="warning"))
+
+        assert first["replay_status"] == "OBSERVED"
+        assert second["replay_status"] == "OBSERVED"
+        assert second["log_evidence"]["requested_utc_window"]["requested_hours"] == 48
+
+    def test_rolling_cutoff_change_gets_fresh_insights_receipt(self, mock_mcp, config_path):
+        _write_evidence_fixture(Path(config_path) / "home-assistant.log")
+        register_log_tools(mock_mcp, config_path)
+        start = datetime.now(UTC)
+        with _frozen_datetime(start):
+            first = json.loads(mock_mcp._tools["get_log_insights"](hours=24, severity="warning"))
+        with _frozen_datetime(start + timedelta(seconds=30)):
+            second = json.loads(mock_mcp._tools["get_log_insights"](hours=24, severity="warning"))
+
+        assert second["replay_status"] == "OBSERVED"
+        assert first["log_evidence"]["observed_at_utc"] == start.isoformat()
+        assert (
+            second["log_evidence"]["observed_at_utc"] == (start + timedelta(seconds=30)).isoformat()
+        )
+
+    def test_rolling_cutoff_change_gets_fresh_timeline_receipt(self, mock_mcp, config_path):
+        _write_evidence_fixture(Path(config_path) / "home-assistant.log")
+        register_log_tools(mock_mcp, config_path)
+        start = datetime.now(UTC)
+        with _frozen_datetime(start):
+            first = json.loads(mock_mcp._tools["get_log_timeline"](hours="24"))
+        with _frozen_datetime(start + timedelta(seconds=30)):
+            second = json.loads(mock_mcp._tools["get_log_timeline"](hours="24"))
+
+        assert second["replay_status"] == "OBSERVED"
+        assert first["log_evidence"]["observed_at_utc"] == start.isoformat()
+        assert (
+            second["log_evidence"]["observed_at_utc"] == (start + timedelta(seconds=30)).isoformat()
+        )
+
+
+class TestOwnerCleanGate:
+    """A clean owner receipt is impossible without complete evidence."""
+
+    def test_owner_clean_requires_trusted_clock(self, mock_mcp, config_path):
+        base = datetime.now().replace(microsecond=0) - timedelta(minutes=5)
+        (Path(config_path) / "home-assistant.log").write_text(
+            f"{base:%Y-%m-%d %H:%M:%S} INFO (MainThread) [homeassistant.bootstrap] Starting Home Assistant\n"
+            f"{base + timedelta(seconds=30):%Y-%m-%d %H:%M:%S} INFO (MainThread) [homeassistant.components.climate] Climate ready\n",
+            encoding="utf-8",
+        )
+        register_log_tools(mock_mcp, config_path)
+        receipt = json.loads(mock_mcp._tools["analyze_log_errors"](owner_component="climate"))[
+            "owner_receipt"
+        ]
+
+        assert receipt["owner_outcome"] == "OWNER_WINDOW_NO_ERRORS"
+        assert receipt["clean_claim"] == "UNVERIFIED"
+        assert "TIME_BASIS_UNKNOWN" in receipt["clean_claim_reasons"]
+
+    def test_owner_clean_verified_with_full_evidence(self, mock_mcp, config_path):
+        base = datetime.now().replace(microsecond=0) - timedelta(minutes=5)
+        (Path(config_path) / "home-assistant.log").write_text(
+            f"{base:%Y-%m-%d %H:%M:%S} INFO (MainThread) [homeassistant.bootstrap] Starting Home Assistant\n"
+            f"{base + timedelta(seconds=30):%Y-%m-%d %H:%M:%S} INFO (MainThread) [homeassistant.components.climate] Climate ready\n",
+            encoding="utf-8",
+        )
+        register_log_tools(mock_mcp, config_path)
+        receipt = json.loads(
+            mock_mcp._tools["analyze_log_errors"](
+                owner_component="climate",
+                since_source_time=f"{base:%Y-%m-%d %H:%M:%S}",
+                source_timezone="+01:00",
+            )
+        )["owner_receipt"]
+
+        assert receipt["clean_claim"] == "VERIFIED"
+        assert receipt["clean_claim_reasons"] == []
+
+    def test_stale_source_with_newer_query_blocks_clean_claim(self, mock_mcp, config_path):
+        (Path(config_path) / "home-assistant.log").write_text(
+            "2099-01-01 12:00:00 INFO (MainThread) [homeassistant.bootstrap] Starting Home Assistant\n"
+            "2099-01-01 12:05:00 ERROR [integration.alpha] last recorded error\n",
+            encoding="utf-8",
+        )
+        register_log_tools(mock_mcp, config_path)
+        result = json.loads(
+            mock_mcp._tools["analyze_log_errors"](
+                owner_component="climate",
+                since_source_time="2099-01-01 12:30:00",
+                source_timezone="+01:00",
+            )
+        )
+
+        assert result["coverage_status"] == "WINDOW_UNVERIFIED"
+        assert result["analysis_outcome"] == "NO_ERRORS_OBSERVED_ONLY"
+        receipt = result["owner_receipt"]
+        assert receipt["clean_claim"] == "UNVERIFIED"
+        assert "WINDOW_UNVERIFIED" in receipt["clean_claim_reasons"]
+
+    def test_insights_stale_source_zero_counts_are_not_clean(self, mock_mcp, config_path):
+        stale = datetime.now().replace(microsecond=0) - timedelta(hours=3)
+        (Path(config_path) / "home-assistant.log").write_text(
+            f"{stale:%Y-%m-%d %H:%M:%S} INFO (MainThread) [homeassistant.bootstrap] Starting Home Assistant\n"
+            f"{stale + timedelta(seconds=60):%Y-%m-%d %H:%M:%S} ERROR [integration.alpha] old error\n",
+            encoding="utf-8",
+        )
+        register_log_tools(mock_mcp, config_path)
+        result = json.loads(mock_mcp._tools["get_log_insights"](hours=1, severity="warning"))
+
+        assert result["raw_level_counts"] == {"ERROR": 0, "WARNING": 0}
+        assert result["log_evidence"]["coverage_status"] == "WINDOW_UNVERIFIED"
+
+
+class TestCrossToolCounting:
+    def test_thousands_info_flood_keeps_counts_aligned(self, mock_mcp, config_path):
+        records = [
+            "2099-01-01 12:00:00 INFO (MainThread) [homeassistant.bootstrap] Starting Home Assistant\n"
+        ]
+        records += [
+            f"2099-01-01 12:01:00 INFO [automation.noise] Running automation actions {n}\n"
+            for n in range(3000)
+        ]
+        records += [
+            f"2099-01-01 12:02:00 WARNING [integration.beta] reconnect attempt {n}\n"
+            for n in range(80)
+        ]
+        records += [
+            f"2099-01-01 12:03:00 ERROR [integration.alpha] sensor.alpha error {n}\n"
+            for n in range(21)
+        ]
+        (Path(config_path) / "home-assistant.log").write_text("".join(records), encoding="utf-8")
+        register_log_tools(mock_mcp, config_path)
+        analyzed = json.loads(mock_mcp._tools["analyze_log_errors"]())
+        insights = json.loads(mock_mcp._tools["get_log_insights"](hours=24, severity="warning"))
+        timeline = json.loads(mock_mcp._tools["get_log_timeline"](hours="24"))
+
+        expected = {"ERROR": 21, "WARNING": 80}
+        assert analyzed["raw_level_counts"] == expected
+        assert insights["raw_level_counts"] == expected
+        assert timeline["raw_level_counts"] == expected
+        for evidence in (
+            analyzed["log_evidence"],
+            insights["log_evidence"],
+            timeline["log_evidence"],
+        ):
+            assert sum(p["count"] for p in evidence["pattern_counts"]) == 101
+            assert evidence["pattern_counts_omitted"] == 0
+        assert timeline["total_events_found"] == 101
+        assert timeline["events_returned"] == 100
+
+    def test_warning_like_info_lines_are_not_counted_as_warnings(self, mock_mcp, config_path):
+        records = [
+            "2099-01-01 12:00:00 INFO (MainThread) [homeassistant.bootstrap] Starting Home Assistant\n",
+            "2099-01-01 12:00:10 INFO [integration.alpha] message mentions WARNING escalation\n",
+            "2099-01-01 12:00:20 INFO [integration.alpha] prior ERROR recovered\n",
+            "2099-01-01 12:01:00 WARNING [integration.beta] real warning\n",
+            "2099-01-01 12:02:00 ERROR [integration.alpha] real error\n",
+        ]
+        (Path(config_path) / "home-assistant.log").write_text("".join(records), encoding="utf-8")
+        register_log_tools(mock_mcp, config_path)
+        analyzed = json.loads(mock_mcp._tools["analyze_log_errors"]())
+        insights = json.loads(mock_mcp._tools["get_log_insights"](hours=24, severity="warning"))
+        timeline = json.loads(mock_mcp._tools["get_log_timeline"](hours="24"))
+
+        for result in (analyzed, insights, timeline):
+            assert result["raw_level_counts"] == {"ERROR": 1, "WARNING": 1}
+
+    def test_distinct_exception_classes_counted_separately(self, mock_mcp, config_path):
+        records = [
+            "2099-01-01 12:00:00 INFO (MainThread) [homeassistant.bootstrap] Starting Home Assistant\n",
+            "2099-01-01 12:01:00 ERROR [integration.alpha] first crash\n",
+            "Traceback (most recent call last):\n",
+            '  File "core.py", line 1, in <module>\n',
+            "ValueError: bad value\n",
+            "2099-01-01 12:02:00 ERROR [integration.beta] second crash\n",
+            "Traceback (most recent call last):\n",
+            '  File "core.py", line 2, in <module>\n',
+            "KeyError: missing key\n",
+        ]
+        (Path(config_path) / "home-assistant.log").write_text("".join(records), encoding="utf-8")
+        register_log_tools(mock_mcp, config_path)
+        result = json.loads(mock_mcp._tools["analyze_log_errors"]())
+
+        assert result["total_tracebacks"] == 2
+        assert result["exception_class_counts"] == {"ValueError": 1, "KeyError": 1}
+
+    def test_repeated_root_cause_across_two_boots_flagged_mixed(self, mock_mcp, config_path):
+        records = [
+            "2099-01-01 10:00:00 INFO (MainThread) [homeassistant.bootstrap] Starting Home Assistant\n",
+            "2099-01-01 10:05:00 ERROR [integration.repeat] sensor.repeat dropped connection 1\n",
+            "2099-01-01 12:00:00 INFO (MainThread) [homeassistant.bootstrap] Starting Home Assistant\n",
+            "2099-01-01 12:05:00 ERROR [integration.repeat] sensor.repeat dropped connection 2\n",
+        ]
+        (Path(config_path) / "home-assistant.log").write_text("".join(records), encoding="utf-8")
+        register_log_tools(mock_mcp, config_path)
+        result = json.loads(mock_mcp._tools["analyze_log_errors"]())
+
+        assert result["ha_start_generation"]["status"] == "MIXED_GENERATIONS"
+        signature = next(
+            p
+            for p in result["log_evidence"]["pattern_counts"]
+            if p["component"] == "integration.repeat"
+        )
+        assert signature["generation_scope"] == "MIXED"
+
+    def test_missing_and_invalid_timestamps_accounted_in_parsing(self, mock_mcp, config_path):
+        records = [
+            "2099-01-01 12:00:00 INFO (MainThread) [homeassistant.bootstrap] Starting Home Assistant\n",
+            "2099-01-01 12:01:00 ERROR [integration.alpha] dated error\n",
+            "completely unparseable noise line\n",
+            "WARNING [integration.beta] warning without any timestamp\n",
+        ]
+        (Path(config_path) / "home-assistant.log").write_text("".join(records), encoding="utf-8")
+        register_log_tools(mock_mcp, config_path)
+        result = json.loads(mock_mcp._tools["analyze_log_errors"]())
+
+        assert result["raw_level_counts"] == {"ERROR": 1, "WARNING": 1}
+        parsing = result["log_evidence"]["parsing"]
+        assert parsing["dated_lines"] == 2
+        assert parsing["undated_lines"] >= 1
+        assert parsing["unparsed_lines"] >= 1
+        assert result["coverage_status"] == "PARTIAL"
+
+    def test_requested_48h_clamped_with_bounded_coverage(self, mock_mcp, config_path):
+        _write_evidence_fixture(Path(config_path) / "home-assistant.log")
+        register_log_tools(mock_mcp, config_path)
+        result = json.loads(mock_mcp._tools["get_log_insights"](hours=48, severity="warning"))
+
+        assert result["summary"]["time_range_hours"] == 24
+        receipt = result["log_evidence"]["requested_utc_window"]
+        assert receipt["requested_hours"] == 48
+        assert receipt["effective_hours"] == 24
+        assert receipt["clamped"] is True
+        covered = result["log_evidence"]["covered_utc_window"]
+        assert covered["status"] == "UNVERIFIED"
+
+
+class TestEvidenceBoundsAndRedaction:
+    def test_previous_source_evidence_flags_rotation(self, mock_mcp, config_path):
+        (Path(config_path) / "home-assistant.log.1").write_text(
+            "2099-01-01 12:00:00 INFO (MainThread) [homeassistant.bootstrap] Starting Home Assistant\n"
+            "2099-01-01 12:05:00 ERROR [integration.alpha] rotated boot error\n",
+            encoding="utf-8",
+        )
+        register_log_tools(mock_mcp, config_path)
+        result = json.loads(mock_mcp._tools["get_log_timeline"](hours="24", log_source="previous"))
+
+        evidence = result["log_evidence"]
+        assert evidence["rotation_coverage"] == "LOG_ROTATED"
+        assert evidence["cutoff_reason"] == "ROTATION"
+        assert evidence["coverage_status"] == "PARTIAL"
+
+    def test_secrets_redacted_from_all_evidence_output(self, mock_mcp, config_path):
+        records = [
+            "2099-01-01 12:00:00 INFO (MainThread) [homeassistant.bootstrap] Starting Home Assistant\n",
+            "2099-01-01 12:01:00 ERROR [integration.alpha] auth failed token=supersecretvalue123456\n",
+            "2099-01-01 12:02:00 WARNING [integration.beta] password=hunter2secret leaked\n",
+        ]
+        (Path(config_path) / "home-assistant.log").write_text("".join(records), encoding="utf-8")
+        register_log_tools(mock_mcp, config_path)
+        outputs = (
+            mock_mcp._tools["analyze_log_errors"](),
+            mock_mcp._tools["get_log_insights"](hours=24, severity="warning"),
+            mock_mcp._tools["get_log_timeline"](hours="24"),
+        )
+
+        for output in outputs:
+            data = json.loads(output)
+            assert data["success"] is True
+            assert data["log_evidence"]["contract_version"] == 2
+            assert data["log_evidence"]["backend"] == "log_file"
+            assert data["raw_level_counts"] == {"ERROR": 1, "WARNING": 1}
+
+        for output in outputs:
+            assert "supersecretvalue" not in output
+            assert "hunter2secret" not in output
+
+    def test_source_and_output_limits_enforced(self, mock_mcp, config_path):
+        records = [
+            "2099-01-01 12:00:00 INFO (MainThread) [homeassistant.bootstrap] Starting Home Assistant\n"
+        ]
+        records += [
+            f"2099-01-01 12:00:30 INFO [automation.noise] Running automation actions {n}\n"
+            for n in range(13900)
+        ]
+        records += [
+            f"2099-01-01 12:01:00 WARNING [integration.beta] reconnect attempt {n}\n"
+            for n in range(105)
+        ]
+        records.append("2099-01-01 12:02:00 ERROR [integration.alpha] sensor.alpha error\n")
+        records.append("2099-01-01 12:03:00 ERROR [integration.gamma] unrelated failure\n")
+        records.append("2099-01-01 12:04:00 ERROR [integration.delta] third distinct error\n")
+        (Path(config_path) / "home-assistant.log").write_text("".join(records), encoding="utf-8")
+        register_log_tools(mock_mcp, config_path)
+        analyzed = json.loads(mock_mcp._tools["analyze_log_errors"]())
+        insights = json.loads(
+            mock_mcp._tools["get_log_insights"](hours=24, severity="warning", max_patterns=2)
+        )
+        timeline = json.loads(mock_mcp._tools["get_log_timeline"](hours="24"))
+
+        assert analyzed["log_evidence"]["source_limits"]["truncated"] is True
+        assert analyzed["log_evidence"]["observed_lines"] == 10000
+        assert analyzed["coverage_status"] == "PARTIAL"
+        assert analyzed["cutoff_reason"] == "TRUNCATED_MAX_LINES"
+        assert len(insights["log_evidence"]["pattern_counts"]) <= 2
+        assert insights["log_evidence"]["pattern_counts_omitted"] >= 1
+        assert timeline["events_returned"] == 100
+        assert len(timeline["timeline"]) <= 100
+
+
+class TestCacheBoundsAndSweep:
+    """The log cache sweeps expired entries and bounds total memory."""
+
+    def setup_method(self) -> None:
+        logs_module._LOG_CACHE.clear()
+
+    def teardown_method(self) -> None:
+        logs_module._LOG_CACHE.clear()
+
+    def test_expired_entries_swept_on_insert_without_lookup(self):
+        logs_module._set_cache_result("stale-key", {"v": 1})
+        with patch("tools.logs.time") as fake_time:
+            fake_time.time.return_value = time_module.time() + logs_module._CACHE_TTL + 1
+            logs_module._set_cache_result("fresh-key", {"v": 2})
+
+        assert "stale-key" not in logs_module._LOG_CACHE
+        assert "fresh-key" in logs_module._LOG_CACHE
+
+    def test_cache_evicts_oldest_when_beyond_bound(self):
+        base = time_module.time()
+        total = logs_module._LOG_CACHE_MAX_ENTRIES + 10
+        with patch("tools.logs.time") as fake_time:
+            fake_time.time.side_effect = iter(base + n * 0.01 for n in range(total))
+            for n in range(total):
+                logs_module._set_cache_result(f"key-{n}", {"v": n})
+
+        assert len(logs_module._LOG_CACHE) == logs_module._LOG_CACHE_MAX_ENTRIES
+        assert "key-0" not in logs_module._LOG_CACHE
+        assert f"key-{total - 1}" in logs_module._LOG_CACHE
+
+
+class TestOwnerCleanGateRegressions:
+    def test_owner_errors_observed_blocks_clean_claim(self, mock_mcp, config_path):
+        base = datetime.now().replace(microsecond=0) - timedelta(minutes=5)
+        (Path(config_path) / "home-assistant.log").write_text(
+            f"{base:%Y-%m-%d %H:%M:%S} INFO (MainThread) [homeassistant.bootstrap] Starting Home Assistant\n"
+            f"{base + timedelta(seconds=30):%Y-%m-%d %H:%M:%S} ERROR (MainThread) [homeassistant.components.climate] owner boom\n",
+            encoding="utf-8",
+        )
+        register_log_tools(mock_mcp, config_path)
+        receipt = json.loads(
+            mock_mcp._tools["analyze_log_errors"](
+                owner_component="climate",
+                since_source_time=f"{base:%Y-%m-%d %H:%M:%S}",
+                source_timezone="+01:00",
+            )
+        )["owner_receipt"]
+
+        assert receipt["owner_outcome"] == "OWNER_ERRORS_OBSERVED"
+        assert receipt["owner_raw_level_counts"] == {"ERROR": 1, "WARNING": 0}
+        assert receipt["clean_claim"] == "UNVERIFIED"
+        assert "OWNER_ERRORS_OBSERVED" in receipt["clean_claim_reasons"]
+
+
+class TestApiFallbackBounds:
+    def test_api_error_log_tail_bounded_and_flagged_truncated(self, mock_mcp, config_path):
+        register_log_tools(mock_mcp, config_path, ha_url="http://ha:8123", ha_token="test")
+        lines = [
+            "2099-01-01 12:00:00 INFO (MainThread) [homeassistant.bootstrap] Starting Home Assistant\n"
+        ]
+        lines += [f"2099-01-01 12:00:01 INFO [comp] filler {n}\n" for n in range(10049)]
+        with patch("tools.utils.make_ha_request") as mock_request:
+            mock_request.side_effect = [
+                {"success": False, "error": "404: Not Found"},
+                {"success": True, "data": "".join(lines)},
+            ]
+            data = json.loads(mock_mcp._tools["get_log_insights"](hours=1))
+
+        assert data["success"] is True
+        assert data["_meta"]["source"] == "api_fallback"
+        assert data["_meta"]["truncated"] is True
+        assert data["log_evidence"]["observed_lines"] == 10000
+        assert data["log_evidence"]["coverage_status"] == "PARTIAL"
+        assert data["log_evidence"]["cutoff_reason"] == "TRUNCATED_MAX_LINES"
