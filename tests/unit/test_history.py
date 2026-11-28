@@ -545,7 +545,8 @@ class TestExactUtcTimeline:
         assert data["event_classes"]["transient_events"] == "EVENT_BUS_NOT_PERSISTED"
         assert data["event_classes"]["automation_trace"] == "TRACE_UNAVAILABLE"
         assert data["continuation"]["truncated"] is True
-        assert data["continuation"]["next_cursor"] == "2026-01-01T01:30:00+00:00"
+        assert data["continuation"]["next_cursor"].startswith("v1.")
+        assert data["continuation"]["offset"] == 0
         assert data["evidence_digest"].startswith("sha256:")
         called_url = mock_request.call_args[0][2]
         assert "filter_entity_id=switch.one" in called_url
@@ -555,15 +556,17 @@ class TestExactUtcTimeline:
     async def test_start_only_exact_window_defaults_end_to_now(self, mock_mcp, ha_url, ha_token):
         register_history_tools(mock_mcp, ha_url, ha_token)
         before = datetime.now(UTC)
+        start = (before - timedelta(hours=1)).isoformat()
         with patch("tools.history.make_ha_request") as mock_request:
             mock_request.return_value = {"success": True, "data": self._history()}
             result = await mock_mcp._tools["get_recent_state_changes"](
                 entity_ids="switch.one",
-                start_utc="2026-01-01T00:00:00+00:00",
+                start_utc=start,
             )
         after = datetime.now(UTC)
         data = json.loads(result)
         assert data["success"] is True
+        assert data["requested_utc_window"]["start_utc"] == start
         called_url = mock_request.call_args[0][2]
         query = urllib.parse.urlsplit(called_url).query
         params = urllib.parse.parse_qs(query, keep_blank_values=True)
@@ -579,6 +582,163 @@ class TestExactUtcTimeline:
             )
         data = json.loads(result)
         assert data["success"] is False
+        mock_request.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_cursor_pages_equal_timestamps_without_gaps_or_duplicates(
+        self, mock_mcp, ha_url, ha_token
+    ):
+        register_history_tools(mock_mcp, ha_url, ha_token)
+        history = [
+            [
+                {
+                    "entity_id": "switch.one",
+                    "state": "off",
+                    "last_changed": "2025-12-31T23:50:00+00:00",
+                },
+                {
+                    "entity_id": "switch.one",
+                    "state": "on",
+                    "last_changed": "2026-01-01T00:30:00+00:00",
+                },
+                {
+                    "entity_id": "switch.one",
+                    "state": "off",
+                    "last_changed": "2026-01-01T00:30:00+00:00",
+                },
+            ],
+            [
+                {
+                    "entity_id": "light.office",
+                    "state": "off",
+                    "last_changed": "2025-12-31T23:50:00+00:00",
+                },
+                {
+                    "entity_id": "light.office",
+                    "state": "on",
+                    "last_changed": "2026-01-01T00:30:00+00:00",
+                },
+            ],
+        ]
+        with patch("tools.history.make_ha_request") as mock_request:
+            mock_request.return_value = {"success": True, "data": history}
+            first = json.loads(
+                await mock_mcp._tools["get_recent_state_changes"](
+                    entity_ids="switch.one,light.office",
+                    start_utc="2026-01-01T00:00:00+00:00",
+                    end_utc="2026-01-01T02:00:00+00:00",
+                    limit=2,
+                )
+            )
+            cursor = first["continuation"]["next_cursor"]
+            second = json.loads(
+                await mock_mcp._tools["get_recent_state_changes"](cursor=cursor, limit=2)
+            )
+
+        assert first["success"] is True
+        assert second["success"] is True
+        assert first["total_changes"] == second["total_changes"] == 3
+        rows = first["changes"] + second["changes"]
+        assert [(row["entity_id"], row["to_state"]) for row in rows] == [
+            ("light.office", "on"),
+            ("switch.one", "off"),
+            ("switch.one", "on"),
+        ]
+        assert [row["sequence"] for row in rows] == [0, 1, 2]
+        assert second["continuation"]["next_cursor"] is None
+
+    @pytest.mark.asyncio
+    async def test_cursor_rejects_mismatched_entity_selection(self, mock_mcp, ha_url, ha_token):
+        register_history_tools(mock_mcp, ha_url, ha_token)
+        with patch("tools.history.make_ha_request") as mock_request:
+            mock_request.return_value = {"success": True, "data": self._history()}
+            first = json.loads(
+                await mock_mcp._tools["get_recent_state_changes"](
+                    entity_ids="switch.one",
+                    start_utc="2026-01-01T00:00:00+00:00",
+                    end_utc="2026-01-01T02:00:00+00:00",
+                    limit=1,
+                )
+            )
+            result = json.loads(
+                await mock_mcp._tools["get_recent_state_changes"](
+                    entity_ids="light.office", cursor=first["continuation"]["next_cursor"]
+                )
+            )
+
+        assert result["success"] is False
+        assert result["error"]["code"] == "MISMATCH"
+
+    @pytest.mark.asyncio
+    async def test_cursor_rejects_changed_evidence_generation(self, mock_mcp, ha_url, ha_token):
+        register_history_tools(mock_mcp, ha_url, ha_token)
+        with patch("tools.history.make_ha_request") as mock_request:
+            mock_request.return_value = {"success": True, "data": self._history()}
+            first = json.loads(
+                await mock_mcp._tools["get_recent_state_changes"](
+                    entity_ids="switch.one",
+                    start_utc="2026-01-01T00:00:00+00:00",
+                    end_utc="2026-01-01T02:00:00+00:00",
+                    limit=1,
+                )
+            )
+            changed = self._history()
+            changed[0][1]["state"] = "off"
+            mock_request.return_value = {"success": True, "data": changed}
+            result = json.loads(
+                await mock_mcp._tools["get_recent_state_changes"](
+                    cursor=first["continuation"]["next_cursor"]
+                )
+            )
+
+        assert result["success"] is False
+        assert result["error"]["code"] == "STALE"
+
+    @pytest.mark.asyncio
+    async def test_event_budget_rejects_oversized_source_before_normalization(
+        self, mock_mcp, ha_url, ha_token
+    ):
+        register_history_tools(mock_mcp, ha_url, ha_token)
+        rows = [
+            {
+                "entity_id": "light.office",
+                "state": "on",
+                "last_changed": "2026-01-01T00:30:00+00:00",
+            }
+            for _ in range(5001)
+        ]
+        with patch("tools.history.make_ha_request") as mock_request:
+            mock_request.return_value = {"success": True, "data": [rows]}
+            result = json.loads(
+                await mock_mcp._tools["get_recent_state_changes"](
+                    entity_ids="light.office",
+                    start_utc="2026-01-01T00:00:00+00:00",
+                    end_utc="2026-01-01T02:00:00+00:00",
+                )
+            )
+
+        assert result["success"] is False
+        assert "5000-event" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_backend_bounds_fail_before_request(self, mock_mcp, ha_url, ha_token):
+        register_history_tools(mock_mcp, ha_url, ha_token)
+        with patch("tools.history.make_ha_request") as mock_request:
+            too_many = json.loads(
+                await mock_mcp._tools["get_recent_state_changes"](
+                    entity_ids=",".join(f"light.room_{index}" for index in range(26))
+                )
+            )
+            too_wide = json.loads(
+                await mock_mcp._tools["get_recent_state_changes"](
+                    entity_ids="light.office",
+                    start_utc="2026-01-01T00:00:00+00:00",
+                    end_utc="2026-01-03T00:00:00+00:00",
+                )
+            )
+
+        assert too_many["success"] is False
+        assert too_wide["success"] is False
         mock_request.assert_not_called()
 
 

@@ -14,6 +14,14 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from urllib.parse import urlencode
 
+from tools.history_cursor import (
+    CursorError,
+    HistoryCursorRequest,
+    cursor_request,
+    decode_cursor,
+    history_sort_key,
+    issue_cursor,
+)
 from tools.utils import _build_history_url, _error_response, _success_response, make_ha_request
 
 _logger = logging.getLogger(__name__)
@@ -27,6 +35,10 @@ TOOLS_VERSION = "1.0.0"
 MAX_HISTORY_HOURS: int = 168
 MAX_RECENT_MINUTES: int = 60
 MAX_RETURNED_CHANGES: int = 50
+MAX_CURSOR_ENTITIES: int = 25
+MAX_EXACT_WINDOW_MINUTES: int = 1440
+MAX_HISTORY_EVENTS: int = 5000
+MAX_HISTORY_PAGE_BYTES: int = 2097152
 MAX_BREAKDOWN_STATES: int = 32
 RAPID_CYCLING_SECONDS: int = 60
 RAPID_CYCLING_COUNT: int = 3
@@ -301,18 +313,77 @@ def _do_get_recent_state_changes(
     start_utc: str | None = None,
     end_utc: str | None = None,
     limit: int = MAX_RETURNED_CHANGES,
+    cursor: str | None = None,
 ) -> str:
-    """Retrieve a bounded state-change timeline with explicit coverage.
+    """Retrieve a bounded, cursor-qualified state-change timeline.
 
-    ``minutes`` remains the backward-compatible relative window. Callers that
-    need reproducibility provide ``start_utc`` and ``end_utc``; the result then
-    reports the requested and actually covered UTC interval instead of claiming
-    complete Recorder retention.
+    A continuation cursor freezes the exact entity/domain selection and UTC
+    window. Rows are normalized and deterministically ordered before slicing,
+    so equal timestamps cannot create gaps or duplicates between pages.
+    Recorder retention and current registry state remain explicit unknowns
+    unless a supported source proves them.
     """
     minutes = min(max(int(minutes), 1), MAX_RECENT_MINUTES)
     limit = min(max(int(limit), 1), 200)
+    secret = hashlib.sha256(ha_token.encode("utf-8")).hexdigest()
+    source_fingerprint = hashlib.sha256((ha_url + "\0" + ha_token).encode("utf-8")).hexdigest()
 
-    if start_utc is not None or end_utc is not None:
+    frozen_request: HistoryCursorRequest | None = None
+    cursor_offset = 0
+    if cursor is not None:
+        try:
+            frozen_request, cursor_offset = cursor_request(cursor, secret)
+        except CursorError as exc:
+            return _error_response({"code": exc.code, "message": str(exc), "retryable": False})
+        if entity_ids is not None:
+            supplied_entities = tuple(
+                sorted({value.strip() for value in entity_ids.split(",") if value.strip()})
+            )
+            if supplied_entities != frozen_request.entity_ids:
+                return _error_response(
+                    {
+                        "code": "MISMATCH",
+                        "message": "cursor entity selection mismatch",
+                        "retryable": False,
+                    }
+                )
+        if domains is not None:
+            supplied_domains = tuple(
+                sorted({value.strip().lower() for value in domains.split(",") if value.strip()})
+            )
+            if supplied_domains != frozen_request.domains:
+                return _error_response(
+                    {
+                        "code": "MISMATCH",
+                        "message": "cursor domain selection mismatch",
+                        "retryable": False,
+                    }
+                )
+        if start_utc is not None:
+            supplied_start = _parse_timestamp(start_utc)
+            if supplied_start is None or supplied_start.astimezone(UTC) != frozen_request.start_utc:
+                return _error_response(
+                    {
+                        "code": "MISMATCH",
+                        "message": "cursor start window mismatch",
+                        "retryable": False,
+                    }
+                )
+        if end_utc is not None:
+            supplied_end = _parse_timestamp(end_utc)
+            if supplied_end is None or supplied_end.astimezone(UTC) != frozen_request.end_utc:
+                return _error_response(
+                    {
+                        "code": "MISMATCH",
+                        "message": "cursor end window mismatch",
+                        "retryable": False,
+                    }
+                )
+        entity_ids = ",".join(frozen_request.entity_ids) or None
+        domains = ",".join(frozen_request.domains) or None
+        start_time = frozen_request.start_utc
+        end_time = frozen_request.end_utc
+    elif start_utc is not None or end_utc is not None:
         requested_start = _parse_timestamp(start_utc or "")
         requested_end = _parse_timestamp(end_utc or "") if end_utc else datetime.now(UTC)
         if requested_start is None or requested_end is None:
@@ -321,78 +392,179 @@ def _do_get_recent_state_changes(
             return _error_response("end_utc must be >= start_utc")
         start_time = requested_start.astimezone(UTC)
         end_time = requested_end.astimezone(UTC)
-        period_minutes = round((end_time - start_time).total_seconds() / 60, 3)
     else:
         end_time = datetime.now(UTC)
         start_time = end_time - timedelta(minutes=minutes)
-        period_minutes = minutes
 
-    url = _build_history_url(start_time, entity_id=entity_ids, minimal=False)
+    period_minutes = round((end_time - start_time).total_seconds() / 60, 3)
+    if period_minutes > MAX_EXACT_WINDOW_MINUTES:
+        return _error_response(
+            f"History window exceeds the {MAX_EXACT_WINDOW_MINUTES}-minute backend bound"
+        )
+
+    selected_entities = (
+        tuple(sorted({value.strip() for value in entity_ids.split(",") if value.strip()}))
+        if entity_ids
+        else ()
+    )
+    if len(selected_entities) > MAX_CURSOR_ENTITIES:
+        return _error_response(
+            f"History entity selection exceeds the {MAX_CURSOR_ENTITIES}-entity backend bound"
+        )
+    domain_list = (
+        tuple(sorted({value.strip().lower() for value in domains.split(",") if value.strip()}))
+        if domains
+        else ()
+    )
+
+    url = _build_history_url(start_time, entity_id=entity_ids, minimal=True)
     url += f"&{urlencode({'end_time': end_time.isoformat()})}"
     result = make_ha_request(ha_url, ha_token, url)
-
     if not result["success"]:
         return _error_response(f"Failed to fetch history: {result.get('error')}")
 
     history_data = result["data"]
-    changes_list = []
-    entity_counts = Counter()  # type: ignore[var-annotated]
+    if not isinstance(history_data, list):
+        return _error_response("Malformed Home Assistant history response")
+    source_row_count = sum(len(rows) for rows in history_data if isinstance(rows, list))
+    if source_row_count > MAX_HISTORY_EVENTS:
+        return _error_response(
+            f"History response exceeds the {MAX_HISTORY_EVENTS}-event processing bound"
+        )
 
-    domain_list = [d.strip().lower() for d in domains.split(",")] if domains else None
+    changes_list: list[dict[str, Any]] = []
+    entity_counts: Counter[str] = Counter()
+    observed_entities: set[str] = set()
+    row_kinds: Counter[str] = Counter()
+    original_index = 0
 
     for entity_history in history_data:
-        if not entity_history:
+        if not isinstance(entity_history, list) or not entity_history:
             continue
-
         entity_id = entity_history[0].get("entity_id")
+        if not isinstance(entity_id, str):
+            row_kinds["malformed"] += 1
+            continue
+        if domain_list and entity_id.split(".", 1)[0] not in domain_list:
+            continue
+        if selected_entities and entity_id not in selected_entities:
+            continue
+        observed_entities.add(entity_id)
 
-        if domain_list:
-            domain = entity_id.split(".")[0]
-            if domain not in domain_list:
+        parsed_rows: list[tuple[datetime, int, dict[str, Any]]] = []
+        for source_index, state in enumerate(entity_history):
+            if not isinstance(state, dict):
+                row_kinds["malformed"] += 1
                 continue
+            raw_timestamp = state.get("last_changed")
+            ts = _parse_timestamp(raw_timestamp) if isinstance(raw_timestamp, str) else None
+            if ts is None or not isinstance(state.get("state"), str):
+                row_kinds["malformed"] += 1
+                continue
+            parsed_rows.append((ts.astimezone(UTC), source_index, state))
+        parsed_rows.sort(key=lambda item: (item[0], item[1]))
 
-        prev_state = None
-        for state in entity_history:
-            ts = _parse_timestamp(state.get("last_changed"))
-            if not ts or ts < start_time:
-                prev_state = state.get("state")
+        prev_state: str | None = None
+        previous_identity: tuple[str, str, str | None] | None = None
+        for ts, _source_index, state in parsed_rows:
+            to_state = state["state"]
+            if ts < start_time:
+                prev_state = to_state
+                previous_identity = (entity_id, ts.isoformat(), to_state)
+                row_kinds["baseline"] += 1
                 continue
             if ts > end_time:
                 continue
-
+            identity = (entity_id, ts.isoformat(), to_state)
+            row_kind = (
+                "duplicate"
+                if identity == previous_identity
+                else ("baseline" if prev_state is None else "transition")
+            )
             changes_list.append(
                 {
                     "timestamp": state.get("last_changed"),
-                    "utc_timestamp": ts.astimezone(UTC).isoformat(),
+                    "utc_timestamp": ts.isoformat(),
                     "source_timestamp": state.get("last_changed"),
                     "entity_id": entity_id,
-                    "to_state": state.get("state"),
+                    "to_state": to_state,
                     "from_state": prev_state,
                     "user_id": state.get("context", {}).get("user_id"),
+                    "row_kind": row_kind,
+                    "original_index": original_index,
                 }
             )
-
+            original_index += 1
             entity_counts[entity_id] += 1
-            prev_state = state.get("state")
+            row_kinds[row_kind] += 1
+            prev_state = to_state
+            previous_identity = identity
 
-    changes_list.sort(key=lambda x: x["utc_timestamp"], reverse=True)
+    changes_list.sort(key=history_sort_key)
+    for sequence, change in enumerate(changes_list):
+        change["sequence"] = sequence
+        change.pop("original_index", None)
+
     covered = sorted(item["utc_timestamp"] for item in changes_list)
     evidence = json.dumps(
         {
-            "entity_ids": entity_ids,
+            "entity_ids": sorted(observed_entities),
+            "domains": list(domain_list),
             "requested": [start_time.isoformat(), end_time.isoformat()],
             "changes": changes_list,
         },
         sort_keys=True,
         separators=(",", ":"),
     )
+    evidence_digest = hashlib.sha256(evidence.encode("utf-8")).hexdigest()
+    evidence_generation = int(evidence_digest[:16], 16)
+    request_entities = selected_entities or tuple(sorted(observed_entities))
+    if len(request_entities) > MAX_CURSOR_ENTITIES:
+        return _error_response(
+            f"Resolved history selection exceeds the {MAX_CURSOR_ENTITIES}-entity backend bound"
+        )
+    request = HistoryCursorRequest(
+        entity_ids=request_entities,
+        domains=domain_list,
+        start_utc=start_time,
+        end_utc=end_time,
+    )
+
+    if cursor is not None:
+        try:
+            cursor_offset = decode_cursor(
+                cursor,
+                request,
+                source_fingerprint,
+                evidence_generation,
+                secret,
+            )
+        except CursorError as exc:
+            return _error_response({"code": exc.code, "message": str(exc), "retryable": False})
+
+    page = changes_list[cursor_offset : cursor_offset + limit]
+    while (
+        page
+        and len(json.dumps(page, separators=(",", ":")).encode("utf-8")) > MAX_HISTORY_PAGE_BYTES
+    ):
+        page.pop()
+    if not page and cursor_offset < len(changes_list):
+        return _error_response("A single history row exceeds the response byte budget")
+    next_offset = cursor_offset + len(page)
+    truncated = next_offset < len(changes_list)
+    next_cursor = (
+        issue_cursor(request, source_fingerprint, evidence_generation, next_offset, secret)
+        if truncated
+        else None
+    )
     response = {
         "period_minutes": period_minutes,
         "total_changes": len(changes_list),
         "most_active_entities": [
-            {"entity_id": e, "changes": c} for e, c in entity_counts.most_common(5)
+            {"entity_id": entity, "changes": count}
+            for entity, count in entity_counts.most_common(5)
         ],
-        "changes": changes_list[:limit],
+        "changes": page,
         "requested_utc_window": {
             "start_utc": start_time.isoformat(),
             "end_utc": end_time.isoformat(),
@@ -402,10 +574,26 @@ def _do_get_recent_state_changes(
             "start_utc": covered[0] if covered else None,
             "end_utc": covered[-1] if covered else None,
             "observed_rows": len(changes_list),
-            "completeness": "PARTIAL",
+            "completeness": "NO_SAMPLES_IN_WINDOW" if not changes_list else "PARTIAL",
             "retention_coverage": "UNKNOWN",
             "recorder_generation": "UNKNOWN",
             "ha_boot_generation": "UNKNOWN",
+            "current_state_status": "NOT_QUERIED",
+            "last_observed_state": changes_list[0]["to_state"] if changes_list else None,
+            "last_observed_state_utc": changes_list[0]["utc_timestamp"] if changes_list else None,
+            "registry_status": "NOT_VERIFIED",
+        },
+        "recorder_qualification": {
+            "row_kinds": dict(row_kinds),
+            "backend_calls": 1,
+            "bounds": {
+                "max_entities": MAX_CURSOR_ENTITIES,
+                "max_window_minutes": MAX_EXACT_WINDOW_MINUTES,
+                "max_events": MAX_HISTORY_EVENTS,
+                "max_page_bytes": MAX_HISTORY_PAGE_BYTES,
+                "backend_event_limit": "POST_FETCH_FAIL_CLOSED",
+            },
+            "pagination_semantics": "CLIENT_SIDE_SLICE_OF_BOUND_QUERY",
         },
         "event_classes": {
             "state_transitions": "OBSERVED" if changes_list else "NO_SAMPLES_IN_WINDOW",
@@ -413,17 +601,17 @@ def _do_get_recent_state_changes(
             "automation_trace": "TRACE_UNAVAILABLE",
         },
         "continuation": {
-            "truncated": len(changes_list) > limit,
+            "truncated": truncated,
             "limit": limit,
-            "next_cursor": changes_list[limit - 1]["utc_timestamp"]
-            if len(changes_list) > limit
-            else None,
+            "offset": cursor_offset,
+            "next_cursor": next_cursor,
         },
-        "evidence_digest": "sha256:" + hashlib.sha256(evidence.encode("utf-8")).hexdigest(),
+        "evidence_digest": "sha256:" + evidence_digest,
+        "evidence_generation": "sha256:" + evidence_digest,
     }
 
-    if len(changes_list) > limit:
-        response["note"] = f"Showing {limit} of {len(changes_list)} changes"
+    if truncated:
+        response["note"] = f"Showing {len(page)} of {len(changes_list)} changes"
 
     return _success_response(response)
 
@@ -475,6 +663,7 @@ def register_history_tools(mcp, ha_url: str, ha_token: str) -> None:  # type: ig
         start_utc: str | None = None,
         end_utc: str | None = None,
         limit: int = MAX_RETURNED_CHANGES,
+        cursor: str | None = None,
     ) -> str:
         """[READ] Retrieve a bounded state-change timeline with coverage.
 
@@ -485,6 +674,7 @@ def register_history_tools(mcp, ha_url: str, ha_token: str) -> None:  # type: ig
             start_utc: Optional timezone-aware ISO start for an exact UTC window.
             end_utc: Optional timezone-aware ISO end; defaults to now when omitted.
             limit: Maximum returned events (1-200, default 50).
+            cursor: Opaque continuation from the previous exact-window page.
 
         Returns:
             JSON string with total_changes, bounded changes, requested/covered
@@ -501,6 +691,7 @@ def register_history_tools(mcp, ha_url: str, ha_token: str) -> None:  # type: ig
                 start_utc=start_utc,
                 end_utc=end_utc,
                 limit=limit,
+                cursor=cursor,
             )
         except Exception as e:
             return _error_response(str(e))
