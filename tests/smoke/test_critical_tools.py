@@ -798,6 +798,9 @@ class TestCriticalConfigEntryStates:
                 "setup_retry",
                 "setup_in_progress",
                 "setup_error",
+                "migration_error",
+                "unload_in_progress",
+                "failed_unload",
                 "failed",
                 "migrated",
             }
