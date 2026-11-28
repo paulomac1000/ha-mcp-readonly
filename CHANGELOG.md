@@ -16,6 +16,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+- Orphan-audit results include a deterministic source generation and an explicit `deletion_authorization: DENIED` receipt; neither candidate nor evidenced findings grant cleanup authority.
+
+### Fixed
+- Template coverage resolves bounded nested `!include` and directory include forms, including `!include_dir_merge_list`, and reports inaccessible or unsupported required sources as insufficient coverage instead of a completed scan.
+- Source generation hashing handles cyclic and shared YAML aliases with bounded traversal rather than expanding alias trees.
+
 ## [2.4.0] - 2026-11-27
 
 ### Added
