@@ -206,7 +206,7 @@ jobs:
           async def verify():
               async with Client(server.get_mcp_server()) as client:
                   tools = await client.list_tools()
-                  assert len(tools) == 145
+                  assert len(tools) == 146
                   result = await client.call_tool('describe_ha_capabilities', {})
                   assert not result.is_error
           asyncio.run(verify())
@@ -232,7 +232,7 @@ jobs:
               )
               async with Client(transport, timeout=30) as client:
                   tools = await client.list_tools()
-                  assert len(tools) == 145
+                  assert len(tools) == 146
                   result = await client.call_tool("describe_ha_capabilities", {})
                   assert not result.is_error
           asyncio.run(verify())
@@ -291,7 +291,7 @@ jobs:
           test "$(docker run --rm --platform linux/${{ matrix.arch }} --entrypoint=id "$IMAGE" -u)" = "10001"
           docker run --rm --platform linux/${{ matrix.arch }} --entrypoint=python \
             -e MCP_TRANSPORT=stdio -e MCP_DEV_TOOLS_ENABLED=0 \
-            "$IMAGE" -c "import server; assert server.get_tool_count() == 145"
+            "$IMAGE" -c "import server; assert server.get_tool_count() == 146"
       - name: Verify default image health configuration
         run: |
           set -euo pipefail
