@@ -1711,6 +1711,159 @@ class TestAuditConfigOrphans:
         assert result["safe_to_delete"] is False
 
     @pytest.mark.asyncio
+    async def test_template_include_dir_merge_list_with_nested_include_is_scanned(self):
+        Path(self.config_path, "automations.yaml").write_text("[]\n", encoding="utf-8")
+        Path(self.config_path, "configuration.yaml").write_text(
+            "template: !include_dir_merge_list templates\n",
+            encoding="utf-8",
+        )
+        templates_dir = Path(self.config_path, "templates")
+        templates_dir.mkdir()
+        Path(templates_dir, "weather.yaml").write_text(
+            "- trigger:\n"
+            "    - platform: state\n"
+            "      entity_id: sensor.outdoor_probe\n"
+            "  sensor:\n"
+            "    - name: Outdoor Temperature\n"
+            "      state: \"{{ states('sensor.outdoor_probe') }}\"\n",
+            encoding="utf-8",
+        )
+        Path(templates_dir, "grouped.yaml").write_text(
+            "- trigger: !include inner_trigger.yaml\n"
+            "  sensor:\n"
+            "    - name: Indoor Humidity\n"
+            "      state: \"{{ states('sensor.indoor_probe') }}\"\n",
+            encoding="utf-8",
+        )
+        Path(templates_dir, "inner_trigger.yaml").write_text(
+            "- platform: state\n  entity_id: sensor.indoor_probe\n",
+            encoding="utf-8",
+        )
+        registry = {
+            "core.entity_registry": {
+                "data": {
+                    "entities": [
+                        {"entity_id": "sensor.outdoor_probe"},
+                        {"entity_id": "sensor.indoor_probe"},
+                    ]
+                }
+            }
+        }
+        with (
+            patch("tools.composite.load_registry") as mock_load,
+            patch("tools.composite.make_ha_request", return_value={"success": True, "data": []}),
+        ):
+            mock_load.side_effect = lambda name, path: registry.get(name, {})
+            result = json.loads(await self.mcp._tools["audit_config_orphans"]())
+
+        assert result["reference_source_coverage"]["templates"] == "SCANNED"
+        assert "sensor.outdoor_probe" not in result["orphan_entities"]
+        assert "sensor.indoor_probe" not in result["orphan_entities"]
+        assert result["source_scan_complete"] is True
+        assert result["safe_to_delete"] is False
+
+    @pytest.mark.asyncio
+    async def test_inaccessible_template_source_yields_insufficient_coverage(self):
+        Path(self.config_path, "automations.yaml").write_text("[]\n", encoding="utf-8")
+        Path(self.config_path, "configuration.yaml").write_text(
+            "template: !include_dir_merge_list missing_templates\n",
+            encoding="utf-8",
+        )
+        registry = {
+            "core.entity_registry": {
+                "data": {"entities": [{"entity_id": "sensor.temperature_living_room"}]}
+            }
+        }
+        with (
+            patch("tools.composite.load_registry") as mock_load,
+            patch("tools.composite.make_ha_request", return_value={"success": True, "data": []}),
+        ):
+            mock_load.side_effect = lambda name, path: registry.get(name, {})
+            result = json.loads(await self.mcp._tools["audit_config_orphans"]())
+
+        assert result["reference_source_coverage"]["templates"] == "INSUFFICIENT_COVERAGE"
+        assert result["source_scan_complete"] is False
+        assert "sensor.temperature_living_room" in result["orphan_entities"]
+        orphan_finding = next(
+            f for f in result["findings"] if f["entity_id"] == "sensor.temperature_living_room"
+        )
+        assert orphan_finding["class"] == "REGISTRY_ORPHAN_CANDIDATE"
+        assert result["safe_to_delete"] is False
+
+    @pytest.mark.asyncio
+    async def test_generation_digest_tracks_source_change(self):
+        Path(self.config_path, "automations.yaml").write_text("[]\n", encoding="utf-8")
+        Path(self.config_path, "configuration.yaml").write_text(
+            "template: !include templates.yaml\n",
+            encoding="utf-8",
+        )
+        nested_path = Path(self.config_path, "templates.yaml")
+        nested_path.write_text(
+            "- trigger:\n    - platform: state\n      entity_id: sensor.template_probe\n",
+            encoding="utf-8",
+        )
+        registry = {
+            "core.entity_registry": {"data": {"entities": [{"entity_id": "sensor.template_probe"}]}}
+        }
+
+        async def run_audit() -> dict:
+            with (
+                patch("tools.composite.load_registry") as mock_load,
+                patch(
+                    "tools.composite.make_ha_request",
+                    return_value={"success": True, "data": []},
+                ),
+            ):
+                mock_load.side_effect = lambda name, path: registry.get(name, {})
+                return json.loads(await self.mcp._tools["audit_config_orphans"]())
+
+        first = await run_audit()
+        generation = first["source_snapshot"]["generation"]
+        assert generation != "UNKNOWN"
+        assert len(generation) == 64
+        int(generation, 16)
+
+        second = await run_audit()
+        assert second["source_snapshot"]["generation"] == generation
+
+        nested_path.write_text(
+            "- trigger:\n"
+            "    - platform: state\n"
+            "      entity_id: sensor.template_probe\n"
+            "  sensor:\n"
+            "    - name: Template Sensor\n",
+            encoding="utf-8",
+        )
+        third = await run_audit()
+        assert third["source_snapshot"]["generation"] != generation
+
+    @pytest.mark.asyncio
+    async def test_deletion_authorization_is_never_granted(self):
+        Path(self.config_path, "automations.yaml").write_text("[]\n", encoding="utf-8")
+        Path(self.config_path, "configuration.yaml").write_text(
+            "template: !include missing_templates.yaml\n",
+            encoding="utf-8",
+        )
+        registry = {
+            "core.entity_registry": {
+                "data": {"entities": [{"entity_id": "sensor.temperature_living_room"}]}
+            }
+        }
+        with (
+            patch("tools.composite.load_registry") as mock_load,
+            patch("tools.composite.make_ha_request", return_value={"success": True, "data": []}),
+        ):
+            mock_load.side_effect = lambda name, path: registry.get(name, {})
+            result = json.loads(await self.mcp._tools["audit_config_orphans"]())
+
+        assert result["deletion_authorization"]["status"] == "DENIED"
+        assert result["safe_to_delete"] is False
+        assert result["reference_coverage_complete"] is False
+        finding_classes = {f["class"] for f in result["findings"]}
+        assert "REGISTRY_ORPHAN_EVIDENCED" not in finding_classes
+        assert not any(f["class"].endswith("_EVIDENCED") for f in result["findings"])
+
+    @pytest.mark.asyncio
     async def test_dynamic_jinja_is_unresolved_not_missing_reference(self):
         automations = [
             {
@@ -1956,12 +2109,12 @@ class TestAuditCoverageHelpers:
         records, status = _collect_package_records(str(tmp_path), configuration)
         assert status == "SCANNED"
         assert records[0]["automation"]
-        assert _collect_template_records(configuration) == (
+        assert _collect_template_records(str(tmp_path), configuration) == (
             [{"sensor": [{"name": "x"}]}],
             "SCANNED",
         )
-        assert _collect_template_records(None) == ([], "NOT_PRESENT")
-        assert _collect_template_records({"template": "bad"}) == ([], "FAILED")
+        assert _collect_template_records(str(tmp_path), None) == ([], "NOT_PRESENT")
+        assert _collect_template_records(str(tmp_path), {"template": "bad"}) == ([], "FAILED")
 
     def test_package_include_file_and_directory_forms(self, tmp_path):
         from tools.composite import _collect_package_records
@@ -2553,6 +2706,52 @@ class TestAuditCoverageHelpers:
         assert _without_dynamic_strings(3) == 3
         assert _without_dynamic_strings({"service": "light.turn_on"}) == {"service": ""}
         assert _without_dynamic_strings("{{ dynamic }}") == ""
+
+    def test_cyclic_dict_digest_returns_marker_without_recursion_error(self):
+        from tools.composite import _canonical_digest_value
+
+        cyclic = {"name": "root"}
+        cyclic["self"] = cyclic
+        assert _canonical_digest_value(cyclic) == {
+            "name": "root",
+            "self": {"__cycle__": True},
+        }
+
+    def test_cyclic_list_digest_returns_marker_without_recursion_error(self):
+        from tools.composite import _canonical_digest_value
+
+        cyclic = ["leaf"]
+        cyclic.append(cyclic)
+        assert _canonical_digest_value(cyclic) == ["leaf", {"__cycle__": True}]
+
+    def test_shared_acyclic_alias_canonicalizes_normally(self):
+        from tools.composite import _canonical_digest_value
+
+        shared = {"k": "v"}
+        root = {"a": shared, "b": shared}
+        assert _canonical_digest_value(root) == {"a": {"k": "v"}, "b": {"k": "v"}}
+
+    def test_source_generation_digest_is_stable_for_cyclic_sources(self, tmp_path):
+        from tools.composite import _source_generation_digest
+
+        sources = {"config": {"automation": [{"id": "good"}]}}
+        sources["config"]["self"] = sources["config"]
+        first = _source_generation_digest(str(tmp_path), sources)
+        assert first == _source_generation_digest(str(tmp_path), sources)
+
+    def test_source_generation_digest_bounds_shared_alias_expansion(self, tmp_path):
+        from tools.composite import _source_generation_digest
+
+        shared: dict[str, object] = {"value": "leaf"}
+        for _ in range(24):
+            shared = {"left": shared, "right": shared}
+        sources = {"configuration": shared}
+
+        first = _source_generation_digest(str(tmp_path), sources)
+        second = _source_generation_digest(str(tmp_path), sources)
+
+        assert first == second
+        assert len(first) == 64
 
     @pytest.mark.asyncio
     async def test_blueprint_coverage_scanned_and_partial(

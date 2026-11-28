@@ -22,6 +22,7 @@ Design Principles
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import os
 from collections import defaultdict
@@ -1048,16 +1049,112 @@ def _collect_package_records(
     return _package_scan_status(records, failures)
 
 
-def _collect_template_records(configuration: dict[str, Any] | None) -> tuple[list[Any], str]:
-    """Collect directly declared template configuration records."""
+def _collect_template_records(
+    config_path: str, configuration: dict[str, Any] | None
+) -> tuple[list[Any], str]:
+    """Collect template records, resolving bounded Home Assistant include forms."""
     if not isinstance(configuration, dict) or "template" not in configuration:
         return [], "NOT_PRESENT"
-    value = configuration["template"]
-    if isinstance(value, list):
-        return value, "SCANNED"
-    if isinstance(value, dict):
-        return [value], "SCANNED"
+    root = Path(config_path).resolve()
+    seen = {root / "configuration.yaml"}
+    resolved, complete = _resolve_package_data(configuration["template"], root, root, seen, 0)
+    if resolved is _CYCLIC_COLLECTION:
+        return [], "INSUFFICIENT_COVERAGE"
+    if isinstance(resolved, HomeAssistantTag):
+        # The template source is declared but entirely unreadable or unsupported.
+        return [], "INSUFFICIENT_COVERAGE"
+    if isinstance(resolved, list):
+        return resolved, "SCANNED" if complete else "PARTIAL"
+    if isinstance(resolved, dict):
+        return [resolved], "SCANNED" if complete else "PARTIAL"
+    if resolved is None:
+        return [], "SCANNED" if complete else "INSUFFICIENT_COVERAGE"
     return [], "FAILED"
+
+
+def _canonical_digest_value(data: Any) -> Any:
+    """Render parsed YAML data into a deterministic JSON-safe structure."""
+    return _canonical_digest_value_active(data, set())
+
+
+def _canonical_digest_value_active(data: Any, active: set[int]) -> Any:
+    """Canonicalize one node, breaking reference cycles via the active object-id set."""
+    if isinstance(data, dict):
+        node_id = id(data)
+        if node_id in active:
+            return {"__cycle__": True}
+        active.add(node_id)
+        try:
+            ordered = sorted(data.items(), key=lambda item: str(item[0]))
+            return {
+                str(key): _canonical_digest_value_active(value, active) for key, value in ordered
+            }
+        finally:
+            active.discard(node_id)
+    if isinstance(data, list):
+        node_id = id(data)
+        if node_id in active:
+            return {"__cycle__": True}
+        active.add(node_id)
+        try:
+            return [_canonical_digest_value_active(item, active) for item in data]
+        finally:
+            active.discard(node_id)
+    return data
+
+
+def _hash_canonical_value(
+    data: Any,
+    active: set[int],
+    memo: dict[int, str],
+) -> str:
+    """Hash one YAML node with bounded cycle and shared-alias expansion."""
+    if isinstance(data, dict):
+        node_id = id(data)
+        if node_id in active:
+            return hashlib.sha256(b'{"__cycle__":true}').hexdigest()
+        if node_id in memo:
+            return memo[node_id]
+        active.add(node_id)
+        digest = hashlib.sha256()
+        try:
+            for key, value in sorted(data.items(), key=lambda item: str(item[0])):
+                key_bytes = str(key).encode("utf-8")
+                digest.update(len(key_bytes).to_bytes(8, "big"))
+                digest.update(key_bytes)
+                value_digest = _hash_canonical_value(value, active, memo)
+                digest.update(bytes.fromhex(value_digest))
+        finally:
+            active.discard(node_id)
+        memo[node_id] = digest.hexdigest()
+        return memo[node_id]
+    if isinstance(data, list):
+        node_id = id(data)
+        if node_id in active:
+            return hashlib.sha256(b'{"__cycle__":true}').hexdigest()
+        if node_id in memo:
+            return memo[node_id]
+        active.add(node_id)
+        digest = hashlib.sha256()
+        try:
+            for value in data:
+                digest.update(bytes.fromhex(_hash_canonical_value(value, active, memo)))
+        finally:
+            active.discard(node_id)
+        memo[node_id] = digest.hexdigest()
+        return memo[node_id]
+    encoded = json.dumps(data, sort_keys=True, ensure_ascii=False, default=str).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _source_generation_digest(config_path: str, sources: dict[str, Any]) -> str:
+    """Digest scanned sources without expanding shared YAML aliases."""
+    digest = hashlib.sha256()
+    root = str(Path(config_path).resolve()).encode("utf-8")
+    digest.update(len(root).to_bytes(8, "big"))
+    digest.update(root)
+    digest.update(bytes.fromhex(_hash_canonical_value(sources, set(), {})))
+    return digest.hexdigest()
 
 
 def _without_dynamic_strings(data: Any) -> Any:
@@ -1113,7 +1210,7 @@ def _do_audit_config_orphans(
         scenes, scenes_coverage = _read_audit_yaml(Path(config_path) / "scenes.yaml", mapping=False)
         configuration, configuration_coverage = _read_configuration_root(config_path)
         packages, packages_coverage = _collect_package_records(config_path, configuration)
-        templates, templates_coverage = _collect_template_records(configuration)
+        templates, templates_coverage = _collect_template_records(config_path, configuration)
 
         dashboards = load_registry("lovelace", config_path).get("data", {}).get("dashboards", {})
 
@@ -1217,6 +1314,18 @@ def _do_audit_config_orphans(
         )
         observed_at = datetime.now(UTC).isoformat()
         source_identity = str(Path(config_path).resolve())
+        generation = _source_generation_digest(
+            config_path,
+            {
+                "configuration": configuration,
+                "automations": automations,
+                "scripts": scripts,
+                "scenes": scenes,
+                "packages": packages,
+                "templates": templates,
+                "dashboards": dashboards,
+            },
+        )
         dynamic_unresolved = sorted(dynamic_references)[:100]
         findings = [
             {
@@ -1240,7 +1349,15 @@ def _do_audit_config_orphans(
             "source_snapshot": {
                 "config_path": source_identity,
                 "observed_at_utc": observed_at,
-                "generation": "UNKNOWN",
+                "generation": generation,
+            },
+            "deletion_authorization": {
+                "status": "DENIED",
+                "reason": (
+                    "reference source coverage incomplete"
+                    if not source_scan_complete
+                    else "candidate-only evidence without owner verification"
+                ),
             },
             "findings": findings,
             "dynamic_unresolved_references": dynamic_unresolved,
@@ -1422,6 +1539,8 @@ def register_composite_tools(  # type: ignore[no-untyped-def]
             - never_triggered_automations: automations with no last_triggered
             - broken_references: entity references in configs but missing from registry
             - unused_blueprints: blueprint files not used by any automation or script
+            - source_snapshot: config identity plus generation digest of scanned sources
+            - deletion_authorization: always DENIED; output never grants deletion
             - summary: plain-text summary string
         """
         try:
