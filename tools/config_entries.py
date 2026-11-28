@@ -11,6 +11,7 @@ import logging
 import re
 from typing import Any
 
+from tools.config_entry_lifecycle import classify_entry_lifecycle, fetch_entry_states
 from tools.utils import (
     _error_response,
     _success_response,
@@ -65,92 +66,18 @@ def _get_entry_state(
     ha_token: str,
 ) -> dict[str, Any]:
     """Determine the effective state of a config entry."""
-    if entry.get("disabled_by"):
-        return {
-            "state": "not_loaded",
-            "reason": f"Disabled by: {entry.get('disabled_by')}",
-            "state_source": "config_entry_disabled_by",
-        }
-
     entry_id = entry.get("entry_id")
-    api_states = _fetch_api_entry_states(ha_url, ha_token) if entry_id else None
-    if api_states is not None and entry_id in api_states:
-        return {
-            "state": api_states[entry_id],
-            "reason": "Authoritative Home Assistant config-entry state",
-            "state_source": "config_entries_api",
-        }
-
-    if not entities:
-        return {
-            "state": "loaded",
-            "reason": "No entities (integration may use different mechanism)",
-        }
-
-    entity_ids = [e.get("entity_id") for e in entities if e.get("entity_id")]
-    if not entity_ids:
-        return {"state": "loaded", "reason": "No entity IDs found"}
-
-    states_result = make_ha_request(ha_url, ha_token, "/api/states")
-    if not states_result.get("success"):
-        return {"state": "unknown", "reason": "Could not fetch states"}
-
-    states_map = {s["entity_id"]: s for s in states_result.get("data", [])}
-
-    unavailable_count = 0
-    disabled_count = 0
-    total = len(entity_ids)
-
-    for eid in entity_ids:
-        entity_reg = next((e for e in entities if e.get("entity_id") == eid), {})
-        if entity_reg.get("disabled_by"):
-            disabled_count += 1
-            continue
-        state_data = states_map.get(eid, {})
-        if not state_data or state_data.get("state") in ["unavailable", "unknown"]:
-            unavailable_count += 1
-
-    active_entities = total - disabled_count
-
-    if active_entities == 0:
-        return {"state": "not_loaded", "reason": f"All {total} entities disabled"}
-
-    if unavailable_count == active_entities:
-        return {
-            "state": "failed",
-            "reason": f"All {active_entities} active entities unavailable",
-        }
-
-    if unavailable_count > 0:
-        return {
-            "state": "partial",
-            "reason": f"{unavailable_count}/{active_entities} entities unavailable",
-        }
-
-    return {"state": "loaded", "reason": "All entities available"}
-
-
-def _fetch_api_entry_states(ha_url: str, ha_token: str) -> dict[str, str] | None:
-    """Fetch the real per-entry states from the Home Assistant REST API.
-
-    ``GET /api/config/config_entries/entry`` is the only source of true entry
-    states; ``.storage/core.config_entries`` carries no ``state`` field at all.
-
-    Returns:
-        Mapping of ``entry_id`` to state, or ``None`` when the API is
-        unreachable so callers can distinguish "no state available" from a
-        real state instead of guessing.
-    """
-    result = make_ha_request(ha_url, ha_token, "/api/config/config_entries/entry", timeout=30)
-    if not result.get("success") or not isinstance(result.get("data"), list):
-        return None
-    states: dict[str, str] = {}
-    for entry in result["data"]:
-        entry_id = entry.get("entry_id")
-        state = entry.get("state")
-        if isinstance(entry_id, str) and isinstance(state, str):
-            states[entry_id] = state
-    return states
+    api_states = (
+        fetch_entry_states(ha_url, ha_token, request_fn=make_ha_request) if entry_id else None
+    )
+    lifecycle = classify_entry_lifecycle(entry, api_states, len(entities))
+    return {
+        "state": lifecycle.api_state or "unknown",
+        "reason": lifecycle.reason,
+        "state_source": "config_entries_api" if lifecycle.api_state else "unavailable",
+        "lifecycle": lifecycle.state,
+        "lifecycle_reason": lifecycle.reason,
+    }
 
 
 # =============================================================================
@@ -190,6 +117,8 @@ def _do_get_config_entry_details(
         "state": state_info.get("state"),
         "state_reason": state_info.get("reason"),
         "state_source": state_info.get("state_source", "entity_availability_heuristic"),
+        "lifecycle": state_info.get("lifecycle"),
+        "lifecycle_reason": state_info.get("lifecycle_reason"),
         "disabled_by": entry.get("disabled_by"),
         "pref_disable_new_entities": entry.get("pref_disable_new_entities"),
         "pref_disable_polling": entry.get("pref_disable_polling"),
@@ -252,7 +181,7 @@ def _do_search_config_entries(
     """Search config entries with optional filters."""
     entries = _get_config_entries(config_path)
 
-    api_states = _fetch_api_entry_states(ha_url, ha_token)
+    api_states = fetch_entry_states(ha_url, ha_token, request_fn=make_ha_request)
     state_source = "api" if api_states is not None else "unavailable"
 
     if state and api_states is None:
@@ -291,6 +220,8 @@ def _do_search_config_entries(
         if with_entities:
             entity_count = sum(1 for e in all_entities if e.get("config_entry_id") == entry_id)
 
+        lifecycle = classify_entry_lifecycle(entry, api_states, entity_count or 0)
+
         result_entry = {
             "entry_id": entry_id,
             "domain": entry.get("domain"),
@@ -301,6 +232,8 @@ def _do_search_config_entries(
             "modified_at": entry.get("modified_at"),
         }
 
+        result_entry["lifecycle"] = lifecycle.state
+        result_entry["lifecycle_reason"] = lifecycle.reason
         if resolved_state is not None:
             result_entry["state"] = resolved_state
 
